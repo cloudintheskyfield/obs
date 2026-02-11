@@ -34,6 +34,7 @@ class BaseSkill(ABC):
         self.description = description
         self._parameters: List[SkillParameter] = []
         self._enabled = True
+        self.skill_definition = None
     
     @property
     def enabled(self) -> bool:
@@ -119,7 +120,7 @@ class BaseSkill(ABC):
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "enabled": self._enabled,
@@ -134,12 +135,24 @@ class BaseSkill(ABC):
                 for p in self._parameters
             ]
         }
+        
+        if self.skill_definition:
+            result["skill_md"] = {
+                "name": self.skill_definition.name,
+                "description": self.skill_definition.description,
+                "instructions": self.skill_definition.instructions[:200] + "..." if len(self.skill_definition.instructions) > 200 else self.skill_definition.instructions,
+                "skill_dir": str(self.skill_definition.skill_dir)
+            }
+        
+        return result
     
     def to_anthropic_tool(self) -> Dict[str, Any]:
         """转换为Anthropic Tool定义格式
         
         符合Claude API的工具定义规范：
         https://docs.anthropic.com/en/docs/agents-and-tools/tool-use
+        
+        优先使用 SKILL.md 中的 metadata (Level 1)
         """
         properties = {}
         required = []
@@ -153,9 +166,14 @@ class BaseSkill(ABC):
             if param.required:
                 required.append(param.name)
         
+        description = self.description
+        if self.skill_definition:
+            description = self.skill_definition.description
+            logger.debug(f"Using description from SKILL.md for {self.name}")
+        
         tool_def = {
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "input_schema": {
                 "type": "object",
                 "properties": properties

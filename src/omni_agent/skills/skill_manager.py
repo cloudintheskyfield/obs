@@ -1,5 +1,6 @@
 """Skills管理器 - 管理Claude官方Skills"""
 import os
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from .base_skill import BaseSkill, SkillResult
 from .computer_use import ComputerUseSkill
 from .text_editor import TextEditorSkill
 from .bash import BashSkill
+from .skill_loader import SkillLoader
 
 
 class SkillManager:
@@ -17,25 +19,43 @@ class SkillManager:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.skills: Dict[str, BaseSkill] = {}
+        self.skill_loader = SkillLoader(
+            skills_root=config.get("skills_dir", Path.cwd() / ".claude" / "skills")
+        )
         self._initialize_skills()
     
     def _initialize_skills(self):
-        """初始化Skills"""
+        """初始化Skills - 从SKILL.md加载定义并关联Python实现"""
         work_dir = self.config.get("work_dir", "workspace")
         screenshot_dir = self.config.get("screenshot_dir", "screenshots")
         
+        skill_definitions = self.skill_loader.load_all_skills()
+        logger.info(f"Loaded {len(skill_definitions)} skill definitions from SKILL.md files")
+        
         if self.config.get("enable_computer_use", True):
             skill = ComputerUseSkill(screenshot_dir=screenshot_dir)
+            skill_def = skill_definitions.get("computer-use")
+            if skill_def:
+                skill.skill_definition = skill_def
+                logger.info(f"Linked computer skill to SKILL.md: {skill_def.name}")
             self.skills[skill.name] = skill
             logger.info(f"Computer Use Skill initialized as '{skill.name}'")
         
         if self.config.get("enable_text_editor", True):
             skill = TextEditorSkill(work_dir=work_dir)
+            skill_def = skill_definitions.get("file-operations")
+            if skill_def:
+                skill.skill_definition = skill_def
+                logger.info(f"Linked text editor to SKILL.md: {skill_def.name}")
             self.skills[skill.name] = skill
             logger.info(f"Text Editor Skill initialized as '{skill.name}'")
         
         if self.config.get("enable_bash", True):
             skill = BashSkill(work_dir=work_dir)
+            skill_def = skill_definitions.get("terminal")
+            if skill_def:
+                skill.skill_definition = skill_def
+                logger.info(f"Linked bash skill to SKILL.md: {skill_def.name}")
             self.skills[skill.name] = skill
             logger.info(f"Bash Skill initialized as '{skill.name}'")
         
@@ -129,15 +149,21 @@ class SkillManager:
         logger.info("Skills cleanup completed")
     
     def get_skill_info(self, skill_name: str) -> Optional[Dict[str, Any]]:
-        """获取Skill详细信息"""
+        """获取Skill详细信息 - 包含SKILL.md的完整instructions (Level 2)"""
         if skill_name not in self.skills:
             return None
         
         skill = self.skills[skill_name]
-        return {
+        info = {
             **skill.to_dict(),
             "usage_examples": self._get_usage_examples(skill_name)
         }
+        
+        if skill.skill_definition:
+            info["instructions"] = skill.skill_definition.instructions
+            info["skill_directory"] = str(skill.skill_definition.skill_dir)
+        
+        return info
     
     def _get_usage_examples(self, skill_name: str) -> List[Dict[str, str]]:
         """获取Skill使用示例"""
@@ -253,11 +279,13 @@ class SkillManager:
     def get_anthropic_tools(self) -> List[Dict[str, Any]]:
         """获取符合Anthropic API规范的Tool定义列表
         
+        使用SKILL.md的Level 1 metadata (name + description)
+        
         返回格式符合Claude API的tools参数：
         [
             {
                 "name": "tool_name",
-                "description": "Tool description",
+                "description": "Tool description from SKILL.md",
                 "input_schema": {
                     "type": "object",
                     "properties": {...},
@@ -273,9 +301,29 @@ class SkillManager:
             try:
                 tool_def = skill.to_anthropic_tool()
                 tools.append(tool_def)
-                logger.debug(f"Generated Anthropic tool definition for '{skill_name}'")
+                
+                if skill.skill_definition:
+                    logger.debug(f"Generated tool from SKILL.md: {skill.skill_definition.name}")
+                else:
+                    logger.warning(f"No SKILL.md found for {skill_name}, using fallback")
+                    
             except Exception as e:
                 logger.error(f"Error generating tool definition for {skill_name}: {e}")
         
-        logger.info(f"Generated {len(tools)} Anthropic tool definitions")
+        logger.info(f"Generated {len(tools)} Anthropic tool definitions from SKILL.md")
         return tools
+    
+    def get_skill_instructions(self, skill_name: str) -> Optional[str]:
+        """获取Skill的Level 2 instructions (当skill被触发时加载)"""
+        if skill_name not in self.skills:
+            return None
+        
+        skill = self.skills[skill_name]
+        if skill.skill_definition:
+            return skill.skill_definition.instructions
+        
+        return None
+    
+    def list_skill_metadata(self) -> Dict[str, Dict[str, str]]:
+        """列出所有Skills的Level 1 metadata (轻量级)"""
+        return self.skill_loader.get_all_skill_metadata()
