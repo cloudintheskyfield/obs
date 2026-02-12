@@ -39,6 +39,7 @@ class AgentConfig(BaseModel):
     # 核心配置
     work_dir: str = "workspace"
     screenshot_dir: str = "screenshots"
+    skills_dir: Optional[str] = None
     
     # 组件配置
     vllm: VLLMConfig = Field(default_factory=VLLMConfig)
@@ -110,6 +111,9 @@ class AgentConfig(BaseModel):
             config.enable_text_editor = os.getenv("ENABLE_TEXT_EDITOR").lower() == "true"
         if os.getenv("ENABLE_BASH"):
             config.enable_bash = os.getenv("ENABLE_BASH").lower() == "true"
+
+        if os.getenv("SKILLS_DIR"):
+            config.skills_dir = os.getenv("SKILLS_DIR")
         
         return config
 

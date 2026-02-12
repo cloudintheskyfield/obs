@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "parameters": {
+    "command": "echo 'Omni Agent Docker API Test Success!'"
+  }
+}

@@ -60,6 +60,7 @@ class OmniAgent:
                 "enable_computer_use": getattr(self.config, 'enable_computer_use', True),
                 "enable_text_editor": getattr(self.config, 'enable_text_editor', True),
                 "enable_bash": getattr(self.config, 'enable_bash', True),
+                "skills_dir": getattr(self.config, "skills_dir", None),
             }
             self.skill_manager = SkillManager(skills_config)
             logger.info("Skills manager initialized")

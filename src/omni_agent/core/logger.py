@@ -56,3 +56,8 @@ def start_live_logging():
     # 在实际项目中可以使用更复杂的实时日志显示
     logger.info("Live logging started")
     return console
+
+
+def stop_live_logging():
+    """停止实时日志显示"""
+    logger.info("Live logging stopped")

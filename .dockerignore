@@ -1,0 +1,44 @@
+# Docker构建忽略文件 - 加速构建
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+.pytest_cache/
+.coverage
+.env
+*.log
+
+# 开发相关文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据目录
+workspace/
+logs/
+screenshots/
+*.sqlite
+*.db
+
+# Node相关
+node_modules/
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+*.bak

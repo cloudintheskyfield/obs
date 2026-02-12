@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "parameters": {
+    "command": "echo Hello from API!"
+  }
+}

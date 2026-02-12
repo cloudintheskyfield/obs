@@ -7,9 +7,6 @@ from datetime import datetime
 from loguru import logger
 
 from .base_skill import BaseSkill, SkillResult
-from .computer_use import ComputerUseSkill
-from .text_editor import TextEditorSkill
-from .bash import BashSkill
 from .skill_loader import SkillLoader
 
 
@@ -19,47 +16,72 @@ class SkillManager:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.skills: Dict[str, BaseSkill] = {}
-        self.skill_loader = SkillLoader(
-            skills_root=config.get("skills_dir", Path.cwd() / ".claude" / "skills")
-        )
+        self.skill_loader = SkillLoader(skills_root=config.get("skills_dir"))
         self._initialize_skills()
     
     def _initialize_skills(self):
-        """初始化Skills - 从SKILL.md加载定义并关联Python实现"""
+        """初始化Skills - 从.claude/skills目录加载完整的三级结构"""
         work_dir = self.config.get("work_dir", "workspace")
         screenshot_dir = self.config.get("screenshot_dir", "screenshots")
         
         skill_definitions = self.skill_loader.load_all_skills()
-        logger.info(f"Loaded {len(skill_definitions)} skill definitions from SKILL.md files")
+        logger.info(f"Loaded {len(skill_definitions)} skill definitions from .claude/skills")
         
-        if self.config.get("enable_computer_use", True):
-            skill = ComputerUseSkill(screenshot_dir=screenshot_dir)
-            skill_def = skill_definitions.get("computer-use")
-            if skill_def:
-                skill.skill_definition = skill_def
-                logger.info(f"Linked computer skill to SKILL.md: {skill_def.name}")
-            self.skills[skill.name] = skill
-            logger.info(f"Computer Use Skill initialized as '{skill.name}'")
-        
-        if self.config.get("enable_text_editor", True):
-            skill = TextEditorSkill(work_dir=work_dir)
-            skill_def = skill_definitions.get("file-operations")
-            if skill_def:
-                skill.skill_definition = skill_def
-                logger.info(f"Linked text editor to SKILL.md: {skill_def.name}")
-            self.skills[skill.name] = skill
-            logger.info(f"Text Editor Skill initialized as '{skill.name}'")
-        
-        if self.config.get("enable_bash", True):
-            skill = BashSkill(work_dir=work_dir)
-            skill_def = skill_definitions.get("terminal")
-            if skill_def:
-                skill.skill_definition = skill_def
-                logger.info(f"Linked bash skill to SKILL.md: {skill_def.name}")
-            self.skills[skill.name] = skill
-            logger.info(f"Bash Skill initialized as '{skill.name}'")
+        # 从skill definitions创建skill实例
+        for skill_name, skill_def in skill_definitions.items():
+            if self._should_enable_skill(skill_name):
+                try:
+                    # 尝试从Level 3 Python实现创建实例
+                    skill_instance = self._create_skill_instance(skill_name, skill_def, work_dir, screenshot_dir)
+                    
+                    if skill_instance:
+                        # 关联SKILL.md定义
+                        skill_instance.skill_definition = skill_def
+                        self.skills[skill_instance.name] = skill_instance
+                        logger.info(f"Initialized skill from .claude/skills: {skill_name} -> {skill_instance.name}")
+                    else:
+                        logger.warning(f"Failed to create instance for skill: {skill_name}")
+                        
+                except Exception as e:
+                    logger.error(f"Error initializing skill {skill_name}: {e}")
         
         logger.info(f"Initialized {len(self.skills)} skills: {list(self.skills.keys())}")
+    
+    def _should_enable_skill(self, skill_name: str) -> bool:
+        """检查skill是否应该启用"""
+        skill_config_map = {
+            "computer-use": "enable_computer_use",
+            "file-operations": "enable_text_editor", 
+            "terminal": "enable_bash"
+        }
+        
+        config_key = skill_config_map.get(skill_name)
+        if config_key:
+            return self.config.get(config_key, True)
+        
+        # 默认启用未知的skills
+        return True
+    
+    def _create_skill_instance(self, skill_name: str, skill_def, work_dir: str, screenshot_dir: str) -> Optional[BaseSkill]:
+        """从skill definition创建skill实例"""
+        if skill_def.skill_class:
+            # 使用Level 3的Python实现
+            try:
+                # 根据skill类型传递适当的参数
+                if skill_name == "computer-use":
+                    return skill_def.skill_class(screenshot_dir=screenshot_dir)
+                elif skill_name in ["file-operations", "terminal"]:
+                    return skill_def.skill_class(work_dir=work_dir)
+                else:
+                    # 尝试通用初始化
+                    return skill_def.skill_class()
+                    
+            except Exception as e:
+                logger.error(f"Failed to create instance from Level 3 implementation for {skill_name}: {e}")
+        
+        # 如果没有Level 3实现，返回None（或可以创建一个基础的skill实例）
+        logger.warning(f"No Level 3 implementation found for skill: {skill_name}")
+        return None
     
     def get_skill(self, name: str) -> Optional[BaseSkill]:
         """获取指定Skill"""

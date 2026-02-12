@@ -6,6 +6,13 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 import typer
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import logging
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -16,6 +23,7 @@ from loguru import logger
 from .core.agent import OmniAgent
 from .config.config import load_config
 from .core.logger import start_live_logging, stop_live_logging
+from .skills.skill_manager import SkillManager
 
 app = typer.Typer(
     name="omni-agent",
@@ -27,6 +35,124 @@ console = Console()
 
 # 全局Agent实例
 agent: Optional[OmniAgent] = None
+
+
+class SkillExecuteRequest(BaseModel):
+    tool_name: str
+    parameters: Dict[str, Any] = {}
+
+
+def create_fastapi_app() -> FastAPI:
+    config = load_config()
+    
+    # 禁用uvicorn的访问日志记录
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.disabled = True
+
+    fastapi_app = FastAPI(
+        title="Omni Agent API",
+        description="全能AI Agent - 支持Claude Skills三级架构",
+        version="1.0.0"
+    )
+    
+    # 添加CORS支持
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    skill_manager: Optional[SkillManager] = None
+
+    # 挂载静态文件服务
+    try:
+        frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+        if frontend_dir.exists():
+            fastapi_app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+            logger.info(f"Mounted frontend directory: {frontend_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to mount frontend static files: {e}")
+
+    @fastapi_app.on_event("startup")
+    async def _startup() -> None:
+        nonlocal skill_manager
+        skills_config = {
+            "work_dir": config.work_dir,
+            "screenshot_dir": getattr(config, "screenshot_dir", "screenshots"),
+            "enable_computer_use": getattr(config, "enable_computer_use", True),
+            "enable_text_editor": getattr(config, "enable_text_editor", True),
+            "enable_bash": getattr(config, "enable_bash", True),
+            "skills_dir": getattr(config, "skills_dir", None),
+        }
+        skill_manager = SkillManager(skills_config)
+        # 同时存储在 app.state 中
+        fastapi_app.state.skill_manager = skill_manager
+
+    @fastapi_app.on_event("shutdown")
+    async def _shutdown() -> None:
+        if skill_manager is not None:
+            await skill_manager.cleanup()
+
+    @fastapi_app.get("/")
+    async def root():
+        # 尝试返回前端页面，如果不存在则返回API信息
+        try:
+            frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+            index_file = frontend_dir / "index.html"
+            if index_file.exists():
+                return FileResponse(str(index_file))
+        except Exception as e:
+            logger.warning(f"Failed to serve frontend: {e}")
+        
+        # 如果前端不存在，返回API信息
+        return JSONResponse({
+            "name": "Omni Agent API",
+            "version": "1.0.0",
+            "description": "全能AI Agent - 支持Claude Skills三级架构",
+            "endpoints": {
+                "health": "/health",
+                "skills": "/skills", 
+                "execute": "/execute",
+                "docs": "/docs",
+                "frontend": "/static/"
+            }
+        })
+
+    @fastapi_app.get("/health")
+    async def health() -> JSONResponse:
+        # 不打印健康检查日志，直接返回
+        return JSONResponse({"status": "ok", "skills_count": len(skill_manager.skills) if skill_manager else 0})
+
+    @fastapi_app.get("/skills")
+    async def skills() -> JSONResponse:
+        current_skill_manager = getattr(fastapi_app.state, 'skill_manager', None)
+        if current_skill_manager is None:
+            return JSONResponse({"skills": []})
+        return JSONResponse({"skills": current_skill_manager.get_anthropic_tools()})
+    
+    @fastapi_app.post("/execute")
+    async def execute_skill(request_data: SkillExecuteRequest) -> JSONResponse:
+        current_skill_manager = getattr(fastapi_app.state, 'skill_manager', None)
+        if current_skill_manager is None:
+            return JSONResponse({"success": False, "error": "Skill manager not initialized"})
+        
+        try:
+            result = await current_skill_manager.execute_skill(request_data.tool_name, **request_data.parameters)
+            return JSONResponse({
+                "success": result.success,
+                "content": result.content,
+                "error": result.error,
+                "metadata": result.metadata
+            })
+        except Exception as e:
+            return JSONResponse({"success": False, "error": str(e)})
+
+    return fastapi_app
+
+
+fastapi_app = create_fastapi_app()
 
 
 @app.command()
@@ -62,6 +188,37 @@ def start(
     except Exception as e:
         console.print(f"❌ 启动失败: {e}", style="red")
         sys.exit(1)
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload", help="启用代码热重载")
+):
+    config = load_config()
+    
+    if reload:
+        # 开发模式：使用模块路径字符串以支持热重载
+        uvicorn.run(
+            "omni_agent.main:fastapi_app",
+            host=host,
+            port=port or getattr(config, "api_port", 8000),
+            reload=True,
+            reload_dirs=["src", ".claude", "frontend"],
+            log_level="info",
+            access_log=True
+        )
+    else:
+        # 生产模式：直接传递app实例
+        app_instance = create_fastapi_app()
+        uvicorn.run(
+            app_instance,
+            host=host,
+            port=port or getattr(config, "api_port", 8000),
+            log_level="warning",  # 减少健康检查日志噪音
+            access_log=False,     # 禁用访问日志
+        )
 
 
 async def interactive_session(config, live_logs: bool):
@@ -256,7 +413,7 @@ def show_help():
     help_table.add_row(
         "JSON格式",
         "完整的请求格式",
-        '{\"type\": \"web_browsing\", \"url\": \"...\"}'"
+        '{\"type\": \"web_browsing\", \"url\": \"...\"}'
     )
     help_table.add_row(
         "自然语言",

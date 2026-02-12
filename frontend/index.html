@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omni Agent - AI智能助手</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 侧边栏 - 会话管理 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2><i class="fas fa-robot"></i> Omni Agent</h2>
+                <button id="new-chat-btn" class="new-chat-btn">
+                    <i class="fas fa-plus"></i> 新建对话
+                </button>
+            </div>
+            
+            <div class="session-list" id="session-list">
+                <!-- 会话列表动态生成 -->
+            </div>
+
+            <div class="skills-panel">
+                <div class="skills-panel-header">
+                    <span><i class="fas fa-toolbox"></i> 可用技能</span>
+                    <span class="skills-count" id="skills-count">0</span>
+                </div>
+                <div class="skills-panel-search">
+                    <i class="fas fa-search"></i>
+                    <input id="skills-search" type="text" placeholder="搜索技能..." autocomplete="off" />
+                </div>
+                <div class="skills-list" id="skills-list">
+                    <!-- 技能列表动态生成 -->
+                </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <div class="agent-status" id="agent-status">
+                    <i class="fas fa-circle status-dot"></i>
+                    <span>检查连接中...</span>
+                </div>
+                <div class="skills-info" id="skills-info">
+                    <span>技能: 加载中...</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 主聊天区域 -->
+        <div class="main-content">
+            <div class="chat-header">
+                <div class="session-title">
+                    <span id="current-session-title">选择或创建一个对话</span>
+                </div>
+                <div class="chat-controls">
+                    <button id="clear-chat-btn" class="control-btn" title="清空当前对话">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    <button id="export-chat-btn" class="control-btn" title="导出对话">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button id="settings-btn" class="control-btn" title="设置">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="chat-container" id="chat-container">
+                <div class="welcome-screen" id="welcome-screen">
+                    <div class="welcome-content">
+                        <i class="fas fa-robot welcome-icon"></i>
+                        <h1>欢迎使用 Omni Agent</h1>
+                        <p>你的全能AI助手，支持文件操作、代码执行、网页浏览等多种功能</p>
+                        
+                        <div class="quick-actions">
+                            <h3>快速开始:</h3>
+                            <div class="action-cards">
+                                <div class="action-card" data-command="帮我创建一个Python脚本">
+                                    <i class="fas fa-file-code"></i>
+                                    <span>创建代码文件</span>
+                                </div>
+                                <div class="action-card" data-command="截取当前屏幕">
+                                    <i class="fas fa-camera"></i>
+                                    <span>截图分析</span>
+                                </div>
+                                <div class="action-card" data-command="查看当前目录内容">
+                                    <i class="fas fa-folder-open"></i>
+                                    <span>文件管理</span>
+                                </div>
+                                <div class="action-card" data-command="执行系统命令">
+                                    <i class="fas fa-terminal"></i>
+                                    <span>终端操作</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chat-messages" id="chat-messages">
+                    <!-- 消息列表动态生成 -->
+                </div>
+            </div>
+            
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea 
+                        id="message-input" 
+                        placeholder="输入消息... (Shift+Enter 换行，Enter 发送)"
+                        rows="1"
+                    ></textarea>
+                    <div class="input-actions">
+                        <button id="attach-btn" class="action-btn" title="附加文件">
+                            <i class="fas fa-paperclip"></i>
+                        </button>
+                        <button id="send-btn" class="send-btn" title="发送消息">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 快捷命令提示 -->
+                <div class="quick-commands" id="quick-commands">
+                    <span class="command-hint">快捷命令:</span>
+                    <button class="quick-cmd" data-cmd="file:">文件操作</button>
+                    <button class="quick-cmd" data-cmd="cmd:">执行命令</button>
+                    <button class="quick-cmd" data-cmd="screenshot">截图</button>
+                    <button class="quick-cmd" data-cmd="help">帮助</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 设置模态框 -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>设置</h3>
+                <button class="close-btn" id="close-settings">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label for="api-url">API 地址:</label>
+                    <input type="text" id="api-url" value="http://127.0.0.1:8000">
+                </div>
+                <div class="setting-group">
+                    <label for="auto-save">自动保存对话:</label>
+                    <input type="checkbox" id="auto-save" checked>
+                </div>
+                <div class="setting-group">
+                    <label for="theme-select">主题:</label>
+                    <select id="theme-select">
+                        <option value="light">浅色</option>
+                        <option value="dark">深色</option>
+                        <option value="auto">跟随系统</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="save-settings" class="btn btn-primary">保存</button>
+                <button id="reset-settings" class="btn btn-secondary">重置</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 加载动画 -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner">
+            <i class="fas fa-robot fa-spin"></i>
+            <p>AI正在思考中...</p>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

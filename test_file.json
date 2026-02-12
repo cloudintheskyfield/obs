@@ -1,0 +1,8 @@
+{
+  "tool_name": "str_replace_editor",
+  "parameters": {
+    "command": "create",
+    "path": "api_test.txt",
+    "file_text": "Hello from API!\nThis file was created via REST API."
+  }
+}

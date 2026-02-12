@@ -8,12 +8,16 @@ services:
     container_name: omni-agent
     ports:
       - "8000:8000"  # Web API端口
-      - "8080:8080"  # Web界面端口
     volumes:
-      # 代码动态挂载
+      # 代码动态挂载 - 主要代码目录
       - ./src:/app/src:rw
       - ./config:/app/config:rw
       - ./scripts:/app/scripts:rw
+      - ./.claude:/app/.claude:rw
+      - ./frontend:/app/frontend:rw
+      # 项目配置文件
+      - ./pyproject.toml:/app/pyproject.toml:rw
+      - ./uv.lock:/app/uv.lock:rw
       # 数据目录
       - ./workspace:/app/workspace:rw
       - ./logs:/app/logs:rw
@@ -52,12 +56,13 @@ services:
       - ENABLE_COMPUTER_USE=true
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true
+      - SKILLS_DIR=/app/.claude/skills
       
     privileged: true  # 需要权限访问浏览器和文件系统
     networks:
       - omni-network
     restart: unless-stopped
-    command: ["uv", "run", "python", "-m", "omni_agent.main", "serve"]
+    command: ["uv", "run", "uvicorn", "omni_agent.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src", "--reload-dir", "/app/.claude", "--reload-dir", "/app/frontend", "--reload-delay", "0.1"]
 
   # 可选：添加Redis用于任务队列
   redis:
