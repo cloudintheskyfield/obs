@@ -1,6 +1,7 @@
 """Computer Use Skill - Claude官方计算机使用技能"""
 import base64
 import io
+import os
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 
@@ -23,50 +24,7 @@ except ImportError:
 
 from loguru import logger
 
-# 相对导入修复 - 根据实际运行环境调整
-import sys
-from pathlib import Path
-
-# 添加src目录到Python路径
-src_path = Path(__file__).parent.parent.parent.parent / "src"
-if src_path.exists():
-    sys.path.insert(0, str(src_path))
-
-try:
-    from omni_agent.skills.base_skill import BaseSkill, SkillResult
-except ImportError:
-    # 如果还是导入失败，使用本地基类定义
-    class SkillResult:
-        def __init__(self, success: bool, content: Any = None, error: str = None, metadata: Dict[str, Any] = None):
-            self.success = success
-            self.content = content
-            self.error = error
-            self.metadata = metadata or {}
-    
-    class BaseSkill:
-        def __init__(self, name: str, description: str):
-            self.name = name
-            self.description = description
-            self.enabled = True
-            self.parameters = {}
-        
-        def add_parameter(self, name: str, type_: str, description: str, required: bool = True):
-            self.parameters[name] = {
-                "type": type_,
-                "description": description, 
-                "required": required
-            }
-        
-        def to_dict(self) -> Dict[str, Any]:
-            return {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-                "enabled": self.enabled
-            }
-        
-        async def execute(self, **kwargs) -> SkillResult:
-            raise NotImplementedError
+from base_skill import BaseSkill, SkillResult
 
 
 class ComputerUseSkill(BaseSkill):
@@ -84,6 +42,9 @@ class ComputerUseSkill(BaseSkill):
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
         self.playwright = None
+        self.headless = os.getenv("WEB_HEADLESS", "").lower() == "true"
+        if os.getenv("RUNNING_IN_DOCKER", "").lower() == "true" and "DISPLAY" not in os.environ:
+            self.headless = True
         
         self.add_parameter(
             "action",
@@ -114,7 +75,7 @@ class ComputerUseSkill(BaseSkill):
         if not self.playwright:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=False,
+                headless=self.headless,
                 args=[
                     '--no-sandbox',
                     '--disable-dev-shm-usage',
@@ -381,6 +342,55 @@ class ComputerUseSkill(BaseSkill):
                     content=f"Double clicked at coordinate {coordinate}",
                     metadata={"action": action, "coordinate": coordinate}
                 )
+
+            elif action == "middle_click":
+                coordinate = kwargs.get("coordinate")
+                if not coordinate or len(coordinate) != 2:
+                    return SkillResult(
+                        success=False,
+                        error="Middle click requires coordinate parameter [x, y]"
+                    )
+
+                if not self.page:
+                    await self.initialize()
+
+                x, y = coordinate
+                await self.page.mouse.click(x, y, button="middle")
+                await self.page.wait_for_timeout(500)
+
+                screenshot = await self.take_screenshot()
+                return SkillResult(
+                    success=True,
+                    base64_image=screenshot,
+                    content=f"Middle clicked at coordinate {coordinate}",
+                    metadata={"action": action, "coordinate": coordinate}
+                )
+
+            elif action == "left_click_drag":
+                coordinate = kwargs.get("coordinate")
+                if not coordinate or len(coordinate) != 4:
+                    return SkillResult(
+                        success=False,
+                        error="Left click drag requires coordinate parameter [x1, y1, x2, y2]"
+                    )
+
+                if not self.page:
+                    await self.initialize()
+
+                x1, y1, x2, y2 = coordinate
+                await self.page.mouse.move(x1, y1)
+                await self.page.mouse.down()
+                await self.page.mouse.move(x2, y2)
+                await self.page.mouse.up()
+                await self.page.wait_for_timeout(500)
+
+                screenshot = await self.take_screenshot()
+                return SkillResult(
+                    success=True,
+                    base64_image=screenshot,
+                    content=f"Dragged from ({x1}, {y1}) to ({x2}, {y2})",
+                    metadata={"action": action, "coordinate": coordinate}
+                )
             
             elif action == "type":
                 text = kwargs.get("text")
@@ -441,3 +451,12 @@ class ComputerUseSkill(BaseSkill):
                 error=f"Error executing {action}: {str(e)}",
                 metadata={"action": action}
             )
+    
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        await self.initialize()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器出口"""
+        await self.cleanup()

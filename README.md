@@ -2,6 +2,19 @@
 
 基于Claude Skills三级架构的全能AI Agent，支持文件操作、终端执行、网页浏览等多种功能。
 
+---
+
+## 📚 Learn Claude Code (Agent Harness 学习)
+
+本项目已集成 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的结构和教学内容。
+学习内容位于根目录：
+- **`agents/`:** 12个由浅入深的课程 (s01 到 s12) 和总纲代码。从 `python agents/s01_agent_loop.py` 开始学习。
+- **`docs/zh/`:** 课程对应的中文指南。
+- **`skills/`:** Agent 可以使用的技能说明和工具库。
+
+> **注意:** 运行教程前请配置 `ANTHROPIC_API_KEY` 及 `MODEL_ID` 在 `.env` 中，并安装 `requirements.txt`。
+
+---
 ## ✨ 特性
 
 - 🎯 **Claude Skills三级架构** - 完全按照[Claude官方Skills文档](https://code.claude.com/docs/en/skills)实现
@@ -21,11 +34,11 @@
 cd omni-agent
 
 # 2. 启动服务 (自动安装依赖)
-python quick_start.py
+docker-compose up -d omni-agent
 
 # 3. 浏览器访问
-# 前端界面: http://127.0.0.1:8002
-# API文档: http://127.0.0.1:8002/docs
+# 前端界面: http://127.0.0.1:8000
+# API文档: http://127.0.0.1:8000/docs
 ```
 
 ### 方式2：Docker部署
@@ -340,10 +353,10 @@ curl -X POST http://localhost:8000/execute \
 **1. 服务启动失败**
 ```bash
 # 检查端口占用
-netstat -an | findstr 8002
+netstat -an | findstr 8000
 
 # 查看详细日志
-python quick_start.py
+docker-compose logs -f omni-agent
 ```
 
 **2. 技能加载失败**
@@ -356,8 +369,8 @@ ls -la .claude/skills/
 
 **3. Docker构建失败**
 ```bash
-# 使用本地模式
-python quick_start.py
+# 使用Docker模式
+docker-compose up -d
 
 # 或配置Docker镜像加速器
 docker_setup.bat
@@ -366,7 +379,7 @@ docker_setup.bat
 **4. 前端访问问题**
 ```bash
 # 确认服务运行状态
-curl http://127.0.0.1:8002/health
+curl http://127.0.0.1:8000/health
 
 # 检查防火墙设置
 ```

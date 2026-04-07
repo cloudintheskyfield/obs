@@ -1,5 +1,6 @@
 """VLLM客户端"""
 import base64
+import json
 import asyncio
 from typing import List, Dict, Any, Optional, Union
 
@@ -35,26 +36,28 @@ class VLLMClient:
         messages: List[Dict[str, Any]], 
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs
-    ) -> Dict[str, Any]:
+    ):
         """聊天完成请求
         
         Args:
             messages: 消息列表
             tools: Anthropic格式的工具定义列表
-            **kwargs: 其他参数（temperature, max_tokens等）
+            **kwargs: 其他参数（temperature, max_tokens, stream等）
         
         Returns:
-            API响应结果
+            API响应结果或异步生成器（如果stream=True）
         """
         if not self.client:
             raise RuntimeError("Client not initialized. Use async context manager.")
+        
+        stream = kwargs.get("stream", False)
         
         payload = {
             "model": self.config.model,
             "messages": messages,
             "temperature": kwargs.get("temperature", 0.7),
             "max_tokens": kwargs.get("max_tokens", 4000),
-            "stream": kwargs.get("stream", False)
+            "stream": stream
         }
         
         if tools:
@@ -64,20 +67,47 @@ class VLLMClient:
         try:
             logger.debug(f"Sending request to VLLM: {self.config.base_url}")
             
-            response = await self.client.post(
-                self.config.base_url,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json"
-                }
-            )
-            
-            response.raise_for_status()
-            result = response.json()
-            
-            logger.debug("VLLM request successful")
-            return result
+            if stream:
+                # 流式请求
+                async def stream_generator():
+                    async with self.client.stream(
+                        "POST",
+                        self.config.base_url,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {self.config.api_key}",
+                            "Content-Type": "application/json"
+                        }
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    data = json.loads(data_str)
+                                    yield data
+                                except json.JSONDecodeError:
+                                    continue
+                
+                return stream_generator()
+            else:
+                # 非流式请求
+                response = await self.client.post(
+                    self.config.base_url,
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {self.config.api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                logger.debug("VLLM request successful")
+                return result
             
         except httpx.HTTPError as e:
             logger.error(f"VLLM request failed: {e}")

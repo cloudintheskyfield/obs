@@ -11,7 +11,18 @@ from ..config.config import AgentConfig, load_config
 from ..core.vllm_client import VLLMClient
 from ..core.logger import setup_logger, start_live_logging
 from ..agents.web_agent import WebAgent
-from ..skills.skill_manager import SkillManager
+import sys
+from pathlib import Path
+
+# Add .claude/skills and root skills to Python path for skills
+claude_skills_path = Path(__file__).parent.parent.parent.parent / ".claude" / "skills"
+root_skills_path = Path(__file__).parent.parent.parent.parent / "skills"
+if claude_skills_path.exists():
+    sys.path.insert(0, str(claude_skills_path))
+if root_skills_path.exists():
+    sys.path.insert(0, str(root_skills_path))
+
+from skill_manager import SkillManager
 
 
 class OmniAgent:

@@ -9,9 +9,9 @@ from loguru import logger
 
 class VLLMConfig(BaseModel):
     """VLLM客户端配置"""
-    base_url: str = "http://223.109.239.14:10002/v1/chat/completions"
+    base_url: str = "https://api.minimaxi.com/v1/chat/completions"
     api_key: str = "dummy_key"
-    model: str = "multimodal_model"
+    model: str = "MiniMax-M2"
     timeout: int = 60
     max_retries: int = 3
 

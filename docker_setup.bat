@@ -50,7 +50,7 @@ if %errorlevel% equ 0 (
     echo 解决方案:
     echo 1. 配置Docker镜像加速器 ^(如上所示^)
     echo 2. 或者检查网络连接
-    echo 3. 或者使用本地模式: python quick_start.py
+    echo 3. 或者直接使用Docker: docker-compose up -d
     pause
     exit /b 1
 )

@@ -3,176 +3,323 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Omni Agent - AI智能助手</title>
-    <link rel="stylesheet" href="styles.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>OBS Claude-style Console</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260402-04">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="app-container">
-        <!-- 侧边栏 - 会话管理 -->
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <h2><i class="fas fa-robot"></i> Omni Agent</h2>
-                <button id="new-chat-btn" class="new-chat-btn">
-                    <i class="fas fa-plus"></i> 新建对话
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-panel">
+                <button id="search-shell-btn" class="search-shell" type="button">
+                    <i class="fas fa-sparkles"></i>
+                    <span>Search</span>
+                </button>
+                <button id="computer-nav-btn" class="nav-pill active" type="button">
+                    <i class="fas fa-terminal"></i>
+                    <span>Computer</span>
                 </button>
             </div>
-            
-            <div class="session-list" id="session-list">
-                <!-- 会话列表动态生成 -->
+
+            <div class="sidebar-group">
+                <button id="new-chat-btn" class="sidebar-action" type="button">
+                    <i class="fas fa-plus"></i>
+                    <span>New thread</span>
+                </button>
+                <button id="history-link-btn" class="sidebar-link" type="button">
+                    <i class="fas fa-clock-rotate-left"></i>
+                    <span>History</span>
+                </button>
+                <button id="discover-link-btn" class="sidebar-link" type="button">
+                    <i class="fas fa-compass"></i>
+                    <span>Discover</span>
+                </button>
+                <button id="agents-link-btn" class="sidebar-link" type="button">
+                    <i class="fas fa-diagram-project"></i>
+                    <span>Agents</span>
+                </button>
+                <button id="connectors-link-btn" class="sidebar-link" type="button">
+                    <i class="fas fa-plug"></i>
+                    <span>Connectors</span>
+                </button>
+                <button id="permissions-link-btn" class="sidebar-link" type="button">
+                    <i class="fas fa-shield-halved"></i>
+                    <span>Permissions</span>
+                </button>
             </div>
 
-            <div class="skills-panel">
-                <div class="skills-panel-header">
-                    <span><i class="fas fa-toolbox"></i> 可用技能</span>
-                    <span class="skills-count" id="skills-count">0</span>
-                </div>
-                <div class="skills-panel-search">
-                    <i class="fas fa-search"></i>
-                    <input id="skills-search" type="text" placeholder="搜索技能..." autocomplete="off" />
-                </div>
-                <div class="skills-list" id="skills-list">
-                    <!-- 技能列表动态生成 -->
-                </div>
-            </div>
-            
-            <div class="sidebar-footer">
-                <div class="agent-status" id="agent-status">
-                    <i class="fas fa-circle status-dot"></i>
-                    <span>检查连接中...</span>
-                </div>
-                <div class="skills-info" id="skills-info">
-                    <span>技能: 加载中...</span>
-                </div>
-            </div>
-        </div>
-        
-        <!-- 主聊天区域 -->
-        <div class="main-content">
-            <div class="chat-header">
-                <div class="session-title">
-                    <span id="current-session-title">选择或创建一个对话</span>
-                </div>
-                <div class="chat-controls">
-                    <button id="clear-chat-btn" class="control-btn" title="清空当前对话">
+            <div class="history-panel">
+                <div class="section-heading">
+                    <span>Threads</span>
+                    <button id="clear-chat-btn" class="ghost-icon" type="button" title="清空当前会话">
                         <i class="fas fa-trash"></i>
                     </button>
-                    <button id="export-chat-btn" class="control-btn" title="导出对话">
+                </div>
+                <div id="session-list" class="session-list"></div>
+                <p class="history-empty">Recent and active threads will appear here.</p>
+            </div>
+        </aside>
+
+        <main class="workspace">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">OBS Agent Workspace</p>
+                    <h1 id="current-session-title">New thread</h1>
+                </div>
+                <div class="topbar-actions">
+                    <div id="agent-status" class="status-chip">
+                        <span class="status-dot"></span>
+                        <span>Checking runtime</span>
+                    </div>
+                    <button id="export-chat-btn" class="icon-button" type="button" title="导出会话">
                         <i class="fas fa-download"></i>
                     </button>
-                    <button id="settings-btn" class="control-btn" title="设置">
-                        <i class="fas fa-cog"></i>
+                    <button id="settings-btn" class="icon-button" type="button" title="设置">
+                        <i class="fas fa-sliders"></i>
                     </button>
                 </div>
-            </div>
-            
-            <div class="chat-container" id="chat-container">
-                <div class="welcome-screen" id="welcome-screen">
-                    <div class="welcome-content">
-                        <i class="fas fa-robot welcome-icon"></i>
-                        <h1>欢迎使用 Omni Agent</h1>
-                        <p>你的全能AI助手，支持文件操作、代码执行、网页浏览等多种功能</p>
-                        
-                        <div class="quick-actions">
-                            <h3>快速开始:</h3>
-                            <div class="action-cards">
-                                <div class="action-card" data-command="帮我创建一个Python脚本">
-                                    <i class="fas fa-file-code"></i>
-                                    <span>创建代码文件</span>
-                                </div>
-                                <div class="action-card" data-command="截取当前屏幕">
-                                    <i class="fas fa-camera"></i>
-                                    <span>截图分析</span>
-                                </div>
-                                <div class="action-card" data-command="查看当前目录内容">
-                                    <i class="fas fa-folder-open"></i>
-                                    <span>文件管理</span>
-                                </div>
-                                <div class="action-card" data-command="执行系统命令">
-                                    <i class="fas fa-terminal"></i>
-                                    <span>终端操作</span>
-                                </div>
+            </header>
+
+            <section class="modebar">
+                <div class="mode-pills">
+                    <button class="mode-pill active" data-mode="agent" type="button">Agent</button>
+                    <button class="mode-pill" data-mode="plan" type="button">Plan</button>
+                    <button class="mode-pill" data-mode="review" type="button">Review</button>
+                </div>
+                <div class="runtime-pills">
+                    <span class="runtime-pill" id="model-pill">Model · --</span>
+                    <span class="runtime-pill" id="context-pill">Context · 0%</span>
+                </div>
+            </section>
+
+            <section class="hero" id="welcome-screen">
+                <div class="hero-mark">obs</div>
+                <p class="hero-copy">
+                    参考 Claude Code 的真实源码结构，把消息流、状态行、任务面板和权限/模式信息合并成一个统一工作台。
+                </p>
+            </section>
+
+            <section class="chat-region">
+                <div class="transcript-toolbar">
+                    <div>
+                        <strong id="transcript-title">Conversation</strong>
+                    </div>
+                    <div class="transcript-actions">
+                        <button id="return-main-btn" class="tiny-pill hidden" type="button">Return to main</button>
+                    </div>
+                </div>
+                <div id="chat-messages" class="chat-messages"></div>
+            </section>
+
+            <section class="composer-wrap">
+                <div class="composer-card">
+                    <div class="composer-head">
+                        <div class="composer-meta">
+                            <span class="composer-placeholder">Ask OBS to inspect code, use tools, or coordinate agents</span>
+                            <div class="composer-toggles">
+                                <button id="permission-mode-btn" class="tiny-pill" type="button">Permission · ask</button>
+                                <button id="thinking-mode-btn" class="tiny-pill active" type="button">Thinking · on</button>
                             </div>
                         </div>
                     </div>
+                    <textarea id="message-input" rows="1" placeholder="Describe the task, mention files, or ask for a coordinated refactor"></textarea>
+                    <div class="composer-foot">
+                        <div class="composer-left">
+                            <button class="small-tool active" data-tool-context="computer" type="button">
+                                <i class="fas fa-desktop"></i>
+                                <span>Computer</span>
+                            </button>
+                            <button class="small-tool" data-tool-context="workspace" type="button">
+                                <i class="fas fa-folder-tree"></i>
+                                <span>Workspace</span>
+                            </button>
+                            <button class="small-tool" data-tool-context="agents" type="button">
+                                <i class="fas fa-diagram-project"></i>
+                                <span>Agents</span>
+                            </button>
+                        </div>
+                        <div class="composer-right">
+                            <span id="model-badge" class="model-badge">Model</span>
+                            <button id="send-btn" class="send-btn" type="button" title="发送">
+                                <i class="fas fa-arrow-up"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
-                
-                <div class="chat-messages" id="chat-messages">
-                    <!-- 消息列表动态生成 -->
+
+                <div class="statusline">
+                    <div id="statusline-left" class="statusline-group"></div>
                 </div>
-            </div>
-            
-            <div class="input-container">
-                <div class="input-wrapper">
-                    <textarea 
-                        id="message-input" 
-                        placeholder="输入消息... (Shift+Enter 换行，Enter 发送)"
-                        rows="1"
-                    ></textarea>
-                    <div class="input-actions">
-                        <button id="attach-btn" class="action-btn" title="附加文件">
-                            <i class="fas fa-paperclip"></i>
-                        </button>
-                        <button id="send-btn" class="send-btn" title="发送消息">
-                            <i class="fas fa-paper-plane"></i>
+            </section>
+        </main>
+
+        <aside id="inspector" class="inspector hidden">
+            <section class="panel runtime-panel">
+                <div class="panel-header">
+                    <h3>Details</h3>
+                    <div class="panel-head-actions">
+                        <span id="runtime-badge" class="panel-meta">checking</span>
+                        <button id="close-details-btn" class="icon-button" type="button" title="关闭详情">
+                            <i class="fas fa-times"></i>
                         </button>
                     </div>
                 </div>
-                
-                <!-- 快捷命令提示 -->
-                <div class="quick-commands" id="quick-commands">
-                    <span class="command-hint">快捷命令:</span>
-                    <button class="quick-cmd" data-cmd="file:">文件操作</button>
-                    <button class="quick-cmd" data-cmd="cmd:">执行命令</button>
-                    <button class="quick-cmd" data-cmd="screenshot">截图</button>
-                    <button class="quick-cmd" data-cmd="help">帮助</button>
+                <div class="status-grid compact">
+                    <div class="status-block">
+                        <span class="status-label">API</span>
+                        <strong id="runtime-api">Checking</strong>
+                    </div>
+                    <div class="status-block">
+                        <span class="status-label">Model</span>
+                        <strong id="runtime-model">--</strong>
+                    </div>
+                    <div class="status-block wide">
+                        <span class="status-label">Workspace</span>
+                        <strong id="runtime-workdir">--</strong>
+                    </div>
                 </div>
-            </div>
-        </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h3>Tasks</h3>
+                    <span id="task-count" class="panel-meta">0 tasks</span>
+                </div>
+                <div class="task-dock compact">
+                    <div class="task-dock-head">
+                        <span>Coordinator</span>
+                        <span class="dock-meta">Select a task</span>
+                    </div>
+                    <div id="task-strip" class="task-strip">
+                        <button class="task-pill main active" data-task-id="main" type="button">main</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h3>Task Details</h3>
+                    <span id="selected-task-label" class="panel-meta">main</span>
+                </div>
+                <div id="task-list" class="task-list">
+                    <p class="panel-empty">Tool runs and agent steps will appear here.</p>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h3>Runtime</h3>
+                    <span id="runtime-tools" class="panel-meta">--</span>
+                </div>
+                <div class="policy-list">
+                    <div class="policy-item">
+                        <span>Skills</span>
+                        <strong id="runtime-skills">0 loaded</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h3>Permission</h3>
+                    <span id="permission-summary" class="panel-meta">ask</span>
+                </div>
+                <div class="policy-list">
+                    <div class="policy-item">
+                        <span>File edits</span>
+                        <strong id="policy-files">--</strong>
+                    </div>
+                    <div class="policy-item">
+                        <span>Terminal</span>
+                        <strong id="policy-terminal">--</strong>
+                    </div>
+                    <div class="policy-item">
+                        <span>Computer use</span>
+                        <strong id="policy-computer">--</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h3>Skills</h3>
+                    <span id="skills-count" class="panel-meta">0</span>
+                </div>
+                <div id="skills-list" class="skills-list"></div>
+            </section>
+        </aside>
     </div>
-    
-    <!-- 设置模态框 -->
-    <div id="settings-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>设置</h3>
-                <button class="close-btn" id="close-settings">
+
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3>Settings</h3>
+                <button id="close-settings" class="icon-button" type="button">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <div class="setting-group">
-                    <label for="api-url">API 地址:</label>
-                    <input type="text" id="api-url" value="http://127.0.0.1:8000">
-                </div>
-                <div class="setting-group">
-                    <label for="auto-save">自动保存对话:</label>
-                    <input type="checkbox" id="auto-save" checked>
-                </div>
-                <div class="setting-group">
-                    <label for="theme-select">主题:</label>
+                <label class="field">
+                    <span>API URL</span>
+                    <input id="api-url" type="text" value="http://127.0.0.1:8000">
+                </label>
+                <label class="field checkbox-field">
+                    <input id="auto-save" type="checkbox" checked>
+                    <span>Auto-save sessions</span>
+                </label>
+                <label class="field">
+                    <span>Theme</span>
                     <select id="theme-select">
-                        <option value="light">浅色</option>
-                        <option value="dark">深色</option>
-                        <option value="auto">跟随系统</option>
+                        <option value="dark">Dark</option>
+                        <option value="auto">Auto</option>
                     </select>
-                </div>
+                </label>
             </div>
-            <div class="modal-footer">
-                <button id="save-settings" class="btn btn-primary">保存</button>
-                <button id="reset-settings" class="btn btn-secondary">重置</button>
+            <div class="modal-actions">
+                <button id="reset-settings" class="secondary-btn" type="button">Reset</button>
+                <button id="save-settings" class="primary-btn" type="button">Save</button>
             </div>
         </div>
     </div>
-    
-    <!-- 加载动画 -->
-    <div class="loading-overlay" id="loading-overlay">
-        <div class="loading-spinner">
-            <i class="fas fa-robot fa-spin"></i>
-            <p>AI正在思考中...</p>
+
+    <div id="permission-modal" class="modal hidden">
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3>Permission Mode</h3>
+                <button id="close-permission-modal" class="icon-button" type="button">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p id="permission-modal-copy" class="modal-copy">
+                    选择这次请求的执行方式。你可以只确认一次，也可以直接切换到更顺滑的工作流模式。
+                </p>
+                <button class="permission-option" data-permission-mode="ask" type="button">
+                    <strong>Ask</strong>
+                    <span>每次潜在工具执行前都提示确认，适合安全优先。</span>
+                </button>
+                <button class="permission-option" data-permission-mode="plan" type="button">
+                    <strong>Plan</strong>
+                    <span>默认进入只读规划态，强调分析、分解和预览。</span>
+                </button>
+                <button class="permission-option" data-permission-mode="auto" type="button">
+                    <strong>Auto</strong>
+                    <span>自动放行常规工作流，只在界面里保留运行记录。</span>
+                </button>
+            </div>
+            <div class="modal-actions permission-actions">
+                <button id="permission-cancel-btn" class="secondary-btn" type="button">Cancel</button>
+                <button id="permission-once-btn" class="primary-btn" type="button">Continue Once</button>
+            </div>
         </div>
     </div>
-    
-    <script src="app.js"></script>
+
+    <script src="/static/app.js?v=20260402-05"></script>
 </body>
 </html>

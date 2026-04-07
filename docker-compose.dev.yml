@@ -1,47 +1,45 @@
-# 开发环境专用配置 - 极速热重载
-version: '3.8'
-
 services:
   omni-agent:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: omni-agent-dev
+    container_name: obs-omni-agent-dev
     ports:
-      - "8000:8000"  # Web API端口
+      - "8000:8000"
     volumes:
-      # 完整代码挂载 - 实时同步
       - ./src:/app/src:rw,cached
-      - ./config:/app/config:rw,cached  
+      - ./config:/app/config:rw,cached
       - ./scripts:/app/scripts:rw,cached
       - ./.claude:/app/.claude:rw,cached
+      - ./skills:/app/skills:rw,cached
       - ./frontend:/app/frontend:rw,cached
-      # 配置文件
       - ./pyproject.toml:/app/pyproject.toml:ro
       - ./uv.lock:/app/uv.lock:ro
-      # 开发数据目录
       - ./workspace:/app/workspace:rw
       - ./logs:/app/logs:rw
       - ./screenshots:/app/screenshots:rw
     environment:
-      # 开发环境变量
-      - VLLM_BASE_URL=http://223.109.239.14:10002/v1/chat/completions
-      - VLLM_API_KEY=dummy_key
-      - VLLM_MODEL=multimodal_model
-      - WORK_DIR=/app/workspace
-      - LOG_LEVEL=DEBUG  # 开发模式详细日志
+      - VLLM_BASE_URL=${VLLM_BASE_URL:-https://api.minimaxi.com/v1/chat/completions}
+      - VLLM_API_KEY=${VLLM_API_KEY:-dummy_key}
+      - VLLM_MODEL=${VLLM_MODEL:-MiniMax-M2}
+      - WORK_DIR=${WORK_DIR:-/app/workspace}
+      - LOG_LEVEL=DEBUG
       - RUNNING_IN_DOCKER=true
       - ENABLE_COMPUTER_USE=true
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true
-      - SKILLS_DIR=/app/.claude/skills
-      # 开发模式标识
+      - SKILLS_DIR=${SKILLS_DIR:-/app/.claude/skills}
       - DEV_MODE=true
-      - PYTHONUNBUFFERED=1  # 实时输出
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - omni-network
     restart: unless-stopped
-    # 极速重载配置
     command: [
       "uv", "run", "uvicorn", "omni_agent.api:app", 
       "--host", "0.0.0.0", 
@@ -50,11 +48,10 @@ services:
       "--reload-dir", "/app/src",
       "--reload-dir", "/app/.claude", 
       "--reload-dir", "/app/frontend",
-      "--reload-delay", "0.05",  # 极快响应
+      "--reload-delay", "0.05",
       "--log-level", "info",
       "--access-log"
     ]
-    # 开发环境优化
     security_opt:
       - seccomp:unconfined
     ulimits:
@@ -65,5 +62,3 @@ services:
 networks:
   omni-network:
     driver: bridge
-
-# 开发环境不需要持久化数据

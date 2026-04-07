@@ -8,50 +8,7 @@ from pathlib import Path
 
 from loguru import logger
 
-# 相对导入修复 - 根据实际运行环境调整
-import sys
-from pathlib import Path
-
-# 添加src目录到Python路径
-src_path = Path(__file__).parent.parent.parent.parent / "src"
-if src_path.exists():
-    sys.path.insert(0, str(src_path))
-
-try:
-    from omni_agent.skills.base_skill import BaseSkill, SkillResult
-except ImportError:
-    # 如果还是导入失败，使用本地基类定义
-    class SkillResult:
-        def __init__(self, success: bool, content: Any = None, error: str = None, metadata: Dict[str, Any] = None):
-            self.success = success
-            self.content = content
-            self.error = error
-            self.metadata = metadata or {}
-    
-    class BaseSkill:
-        def __init__(self, name: str, description: str):
-            self.name = name
-            self.description = description
-            self.enabled = True
-            self.parameters = {}
-        
-        def add_parameter(self, name: str, type_: str, description: str, required: bool = True):
-            self.parameters[name] = {
-                "type": type_,
-                "description": description, 
-                "required": required
-            }
-        
-        def to_dict(self) -> Dict[str, Any]:
-            return {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-                "enabled": self.enabled
-            }
-        
-        async def execute(self, **kwargs) -> SkillResult:
-            raise NotImplementedError
+from base_skill import BaseSkill, SkillResult
 
 
 class BashSkill(BaseSkill):
@@ -142,130 +99,278 @@ class BashSkill(BaseSkill):
         
         return True
     
-    def _clean_command(self, command: str) -> str:
-        """清理和预处理命令"""
-        # 移除可能的恶意字符
-        command = command.strip()
-        
-        # 基本清理
-        command = command.replace('\r\n', '\n').replace('\r', '\n')
-        
-        return command
+    def _get_process_id(self) -> str:
+        """生成进程ID"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return f"bash_{timestamp}"
     
-    async def _execute_command(
+    async def execute_command(
         self,
         command: str,
         timeout: int = 30,
-        restart: bool = False
-    ) -> tuple[int, str, str]:
-        """执行bash命令"""
-        
-        if restart:
-            # 清理正在运行的进程
-            await self._cleanup_processes()
-        
-        # 在工作目录中执行命令
-        try:
-            # Windows系统使用cmd，Linux使用bash
-            if os.name == 'nt':
-                # Windows命令处理
-                if command.strip().startswith('cd '):
-                    target_dir = command.strip()[3:].strip()
-                    if target_dir:
-                        abs_target = (self.work_dir / target_dir).resolve()
-                        try:
-                            # 检查目标目录是否在工作目录内
-                            abs_target.relative_to(self.work_dir)
-                            os.chdir(abs_target)
-                            return 0, f"Changed directory to: {abs_target}", ""
-                        except (ValueError, OSError) as e:
-                            return 1, "", f"Cannot change directory: {e}"
-                    else:
-                        return 0, f"Current directory: {os.getcwd()}", ""
-                
-                # 使用shell=True在Windows上执行命令
-                process = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(self.work_dir),
-                    shell=True
-                )
-            else:
-                # Linux使用bash
-                process = await asyncio.create_subprocess_exec(
-                    '/bin/bash', '-c', command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(self.work_dir)
-                )
-            
-            full_command = shell_cmd + [command]
-            
-            process = await asyncio.create_subprocess_exec(
-                *full_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.work_dir
+        background: bool = False
+    ) -> SkillResult:
+        """执行Bash命令"""
+        if not self._is_safe_command(command):
+            return SkillResult(
+                success=False,
+                error="Command not allowed for security reasons",
+                metadata={"command": command}
             )
-            
-            # 存储进程以便后续清理
-            process_key = f"proc_{id(process)}"
-            self.running_processes[process_key] = process
-            
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=timeout
-                )
-                
-                return_code = process.returncode
-                stdout_str = stdout.decode('utf-8', errors='replace')
-                stderr_str = stderr.decode('utf-8', errors='replace')
-                
-                return return_code, stdout_str, stderr_str
-                
-            except asyncio.TimeoutError:
-                # 超时，终止进程
-                try:
-                    process.terminate()
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
-                
-                return 124, "", f"Command timed out after {timeout} seconds"
-            
-            finally:
-                # 清理进程记录
-                if process_key in self.running_processes:
-                    del self.running_processes[process_key]
+        
+        logger.info(f"Executing bash command: {command}")
+        
+        try:
+            if background:
+                return await self._execute_background(command)
+            else:
+                return await self._execute_blocking(command, timeout)
                 
         except Exception as e:
             logger.error(f"Error executing command: {e}")
-            return 1, "", f"Execution error: {str(e)}"
+            return SkillResult(
+                success=False,
+                error=str(e),
+                metadata={"command": command}
+            )
     
-    async def _cleanup_processes(self):
-        """清理正在运行的进程"""
-        for process_key, process in list(self.running_processes.items()):
+    async def _execute_blocking(self, command: str, timeout: int) -> SkillResult:
+        """执行阻塞命令"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # 使用asyncio.create_subprocess_shell执行命令
+            process = await asyncio.create_subprocess_shell(
+                command,
+                cwd=str(self.work_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=os.environ.copy()
+            )
+            
+            # 等待命令完成或超时
             try:
-                if process.poll() is None:  # 进程还在运行
-                    process.terminate()
-                    await asyncio.wait_for(process.wait(), timeout=5)
-            except:
-                try:
-                    process.kill()
-                except:
-                    pass
-            finally:
-                if process_key in self.running_processes:
-                    del self.running_processes[process_key]
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), 
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                return SkillResult(
+                    success=False,
+                    error=f"Command timed out after {timeout} seconds",
+                    metadata={
+                        "command": command,
+                        "timeout": timeout,
+                        "execution_time": asyncio.get_event_loop().time() - start_time
+                    }
+                )
+            
+            execution_time = asyncio.get_event_loop().time() - start_time
+            
+            # 解码输出
+            stdout_text = stdout.decode('utf-8', errors='replace') if stdout else ""
+            stderr_text = stderr.decode('utf-8', errors='replace') if stderr else ""
+            
+            # 组合输出
+            output_text = ""
+            if stdout_text:
+                output_text += stdout_text
+            if stderr_text:
+                if output_text:
+                    output_text += "\n"
+                output_text += stderr_text
+            
+            success = process.returncode == 0
+            
+            result = SkillResult(
+                success=success,
+                content=output_text or f"Command executed {'successfully' if success else 'with errors'}",
+                metadata={
+                    "command": command,
+                    "return_code": process.returncode,
+                    "execution_time": execution_time,
+                    "stdout": stdout_text,
+                    "stderr": stderr_text,
+                    "working_directory": str(self.work_dir)
+                }
+            )
+            
+            if success:
+                logger.info(f"Command executed successfully: {command}")
+            else:
+                logger.warning(f"Command failed with code {process.returncode}: {command}")
+            
+            return result
+            
+        except Exception as e:
+            return SkillResult(
+                success=False,
+                error=str(e),
+                metadata={
+                    "command": command,
+                    "execution_time": asyncio.get_event_loop().time() - start_time
+                }
+            )
+    
+    async def _execute_background(self, command: str) -> SkillResult:
+        """执行后台命令"""
+        process_id = self._get_process_id()
+        
+        try:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                cwd=str(self.work_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                shell=True,
+                env=os.environ.copy()
+            )
+            
+            self.running_processes[process_id] = process
+            
+            result = SkillResult(
+                success=True,
+                content=f"Command started in background with process ID: {process_id}",
+                metadata={
+                    "command": command,
+                    "process_id": process_id,
+                    "pid": process.pid,
+                    "working_directory": str(self.work_dir),
+                    "background": True
+                }
+            )
+            
+            logger.info(f"Background process started: {process_id} (PID: {process.pid})")
+            return result
+            
+        except Exception as e:
+            return SkillResult(
+                success=False,
+                error=str(e),
+                metadata={"command": command, "background": True}
+            )
+    
+    async def stop_process(self, process_id: str) -> SkillResult:
+        """停止后台进程"""
+        if process_id not in self.running_processes:
+            return SkillResult(
+                success=False,
+                error=f"Process not found: {process_id}"
+            )
+        
+        process = self.running_processes[process_id]
+        
+        try:
+            # 尝试优雅终止
+            process.terminate()
+            
+            # 等待进程结束
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                # 强制杀死进程
+                process.kill()
+                await process.wait()
+            
+            # 从列表中移除
+            del self.running_processes[process_id]
+            
+            result = SkillResult(
+                success=True,
+                content=f"Process {process_id} stopped successfully",
+                metadata={"process_id": process_id}
+            )
+            
+            logger.info(f"Process stopped: {process_id}")
+            return result
+            
+        except Exception as e:
+            return SkillResult(
+                success=False,
+                error=str(e),
+                metadata={"process_id": process_id}
+            )
+    
+    async def list_processes(self) -> SkillResult:
+        """列出运行中的进程"""
+        processes = []
+        
+        for process_id, process in self.running_processes.items():
+            try:
+                if process.poll() is None:
+                    processes.append({
+                        "process_id": process_id,
+                        "pid": process.pid,
+                        "status": "running"
+                    })
+                else:
+                    processes.append({
+                        "process_id": process_id,
+                        "pid": process.pid,
+                        "status": "terminated",
+                        "return_code": process.returncode
+                    })
+            except Exception as e:
+                processes.append({
+                    "process_id": process_id,
+                    "status": "error",
+                    "error": str(e)
+                })
+        
+        # 清理已终止的进程
+        terminated_ids = [
+            pid for pid, proc in self.running_processes.items() 
+            if proc.poll() is not None
+        ]
+        for pid in terminated_ids:
+            del self.running_processes[pid]
+        
+        result = SkillResult(
+            success=True,
+            content=f"Found {len(processes)} processes",
+            metadata={
+                "processes": processes,
+                "total_processes": len(processes)
+            }
+        )
+        
+        return result
+    
+    async def cleanup_all_processes(self) -> SkillResult:
+        """清理所有运行中的进程"""
+        stopped_processes = []
+        errors = []
+        
+        for process_id in list(self.running_processes.keys()):
+            try:
+                result = await self.stop_process(process_id)
+                if result.success:
+                    stopped_processes.append(process_id)
+                else:
+                    errors.append(f"{process_id}: {result.error}")
+            except Exception as e:
+                errors.append(f"{process_id}: {str(e)}")
+        
+        result = SkillResult(
+            success=len(errors) == 0,
+            content=f"Cleanup completed: {len(stopped_processes)} stopped, {len(errors)} errors",
+            metadata={
+                "stopped_processes": stopped_processes,
+                "errors": errors
+            }
+        )
+        
+        logger.info(f"Cleanup completed: {len(stopped_processes)} stopped, {len(errors)} errors")
+        return result
     
     async def execute(self, **kwargs) -> SkillResult:
-        """执行Bash命令"""
+        """执行Bash操作"""
         command = kwargs.get("command")
         timeout = kwargs.get("timeout", 30)
-        restart = kwargs.get("restart", False)
+        background = kwargs.get("background", False)
         
         if not command:
             return SkillResult(
@@ -273,65 +378,21 @@ class BashSkill(BaseSkill):
                 error="Command parameter is required"
             )
         
-        # 清理命令
-        command = self._clean_command(command)
+        # 处理特殊命令
+        if command == "list_processes":
+            return await self.list_processes()
         
-        # 安全检查
-        if not self._is_safe_command(command):
-            return SkillResult(
-                success=False,
-                error=f"Command not allowed for security reasons: {command.split()[0] if command.split() else 'empty'}"
-            )
+        elif command.startswith("stop_process "):
+            process_id = command.split(" ", 1)[1].strip()
+            return await self.stop_process(process_id)
         
-        try:
-            logger.info(f"Executing command: {command}")
-            
-            return_code, stdout, stderr = await self._execute_command(
-                command, timeout, restart
-            )
-            
-            # 准备输出
-            output_parts = []
-            
-            if stdout:
-                output_parts.append(f"STDOUT:\n{stdout}")
-            
-            if stderr:
-                output_parts.append(f"STDERR:\n{stderr}")
-            
-            if not output_parts:
-                output_parts.append("No output")
-            
-            output = "\n\n".join(output_parts)
-            
-            # 记录执行结果
-            logger.info(f"Command completed with return code: {return_code}")
-            
-            return SkillResult(
-                success=(return_code == 0),
-                content=output,
-                metadata={
-                    "command": command,
-                    "return_code": return_code,
-                    "timeout": timeout,
-                    "restart": restart,
-                    "work_dir": str(self.work_dir)
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in bash execution: {e}")
-            return SkillResult(
-                success=False,
-                error=f"Bash execution failed: {str(e)}",
-                metadata={
-                    "command": command,
-                    "timeout": timeout,
-                    "restart": restart
-                }
-            )
+        elif command == "cleanup_all":
+            return await self.cleanup_all_processes()
+        
+        else:
+            return await self.execute_command(command, timeout, background)
     
     async def cleanup(self):
         """清理资源"""
-        await self._cleanup_processes()
+        await self.cleanup_all_processes()
         logger.info("Bash Skill cleaned up")

@@ -23,7 +23,15 @@ from loguru import logger
 from .core.agent import OmniAgent
 from .config.config import load_config
 from .core.logger import start_live_logging, stop_live_logging
-from .skills.skill_manager import SkillManager
+import sys
+from pathlib import Path
+
+# Add .claude/skills to Python path for skills
+claude_skills_path = Path(__file__).parent.parent.parent / ".claude" / "skills"
+if claude_skills_path.exists():
+    sys.path.insert(0, str(claude_skills_path))
+
+from skill_manager import SkillManager
 
 app = typer.Typer(
     name="omni-agent",

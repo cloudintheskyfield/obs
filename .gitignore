@@ -5,6 +5,7 @@ __pycache__/
 # virtualenv
 .venv/
 venv/
+.env
 
 # logs/runtime
 logs/
@@ -21,3 +22,9 @@ workspace/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent testing and operation dirs
+.transcripts/
+.task_outputs/
+.tasks/
+.teams/

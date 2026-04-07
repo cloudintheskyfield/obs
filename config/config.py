@@ -8,7 +8,7 @@ class VLLMConfig(BaseModel):
     """VLLM配置"""
     base_url: str = "http://223.109.239.14:10002/v1/chat/completions"
     api_key: str = "dummy_key"  # VLLM通常不需要API密钥
-    model: str = "multimodal_model"
+    model: str = "/mnt2/data3/nlp/ws/model/Qwen3_omni/thinking"
     timeout: int = 30
     max_retries: int = 3
 
@@ -55,7 +55,7 @@ def load_config() -> AgentConfig:
         "vllm": {
             "base_url": os.getenv("VLLM_BASE_URL", "http://223.109.239.14:10002/v1/chat/completions"),
             "api_key": os.getenv("VLLM_API_KEY", "dummy_key"),
-            "model": os.getenv("VLLM_MODEL", "multimodal_model")
+            "model": os.getenv("VLLM_MODEL", "/mnt2/data3/nlp/ws/model/Qwen3_omni/thinking")
         },
         "claude_api_key": os.getenv("CLAUDE_API_KEY"),
         "work_dir": os.getenv("WORK_DIR", "workspace"),
