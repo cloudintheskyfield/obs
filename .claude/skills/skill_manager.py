@@ -12,6 +12,16 @@ from skill_loader import SkillLoader
 
 class SkillManager:
     """Skills管理器"""
+
+    TOOL_SKILL_ALIASES = {
+        "advanced_web_search": "web-search",
+        "web_search": "web-search",
+        "bash": "terminal",
+        "str_replace_editor": "file-operations",
+        "code_sandbox": "code-sandbox",
+        "computer": "computer-use",
+        "weather": "weather",
+    }
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -107,6 +117,16 @@ class SkillManager:
     def get_skill(self, name: str) -> Optional[BaseSkill]:
         """获取指定Skill"""
         return self.skills.get(name)
+
+    def resolve_skill_name_for_tool(self, tool_name: str) -> Optional[str]:
+        """Map runtime tool names back to SKILL.md skill names."""
+        if tool_name in self.TOOL_SKILL_ALIASES:
+            return self.TOOL_SKILL_ALIASES[tool_name]
+
+        if tool_name in self.skill_loader.skills:
+            return tool_name
+
+        return None
     
     def list_skills(self) -> List[Dict[str, Any]]:
         """列出所有Skills"""
@@ -366,15 +386,83 @@ class SkillManager:
     
     def get_skill_instructions(self, skill_name: str) -> Optional[str]:
         """获取Skill的Level 2 instructions (当skill被触发时加载)"""
-        if skill_name not in self.skills:
-            return None
-        
-        skill = self.skills[skill_name]
-        if skill.skill_definition:
+        resolved_name = self.resolve_skill_name_for_tool(skill_name) or skill_name
+
+        skill = self.skills.get(skill_name)
+        if skill and skill.skill_definition:
             return skill.skill_definition.instructions
-        
+
+        definition = self.skill_loader.skills.get(resolved_name)
+        if definition:
+            return definition.instructions
+
         return None
     
     def list_skill_metadata(self) -> Dict[str, Dict[str, str]]:
         """列出所有Skills的Level 1 metadata (轻量级)"""
         return self.skill_loader.get_all_skill_metadata()
+
+    def get_skill_metadata_for_tool(self, tool_name: str) -> Optional[Dict[str, str]]:
+        resolved_name = self.resolve_skill_name_for_tool(tool_name)
+        if not resolved_name:
+            return None
+
+        metadata = self.list_skill_metadata().get(resolved_name)
+        if not metadata:
+            return None
+
+        definition = self.skill_loader.skills.get(resolved_name)
+        location = str(definition.skill_dir / "SKILL.md") if definition else ""
+        return {
+            **metadata,
+            "location": location,
+            "tool_name": tool_name,
+        }
+
+    def build_skill_index(self, tool_names: Optional[List[str]] = None) -> List[Dict[str, str]]:
+        """Build a compact skill index, similar to OpenClaw's lightweight skill list."""
+        if tool_names:
+            metadata_entries = []
+            seen = set()
+            for tool_name in tool_names:
+                item = self.get_skill_metadata_for_tool(tool_name)
+                if not item:
+                    continue
+                skill_name = item.get("name") or tool_name
+                if skill_name in seen:
+                    continue
+                seen.add(skill_name)
+                metadata_entries.append(item)
+            return metadata_entries
+
+        entries = []
+        for skill_name, metadata in self.list_skill_metadata().items():
+            definition = self.skill_loader.skills.get(skill_name)
+            entries.append({
+                **metadata,
+                "location": str(definition.skill_dir / "SKILL.md") if definition else "",
+                "tool_name": skill_name,
+            })
+        return entries
+
+    def get_skill_catalog(self) -> List[Dict[str, Any]]:
+        """Return available skills with their mapped runtime tools."""
+        catalog = []
+        metadata_map = self.list_skill_metadata()
+        tool_map: Dict[str, List[str]] = {}
+
+        for tool_name in self.get_enabled_skills().keys():
+            resolved_name = self.resolve_skill_name_for_tool(tool_name) or tool_name
+            tool_map.setdefault(resolved_name, []).append(tool_name)
+
+        for skill_name, metadata in metadata_map.items():
+            definition = self.skill_loader.skills.get(skill_name)
+            tool_names = sorted(tool_map.get(skill_name, []))
+            catalog.append({
+                "name": skill_name,
+                "description": metadata.get("description", ""),
+                "location": str(definition.skill_dir / "SKILL.md") if definition else "",
+                "tool_names": tool_names,
+            })
+
+        return sorted(catalog, key=lambda item: item["name"].lower())

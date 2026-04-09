@@ -1,6 +1,7 @@
 """主入口点和CLI接口"""
 import asyncio
 import json
+import os
 import sys
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -23,13 +24,16 @@ from loguru import logger
 from .core.agent import OmniAgent
 from .config.config import load_config
 from .core.logger import start_live_logging, stop_live_logging
+from .desktop_app import run_desktop_app
+from .utils.paths import claude_skills_root, frontend_root, frontend_static_root
 import sys
 from pathlib import Path
 
 # Add .claude/skills to Python path for skills
-claude_skills_path = Path(__file__).parent.parent.parent / ".claude" / "skills"
+claude_skills_path = claude_skills_root()
 if claude_skills_path.exists():
     sys.path.insert(0, str(claude_skills_path))
+os.environ.setdefault("SKILLS_DIR", str(claude_skills_path))
 
 from skill_manager import SkillManager
 
@@ -76,7 +80,7 @@ def create_fastapi_app() -> FastAPI:
 
     # 挂载静态文件服务
     try:
-        frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+        frontend_dir = frontend_static_root()
         if frontend_dir.exists():
             fastapi_app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
             logger.info(f"Mounted frontend directory: {frontend_dir}")
@@ -107,7 +111,7 @@ def create_fastapi_app() -> FastAPI:
     async def root():
         # 尝试返回前端页面，如果不存在则返回API信息
         try:
-            frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+            frontend_dir = frontend_static_root()
             index_file = frontend_dir / "index.html"
             if index_file.exists():
                 return FileResponse(str(index_file))
@@ -213,7 +217,7 @@ def serve(
             host=host,
             port=port or getattr(config, "api_port", 8000),
             reload=True,
-            reload_dirs=["src", ".claude", "frontend"],
+            reload_dirs=["src", ".claude", "frontend", "ui"],
             log_level="info",
             access_log=True
         )
@@ -227,6 +231,12 @@ def serve(
             log_level="warning",  # 减少健康检查日志噪音
             access_log=False,     # 禁用访问日志
         )
+
+
+@app.command()
+def desktop():
+    """启动原生桌面版 OBS Agent（macOS 优先）。"""
+    run_desktop_app()
 
 
 async def interactive_session(config, live_logs: bool):

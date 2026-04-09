@@ -7,6 +7,7 @@ class AppStateStore {
             runtime: null,
             selectedTaskId: "main",
             contextPercent: 0,
+            toolContext: "workspace",
             tasks: [],
             transcriptFilter: "all"
         };
@@ -24,14 +25,18 @@ class AppStateStore {
 
 class ObsAgentConsole {
     constructor() {
-        this.apiBaseUrl = "http://127.0.0.1:8000";
+        this.storageVersion = "20260408-01";
+        this.apiBaseUrl = this.resolveDefaultApiBaseUrl();
         this.sessions = new Map();
         this.currentSessionId = null;
         this.isSending = false;
         this.settings = {
             apiUrl: this.apiBaseUrl,
             autoSave: true,
-            theme: "dark"
+            theme: "dark",
+            permissionMode: "ask",
+            thinkingMode: true,
+            toolContext: "workspace"
         };
         this.store = new AppStateStore();
         this.collapsedMessages = new Set();
@@ -39,13 +44,23 @@ class ObsAgentConsole {
         this.permissionConfirmedForSubmit = false;
         this.pinnedThinkingMessages = new Set();
         this.workflowPhases = ["queued", "planning", "execution", "synthesis", "verification", "complete"];
+        this.logRange = "all";
 
         this.init();
+    }
+
+    resolveDefaultApiBaseUrl() {
+        const { protocol, origin, hostname } = window.location;
+        if ((protocol === "http:" || protocol === "https:") && hostname) {
+            return origin;
+        }
+        return "http://127.0.0.1:8000";
     }
 
     init() {
         this.bindElements();
         this.loadSettings();
+        this.applyStoredPreferences();
         this.bindEvents();
         this.loadSessions();
         this.ensureSession();
@@ -54,6 +69,7 @@ class ObsAgentConsole {
         this.renderPermissionState();
         this.renderThinkingMode();
         this.renderModePills();
+        this.setActiveToolContext(this.store.get().toolContext);
     }
 
     bindElements() {
@@ -67,27 +83,26 @@ class ObsAgentConsole {
         this.settingsBtn = document.getElementById("settings-btn");
         this.closeDetailsBtn = document.getElementById("close-details-btn");
         this.inspector = document.getElementById("inspector");
+        this.logsDrawer = document.getElementById("logs-drawer");
+        this.logsList = document.getElementById("logs-list");
+        this.logsToggleBtn = document.getElementById("logs-toggle-btn");
+        this.logsCloseBtn = document.getElementById("logs-close-btn");
+        this.logsRangeFilter = document.getElementById("logs-range-filter");
+        this.logsFromInput = document.getElementById("logs-from-input");
+        this.logsToInput = document.getElementById("logs-to-input");
+        this.logsRefreshBtn = document.getElementById("logs-refresh-btn");
         this.searchShellBtn = document.getElementById("search-shell-btn");
-        this.computerNavBtn = document.getElementById("computer-nav-btn");
         this.historyLinkBtn = document.getElementById("history-link-btn");
-        this.discoverLinkBtn = document.getElementById("discover-link-btn");
-        this.agentsLinkBtn = document.getElementById("agents-link-btn");
-        this.connectorsLinkBtn = document.getElementById("connectors-link-btn");
-        this.permissionsLinkBtn = document.getElementById("permissions-link-btn");
         this.sidebarNavButtons = [
             this.searchShellBtn,
-            this.computerNavBtn,
-            this.historyLinkBtn,
-            this.discoverLinkBtn,
-            this.agentsLinkBtn,
-            this.connectorsLinkBtn,
-            this.permissionsLinkBtn
+            this.historyLinkBtn
         ].filter(Boolean);
         this.currentSessionTitle = document.getElementById("current-session-title");
         this.welcomeScreen = document.getElementById("welcome-screen");
         this.agentStatus = document.getElementById("agent-status");
         this.transcriptTitle = document.getElementById("transcript-title");
         this.returnMainBtn = document.getElementById("return-main-btn");
+        this.modeSelect = document.getElementById("mode-select");
         this.phaseRail = document.getElementById("phase-rail");
         this.phaseTitle = document.getElementById("phase-title");
         this.phaseTrack = document.getElementById("phase-track");
@@ -148,44 +163,9 @@ class ObsAgentConsole {
             this.setActiveSidebarNav(this.searchShellBtn);
             this.focusComposer("Search workspace, tasks, or previous threads");
         });
-        this.computerNavBtn.addEventListener("click", () => {
-            this.setActiveSidebarNav(this.computerNavBtn);
-            this.setActiveToolContext("computer");
-            this.focusComposer("Use the computer context to inspect screenshots, browsers, and visual flows");
-        });
         this.historyLinkBtn.addEventListener("click", () => {
             this.setActiveSidebarNav(this.historyLinkBtn);
             this.scrollSidebarSection(".history-panel", "History panel focused");
-        });
-        this.discoverLinkBtn.addEventListener("click", () => {
-            this.setActiveSidebarNav(this.discoverLinkBtn);
-            this.store.set({ mode: "plan" });
-            this.renderModePills();
-            this.renderPermissionState();
-            this.updateStatusLine();
-            this.focusComposer("Draft a plan, discover relevant files, and outline the next steps");
-        });
-        this.agentsLinkBtn.addEventListener("click", () => {
-            this.setActiveSidebarNav(this.agentsLinkBtn);
-            this.store.set({ mode: "review" });
-            if (this.store.get().permissionMode === "ask") {
-                this.store.set({ permissionMode: "plan" });
-            }
-            this.setActiveToolContext("agents");
-            this.renderModePills();
-            this.renderPermissionState();
-            this.updateStatusLine();
-            this.focusComposer("Coordinate agent work, review architecture, and inspect task flow");
-        });
-        this.connectorsLinkBtn.addEventListener("click", () => {
-            this.setActiveSidebarNav(this.connectorsLinkBtn);
-            this.store.set({ transcriptFilter: "tool" });
-            this.renderTranscript();
-            this.focusComposer("Reference connectors, skills, or external tools for this request");
-        });
-        this.permissionsLinkBtn.addEventListener("click", () => {
-            this.setActiveSidebarNav(this.permissionsLinkBtn);
-            this.openPermissionModal();
         });
         this.closeSettingsBtn.addEventListener("click", () => this.closeSettings());
         this.saveSettingsBtn.addEventListener("click", () => this.saveSettings());
@@ -201,18 +181,17 @@ class ObsAgentConsole {
         });
         this.messageInput.addEventListener("input", () => this.autoResizeInput());
 
-        document.querySelectorAll(".mode-pill").forEach((button) => {
-            button.addEventListener("click", () => {
-                const nextMode = button.dataset.mode || "agent";
-                const patch = { mode: nextMode };
-                if (nextMode === "review" && this.store.get().permissionMode === "ask") {
-                    patch.permissionMode = "plan";
-                }
-                this.store.set(patch);
-                this.renderModePills();
-                this.renderPermissionState();
-                this.updateStatusLine();
-            });
+        this.modeSelect.addEventListener("change", () => {
+            const nextMode = this.modeSelect.value || "agent";
+            const patch = { mode: nextMode };
+            if (nextMode === "review" && this.store.get().permissionMode === "ask") {
+                patch.permissionMode = "plan";
+            }
+            this.store.set(patch);
+            this.renderModePills();
+            this.renderPermissionState();
+            this.updateStatusLine();
+            this.persistPreferenceState();
         });
 
         this.permissionModeBtn.addEventListener("click", () => this.openPermissionModal());
@@ -242,6 +221,7 @@ class ObsAgentConsole {
                 this.closePermissionModal();
                 this.renderPermissionState();
                 this.updateStatusLine();
+                this.persistPreferenceState();
                 if (this.pendingPermissionAction) {
                     const action = this.pendingPermissionAction;
                     this.pendingPermissionAction = null;
@@ -255,13 +235,49 @@ class ObsAgentConsole {
             this.store.set({ thinkingMode: next });
             this.renderThinkingMode();
             this.updateStatusLine();
+            this.persistPreferenceState();
         });
 
         this.smallToolButtons.forEach((button) => {
             button.addEventListener("click", () => {
+                if (button === this.logsToggleBtn) {
+                    this.toggleLogsDrawer();
+                    return;
+                }
                 this.setActiveToolContext(button.dataset.toolContext || "computer");
             });
         });
+        if (this.logsCloseBtn) {
+            this.logsCloseBtn.addEventListener("click", () => this.toggleLogsDrawer(false));
+        }
+        if (this.logsRangeFilter) {
+            this.logsRangeFilter.addEventListener("change", () => {
+                this.logRange = this.logsRangeFilter.value || "all";
+                const custom = this.logRange === "custom";
+                if (this.logsFromInput) {
+                    this.logsFromInput.classList.toggle("hidden", !custom);
+                }
+                if (this.logsToInput) {
+                    this.logsToInput.classList.toggle("hidden", !custom);
+                }
+                this.refreshLogsFromBackend();
+            });
+        }
+        if (this.logsFromInput) {
+            this.logsFromInput.addEventListener("change", () => this.refreshLogsFromBackend());
+        }
+        if (this.logsToInput) {
+            this.logsToInput.addEventListener("change", () => this.refreshLogsFromBackend());
+        }
+        if (this.logsRefreshBtn) {
+            this.logsRefreshBtn.addEventListener("click", () => this.refreshLogsFromBackend());
+        }
+        if (this.logsDrawer) {
+            const backdrop = this.logsDrawer.querySelector(".logs-backdrop");
+            if (backdrop) {
+                backdrop.addEventListener("click", () => this.toggleLogsDrawer(false));
+            }
+        }
 
         this.settingsModal.addEventListener("click", (event) => {
             if (event.target === this.settingsModal) {
@@ -317,6 +333,7 @@ class ObsAgentConsole {
     }
 
     setActiveToolContext(context) {
+        this.store.set({ toolContext: context });
         this.smallToolButtons.forEach((button) => {
             button.classList.toggle("active", button.dataset.toolContext === context);
         });
@@ -328,6 +345,9 @@ class ObsAgentConsole {
         };
 
         this.composerPlaceholder.textContent = placeholderMap[context] || "Ask OBS to inspect code, use tools, or coordinate agents";
+        this.refreshContextPercent();
+        this.updateStatusLine();
+        this.persistPreferenceState();
         this.messageInput.focus();
     }
 
@@ -336,6 +356,8 @@ class ObsAgentConsole {
             id,
             title: "New thread",
             transcript: [],
+            logs: [],
+            contextPercentOverride: null,
             tasks: {},
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
@@ -346,7 +368,11 @@ class ObsAgentConsole {
         const id = `session_${Date.now()}`;
         const session = this.createEmptySession(id);
         this.sessions.set(id, session);
+        this.store.set({ mode: "agent", selectedTaskId: "main", toolContext: "workspace" });
         this.switchSession(id);
+        this.hydrateSessionLocation(id);
+        this.renderModePills();
+        this.setActiveToolContext("workspace");
         this.persistSessions();
     }
 
@@ -364,6 +390,22 @@ class ObsAgentConsole {
         if (!session.tasks) {
             session.tasks = {};
         }
+        if (!session.logs) {
+            session.logs = [];
+        }
+        if (typeof session.contextPercentOverride !== "number") {
+            session.contextPercentOverride = null;
+        }
+        session.logs = (session.logs || []).filter((entry) => entry && entry.type === "llm_log");
+        session.transcript = (session.transcript || []).filter((entry) => {
+            if (!entry) return false;
+            if (entry.kind === "tool_use" || entry.kind === "tool_result") return false;
+            const content = typeof entry.content === "string" ? entry.content.trim() : "";
+            if (entry.kind === "thinking_text" && !content) return Boolean(entry.pendingPlaceholder);
+            if (entry.kind === "assistant_text" && !content) return false;
+            if (entry.kind === "assistant_text" && /^(OBS is replying|Thinking\.\.\.)$/i.test(content)) return false;
+            return true;
+        });
         delete session.messages;
         return session;
     }
@@ -384,10 +426,60 @@ class ObsAgentConsole {
         this.store.set({ selectedTaskId: "main", tasks: Object.values(session.tasks) });
         this.renderSessionList();
         this.renderTranscript();
+        this.renderLogs();
         this.toggleWelcome(session.transcript.length === 0);
         this.renderTasks();
         this.renderPhaseRail();
+        this.refreshContextPercent();
         this.updateStatusLine();
+        this.hydrateSessionLocation(sessionId);
+    }
+
+    async hydrateSessionLocation(sessionId) {
+        const apiUrl = this.settings.apiUrl;
+        if (!apiUrl || !sessionId) {
+            return;
+        }
+
+        try {
+            const resolved = await fetch(`${apiUrl}/location/resolve`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const payload = await resolved.json().catch(() => ({}));
+            if (resolved.ok && payload?.success) {
+                return;
+            }
+        } catch (error) {
+            console.debug("Server-side location resolve failed", error);
+        }
+
+        try {
+            const browserResolved = await fetch("https://ipwho.is/");
+            const payload = await browserResolved.json().catch(() => ({}));
+            if (!browserResolved.ok || payload?.success === false || payload?.latitude == null || payload?.longitude == null) {
+                return;
+            }
+
+            await fetch(`${apiUrl}/location`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    lat: payload.latitude,
+                    lon: payload.longitude,
+                    city: payload.city || null,
+                    region: payload.region || null,
+                    country_name: payload.country_name || payload.country || null,
+                    source: "browser_ip",
+                    ip: payload.ip || null,
+                    provider: "ipwhois_browser"
+                })
+            });
+        } catch (error) {
+            console.debug("Browser-side IP location resolve failed", error);
+        }
     }
 
     clearCurrentSession() {
@@ -396,7 +488,9 @@ class ObsAgentConsole {
             return;
         }
         session.transcript = [];
+        session.logs = [];
         session.tasks = {};
+        session.contextPercentOverride = null;
         session.title = "New thread";
         session.updatedAt = new Date().toISOString();
         this.currentSessionTitle.textContent = session.title;
@@ -405,6 +499,7 @@ class ObsAgentConsole {
         this.toggleWelcome(true);
         this.renderTasks();
         this.renderPhaseRail();
+        this.refreshContextPercent();
         this.persistSessions();
         this.renderSessionList();
         this.updateStatusLine();
@@ -436,6 +531,7 @@ class ObsAgentConsole {
             item.type = "button";
             item.className = `session-item${session.id === this.currentSessionId ? " active" : ""}`;
             item.innerHTML = `
+                <span class="session-active-indicator" aria-hidden="true"></span>
                 <div class="session-name">${this.escapeHtml(session.title)}</div>
                 <div class="session-preview">${this.escapeHtml(preview.slice(0, 90))}</div>
             `;
@@ -452,14 +548,17 @@ class ObsAgentConsole {
         const selectedTaskId = this.store.get().selectedTaskId;
         const filter = this.store.get().transcriptFilter;
         const taskScoped = selectedTaskId === "main"
-            ? session.transcript.filter((entry) => entry.taskId === "main" || entry.kind === "system_notice")
+            ? session.transcript
             : session.transcript.filter((entry) => entry.taskId === selectedTaskId);
 
         return taskScoped.filter((entry) => {
+            if (entry.kind === "tool_use" || entry.kind === "tool_result") return false;
             if (filter === "all") return true;
             if (filter === "tool") return entry.kind === "tool_use" || entry.kind === "tool_result";
             if (filter === "system") return entry.kind === "system_notice";
-            if (filter === "assistant") return entry.role === "assistant" && (entry.kind === "assistant_text" || entry.kind === "thinking_text");
+            if (filter === "assistant") {
+                return entry.role === "assistant" && (entry.kind === "assistant_text" || entry.kind === "thinking_text");
+            }
             if (filter === "user") return entry.role === "user";
             return true;
         });
@@ -471,7 +570,7 @@ class ObsAgentConsole {
         this.returnMainBtn.classList.toggle("hidden", selectedTaskId === "main");
         this.chatMessages.innerHTML = "";
 
-        const entries = this.getFilteredTranscriptEntries();
+        const entries = this.buildRenderEntries(this.getFilteredTranscriptEntries());
         if (entries.length === 0) {
             const empty = document.createElement("div");
             empty.className = "transcript-empty";
@@ -490,19 +589,142 @@ class ObsAgentConsole {
         }
     }
 
+    buildRenderEntries(entries) {
+        return [...entries];
+    }
+
+    renderMarkdown(text) {
+        const source = String(text || "").replace(/\r\n/g, "\n").trim();
+        if (!source) return "";
+
+        const lines = source.split("\n");
+        const html = [];
+        let index = 0;
+
+        const renderInline = (value) => {
+            let escaped = this.escapeHtml(value);
+            escaped = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
+            escaped = escaped.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+            escaped = escaped.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+            escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>');
+            return escaped;
+        };
+
+        while (index < lines.length) {
+            const line = lines[index];
+            const trimmed = line.trim();
+
+            if (!trimmed) {
+                index += 1;
+                continue;
+            }
+
+            if (trimmed.startsWith("```")) {
+                const codeLines = [];
+                index += 1;
+                while (index < lines.length && !lines[index].trim().startsWith("```")) {
+                    codeLines.push(lines[index]);
+                    index += 1;
+                }
+                if (index < lines.length) index += 1;
+                html.push(`<pre><code>${this.escapeHtml(codeLines.join("\n"))}</code></pre>`);
+                continue;
+            }
+
+            const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+            if (headingMatch) {
+                const level = headingMatch[1].length;
+                html.push(`<h${level}>${renderInline(headingMatch[2])}</h${level}>`);
+                index += 1;
+                continue;
+            }
+
+            if (/^\d+\.\s+/.test(trimmed)) {
+                const items = [];
+                while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+                    items.push(lines[index].trim().replace(/^\d+\.\s+/, ""));
+                    index += 1;
+                }
+                html.push(`<ol>${items.map((item) => `<li>${renderInline(item)}</li>`).join("")}</ol>`);
+                continue;
+            }
+
+            if (/^[-*+]\s+/.test(trimmed)) {
+                const items = [];
+                while (index < lines.length && /^[-*+]\s+/.test(lines[index].trim())) {
+                    items.push(lines[index].trim().replace(/^[-*+]\s+/, ""));
+                    index += 1;
+                }
+                html.push(`<ul>${items.map((item) => `<li>${renderInline(item)}</li>`).join("")}</ul>`);
+                continue;
+            }
+
+            if (/^>\s+/.test(trimmed)) {
+                const quotes = [];
+                while (index < lines.length && /^>\s+/.test(lines[index].trim())) {
+                    quotes.push(lines[index].trim().replace(/^>\s+/, ""));
+                    index += 1;
+                }
+                html.push(`<blockquote>${quotes.map((item) => renderInline(item)).join("<br>")}</blockquote>`);
+                continue;
+            }
+
+            const paragraphLines = [];
+            while (index < lines.length && lines[index].trim()) {
+                paragraphLines.push(lines[index].trim());
+                index += 1;
+            }
+            html.push(`<p>${renderInline(paragraphLines.join("\n")).replace(/\n/g, "<br>")}</p>`);
+        }
+
+        return html.join("");
+    }
+
+    setMessageBodyContent(target, text, entry) {
+        if (entry.kind === "thinking_text" && entry.pendingPlaceholder && !String(text || "").trim()) {
+            target.innerHTML = `
+                <div class="thinking-pending">
+                    <span class="thinking-pending-label">Waiting for first reasoning token</span>
+                    <span class="thinking-pending-dots" aria-hidden="true">
+                        <span></span><span></span><span></span>
+                    </span>
+                </div>
+            `;
+            return;
+        }
+        if (entry.kind === "system_notice" && entry.phase === "compression") {
+            target.innerHTML = `
+                <div class="compression-inline">
+                    <span class="compression-spinner"><i class="fas fa-spinner"></i></span>
+                    <span>${this.escapeHtml(text || "Compressing context...")}</span>
+                </div>
+            `;
+            return;
+        }
+        const supportsMarkdown = ["assistant_text", "system_notice", "tool_result"].includes(entry.kind);
+        if (supportsMarkdown) {
+            target.innerHTML = this.renderMarkdown(text);
+            return;
+        }
+        target.textContent = text;
+    }
+
     renderTranscriptEntry(entry, parent) {
         const wrapper = document.createElement("article");
         wrapper.className = `message ${this.mapEntryRole(entry)}`;
+        if (entry.kind === "system_notice" && entry.phase === "compression") {
+            wrapper.classList.add("compression-notice");
+        }
         if (entry.taskId && entry.taskId !== "main" && entry.taskId === this.store.get().selectedTaskId) {
             wrapper.classList.add("active-task");
         }
-
         const meta = document.createElement("div");
         meta.className = "message-meta";
-        meta.innerHTML = `
-            <span>${this.escapeHtml(this.getEntryLabel(entry))}</span>
-            <span>${new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-        `;
+        const metaLabel = document.createElement("span");
+        metaLabel.textContent = this.getEntryLabel(entry);
+        const metaTime = document.createElement("span");
+        metaTime.textContent = new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        meta.append(metaLabel, metaTime);
         if (entry.kind === "tool_use" || entry.kind === "tool_result") {
             const state = document.createElement("span");
             state.className = `message-state ${entry.kind === "tool_use" ? "running" : (entry.success === false ? "error" : "done")}`;
@@ -512,18 +734,25 @@ class ObsAgentConsole {
 
         const body = document.createElement("div");
         const isThinkingEntry = entry.kind === "thinking_text";
-        const isLong = (entry.content || "").length > 420;
-        const isCollapsible = isThinkingEntry || isLong;
+        const isCollapsible = isThinkingEntry;
         const isPinnedThinking = isThinkingEntry && this.pinnedThinkingMessages.has(entry.id);
         const isCollapsed = isCollapsible && !(isPinnedThinking || this.collapsedMessages.has(entry.id));
+        const displayContent = entry.content || "";
         body.className = `message-body${entry.streaming ? " is-streaming" : ""}${isCollapsed ? " collapsed" : ""}`;
-        body.textContent = entry.content || "";
+        this.setMessageBodyContent(body, displayContent, entry);
+        if (isCollapsible) {
+            body.style.maxHeight = isCollapsed ? "0px" : `${Math.max(body.scrollHeight + 24, 160)}px`;
+            body.style.opacity = isCollapsed ? "0" : "1";
+        }
 
         wrapper.appendChild(meta);
+        let summary = null;
         if (isThinkingEntry) {
-            const summary = document.createElement("div");
-            summary.className = `thinking-summary${isCollapsed ? "" : " hidden"}`;
+            summary = document.createElement("div");
+            summary.className = "thinking-summary";
             summary.textContent = this.getThinkingSummary(entry.content, entry.streaming);
+            summary.style.maxHeight = isCollapsed ? "72px" : "0px";
+            summary.style.opacity = isCollapsed ? "1" : "0";
             wrapper.appendChild(summary);
         }
         if (entry.kind === "tool_use" || entry.kind === "tool_result") {
@@ -537,25 +766,25 @@ class ObsAgentConsole {
         if (isCollapsible) {
             const toggle = document.createElement("button");
             toggle.type = "button";
-            toggle.className = "message-toggle";
-            toggle.textContent = isCollapsed
-                ? (isThinkingEntry ? "Pin open" : "Expand")
-                : (isThinkingEntry ? "Unpin" : "Collapse");
+            toggle.className = isThinkingEntry ? "message-toggle thinking-toggle" : "message-toggle";
+            if (isThinkingEntry) {
+                toggle.innerHTML = `<i class="fas fa-chevron-${isCollapsed ? "down" : "up"}" aria-hidden="true"></i>`;
+                toggle.classList.toggle("expanded", !isCollapsed);
+                toggle.setAttribute("aria-label", isCollapsed ? "Expand thinking" : "Collapse thinking");
+                toggle.title = isCollapsed ? "Expand thinking" : "Collapse thinking";
+            } else {
+                toggle.textContent = isCollapsed ? "Expand" : "Collapse";
+            }
             toggle.addEventListener("click", () => {
                 if (isThinkingEntry) {
-                    if (this.pinnedThinkingMessages.has(entry.id)) {
-                        this.pinnedThinkingMessages.delete(entry.id);
-                    } else {
+                    const willExpand = !this.pinnedThinkingMessages.has(entry.id);
+                    if (willExpand) {
                         this.pinnedThinkingMessages.add(entry.id);
-                    }
-                } else {
-                    if (this.collapsedMessages.has(entry.id)) {
-                        this.collapsedMessages.delete(entry.id);
                     } else {
-                        this.collapsedMessages.add(entry.id);
+                        this.pinnedThinkingMessages.delete(entry.id);
                     }
+                    this.animateThinkingToggle({ wrapper, body, summary, toggle, entry, expand: willExpand });
                 }
-                this.renderTranscript(true);
             });
             actions.appendChild(toggle);
         }
@@ -580,21 +809,61 @@ class ObsAgentConsole {
         parent.appendChild(wrapper);
     }
 
+    animateThinkingToggle({ wrapper, body, summary, toggle, entry, expand }) {
+        wrapper.classList.toggle("thinking-expanded", expand);
+        body.classList.toggle("collapsed", !expand);
+        toggle.innerHTML = `<i class="fas fa-chevron-${expand ? "up" : "down"}" aria-hidden="true"></i>`;
+        toggle.classList.toggle("expanded", expand);
+        toggle.setAttribute("aria-label", expand ? "Collapse thinking" : "Expand thinking");
+        toggle.title = expand ? "Collapse thinking" : "Expand thinking";
+
+        const fullHeight = `${Math.max(body.scrollHeight + 24, 160)}px`;
+        body.style.maxHeight = expand ? "0px" : fullHeight;
+        if (summary) {
+            summary.style.maxHeight = expand ? "72px" : `${Math.max(summary.scrollHeight + 16, 56)}px`;
+        }
+        requestAnimationFrame(() => {
+            body.style.maxHeight = expand ? fullHeight : "0px";
+            body.style.opacity = expand ? "1" : "0";
+            if (summary) {
+                summary.style.maxHeight = expand ? "0px" : "72px";
+                summary.style.opacity = expand ? "0" : "1";
+            }
+        });
+
+        window.setTimeout(() => {
+            if (expand) {
+                body.style.maxHeight = "none";
+            }
+            this.updateTranscriptEntry(entry.id, {});
+        }, 220);
+    }
+
     buildToolCard(entry) {
         const card = document.createElement("div");
         card.className = `tool-card ${entry.kind}`;
 
+        const statusIcon = document.createElement("div");
+        statusIcon.className = `tool-card-icon ${entry.kind === "tool_use" ? "running" : (entry.success === false ? "error" : "done")}`;
+        statusIcon.innerHTML = entry.kind === "tool_use"
+            ? '<i class="fas fa-spinner"></i>'
+            : (entry.success === false ? '<i class="fas fa-triangle-exclamation"></i>' : '<i class="fas fa-check"></i>');
+        card.appendChild(statusIcon);
+
+        const contentWrap = document.createElement("div");
+        contentWrap.className = "tool-card-content";
+
         const title = document.createElement("div");
         title.className = "tool-card-title";
         title.textContent = entry.toolName || entry.taskId || "tool";
-        card.appendChild(title);
+        contentWrap.appendChild(title);
 
         const subtitle = document.createElement("div");
         subtitle.className = "tool-card-subtitle";
         subtitle.textContent = entry.kind === "tool_use"
-            ? "Tool invocation started"
+            ? "Invoking tool"
             : (entry.success === false ? "Tool finished with an error" : "Tool result captured");
-        card.appendChild(subtitle);
+        contentWrap.appendChild(subtitle);
 
         if (entry.taskId) {
             const pillRow = document.createElement("div");
@@ -609,9 +878,10 @@ class ObsAgentConsole {
                 phasePill.textContent = entry.phase;
                 pillRow.appendChild(phasePill);
             }
-            card.appendChild(pillRow);
+            contentWrap.appendChild(pillRow);
         }
 
+        card.appendChild(contentWrap);
         return card;
     }
 
@@ -644,6 +914,7 @@ class ObsAgentConsole {
             toolName: entry.toolName || null,
             phase: entry.phase || null,
             success: entry.success,
+            pendingPlaceholder: Boolean(entry.pendingPlaceholder),
             timestamp: entry.timestamp || new Date().toISOString(),
             streaming: Boolean(entry.streaming)
         };
@@ -651,8 +922,10 @@ class ObsAgentConsole {
         session.updatedAt = new Date().toISOString();
         this.persistSessions();
         this.renderTranscript();
+        this.renderLogs();
         this.renderSessionList();
         this.renderPhaseRail();
+        this.refreshContextPercent();
         this.updateStatusLine();
         return normalized;
     }
@@ -671,8 +944,30 @@ class ObsAgentConsole {
         session.updatedAt = new Date().toISOString();
         this.persistSessions();
         this.renderTranscript(true);
+        this.renderLogs();
         this.renderSessionList();
         this.renderPhaseRail();
+        this.refreshContextPercent();
+        this.updateStatusLine();
+    }
+
+    removeTranscriptEntry(entryId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        const nextTranscript = session.transcript.filter((entry) => entry.id !== entryId);
+        if (nextTranscript.length === session.transcript.length) {
+            return;
+        }
+
+        session.transcript = nextTranscript;
+        session.updatedAt = new Date().toISOString();
+        this.persistSessions();
+        this.renderTranscript(true);
+        this.renderLogs();
+        this.renderSessionList();
+        this.renderPhaseRail();
+        this.refreshContextPercent();
         this.updateStatusLine();
     }
 
@@ -707,12 +1002,37 @@ class ObsAgentConsole {
         return /(run|test|edit|file|search|grep|bash|command|docker|fix|review|修复|修改|测试|搜索|执行|命令|文件|审查)/i.test(content);
     }
 
+    isSimpleChat(content) {
+        return /^(hi|hello|hey|你好|嗨|在吗|早上好|下午好|晚上好)\W*$/i.test((content || "").trim());
+    }
+
     getEffectivePermissionMode() {
         const state = this.store.get();
         if (state.mode === "review" && state.permissionMode === "ask") {
             return "plan";
         }
         return state.permissionMode;
+    }
+
+    getEffectiveMode(content) {
+        const selectedMode = this.store.get().mode;
+        if (this.isSimpleChat(content)) {
+            return "agent";
+        }
+        return selectedMode;
+    }
+
+    buildContextPayload() {
+        const { toolContext } = this.store.get();
+        const contextMap = {
+            computer: "Focus on visual/browser/computer-use context. Prefer screenshot, page-state, and UI interaction reasoning when relevant.",
+            workspace: "Focus on the current workspace, local files, directories, code structure, and repository state.",
+            agents: "Focus on agent coordination, task breakdown, review flow, and multi-step execution planning only when the request actually requires it."
+        };
+        return {
+            toolContext,
+            context: contextMap[toolContext] || contextMap.workspace
+        };
     }
 
     getThinkingSummary(content, streaming = false) {
@@ -774,9 +1094,13 @@ class ObsAgentConsole {
         if (!session) return;
 
         const permissionConfirmed = this.permissionConfirmedForSubmit;
+        const effectivePermissionMode = this.getEffectivePermissionMode();
         this.permissionConfirmedForSubmit = false;
         this.isSending = true;
+        this.setSendingState(true);
         this.toggleWelcome(false);
+        const requestMode = this.getEffectiveMode(content);
+        const { toolContext, context } = this.buildContextPayload();
 
         this.addTranscriptEntry({
             role: "user",
@@ -791,18 +1115,22 @@ class ObsAgentConsole {
         }
 
         this.bumpContextPercent(content);
+        if (requestMode !== this.store.get().mode) {
+            this.store.set({ mode: requestMode });
+            this.renderModePills();
+        }
 
         this.messageInput.value = "";
         this.autoResizeInput();
         this.resetTasks();
 
-        try {
-            let assistantEntry = null;
-            let thinkingEntry = null;
-            let rawAssistantText = "";
-            let workflowNoticeEntry = null;
+        let assistantEntry = null;
+        let thinkingEntry = null;
+        let answerBuffer = "";
+        let workflowNoticeEntry = null;
 
-            if (this.store.get().mode === "review") {
+        try {
+            if (requestMode === "review") {
                 workflowNoticeEntry = this.addTranscriptEntry({
                     role: "assistant",
                     content: "Review workflow queued. Building execution plan and waiting for the first phase update...",
@@ -810,13 +1138,26 @@ class ObsAgentConsole {
                     taskId: "main",
                     phase: "queued"
                 });
-            } else if (this.store.get().mode === "plan") {
+            } else if (requestMode === "plan") {
                 workflowNoticeEntry = this.addTranscriptEntry({
                     role: "assistant",
                     content: "Planning workflow queued. Generating task graph and coordinator outline...",
                     kind: "system_notice",
                     taskId: "main",
                     phase: "queued"
+                });
+            } else {
+                assistantEntry = null;
+            }
+
+            if (this.store.get().thinkingMode && !thinkingEntry) {
+                thinkingEntry = this.addTranscriptEntry({
+                    role: "assistant",
+                    content: "",
+                    kind: "thinking_text",
+                    taskId: "main",
+                    streaming: true,
+                    pendingPlaceholder: true
                 });
             }
 
@@ -825,13 +1166,23 @@ class ObsAgentConsole {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     tool_name: "chat",
+                    message: content,
+                    session_id: this.currentSessionId,
+                    permission_mode: effectivePermissionMode,
+                    permission_confirmed: permissionConfirmed || effectivePermissionMode !== "ask",
+                    thinking_mode: this.store.get().thinkingMode,
+                    mode: requestMode,
+                    tool_context: toolContext,
+                    context,
                     parameters: {
                         message: content,
                         session_id: this.currentSessionId,
-                        permission_mode: this.getEffectivePermissionMode(),
-                        permission_confirmed: permissionConfirmed || this.getEffectivePermissionMode() !== "ask",
+                        permission_mode: effectivePermissionMode,
+                        permission_confirmed: permissionConfirmed || effectivePermissionMode !== "ask",
                         thinking_mode: this.store.get().thinkingMode,
-                        mode: this.store.get().mode
+                        mode: requestMode,
+                        tool_context: toolContext,
+                        context
                     }
                 })
             });
@@ -840,229 +1191,284 @@ class ObsAgentConsole {
                 throw new Error(`HTTP ${response.status}`);
             }
 
+            const processSseChunk = (chunkText) => {
+                const line = chunkText.split("\n").find((part) => part.startsWith("data: "));
+                if (!line) return;
+
+                const payload = JSON.parse(line.slice(6));
+
+                if (payload.type === "plan") {
+                    const planText = this.formatPlanPayload(payload);
+                    if (!assistantEntry) {
+                        assistantEntry = this.addTranscriptEntry({
+                            role: "assistant",
+                            content: planText,
+                            kind: "assistant_text",
+                            taskId: "main",
+                            streaming: false
+                        });
+                    } else {
+                        this.updateTranscriptEntry(assistantEntry.id, {
+                            content: planText,
+                            streaming: false
+                        });
+                    }
+                    return;
+                }
+
+                if (payload.type === "task_start") {
+                    const task = this.registerTask(
+                        payload.task_id || `task_${Date.now()}`,
+                        payload.description || payload.skill || "Task"
+                    );
+                    this.addTranscriptEntry({
+                        role: "assistant",
+                        content: payload.description || `Started ${task.title}`,
+                        kind: "tool_use",
+                        taskId: task.id,
+                        toolName: payload.skill || task.title,
+                        phase: payload.phase || "execution"
+                    });
+                    return;
+                }
+
+                if (payload.type === "task_complete") {
+                    const task = this.completeTaskById(
+                        payload.task_id,
+                        payload.success,
+                        payload.content || payload.description || "Task completed."
+                    );
+                    if (task) {
+                        this.addTranscriptEntry({
+                            role: "assistant",
+                            content: payload.content || "Task completed.",
+                            kind: "tool_result",
+                            taskId: task.id,
+                            toolName: task.title,
+                            phase: payload.phase || "execution",
+                            success: payload.success
+                        });
+                    }
+                    return;
+                }
+
+                if (payload.type === "phase" || payload.type === "layer_start" || payload.type === "verification" || payload.type === "complete") {
+                    if (workflowNoticeEntry) {
+                        this.updateTranscriptEntry(workflowNoticeEntry.id, {
+                            content: payload.content || payload.phase || "System update",
+                            phase: payload.phase || null
+                        });
+                        workflowNoticeEntry = null;
+                    }
+                    this.addTranscriptEntry({
+                        role: "assistant",
+                        content: payload.content || payload.phase || "System update",
+                        kind: "system_notice",
+                        taskId: "main",
+                        phase: payload.phase || null
+                    });
+                    return;
+                }
+
+                if (payload.type === "compression_start" || payload.type === "compression_complete") {
+                    const session = this.getCurrentSession();
+                    this.addTranscriptEntry({
+                        role: "assistant",
+                        content: payload.content || (payload.type === "compression_start" ? "Compressing context..." : "Context compression complete."),
+                        kind: "system_notice",
+                        taskId: "main",
+                        phase: payload.type === "compression_start" ? "compression" : "complete"
+                    });
+                    const nextPercent = payload.type === "compression_complete"
+                        ? (payload.after_percent ?? this.store.get().contextPercent)
+                        : (payload.target_percent ?? this.store.get().contextPercent);
+                    if (session) {
+                        session.contextPercentOverride = nextPercent;
+                        this.persistSessions();
+                    }
+                    this.store.set({ contextPercent: nextPercent });
+                    this.contextPill.textContent = `Context · ${nextPercent}%`;
+                    return;
+                }
+
+                if (payload.type === "llm_log") {
+                    this.appendSessionLog({
+                        type: "llm_log",
+                        timestamp: payload.timestamp || new Date().toISOString(),
+                        phase: payload.phase,
+                        direction: payload.direction,
+                        payload: payload.payload
+                    });
+                    if (this.logsDrawer && !this.logsDrawer.classList.contains("hidden")) {
+                        this.refreshLogsFromBackend();
+                    }
+                    return;
+                }
+
+                if (payload.type === "thinking_delta") {
+                    if (!this.store.get().thinkingMode) {
+                        return;
+                    }
+                    const nextThinking = `${thinkingEntry?.content || ""}${payload.delta || ""}`;
+                    if (!thinkingEntry) {
+                        thinkingEntry = this.addTranscriptEntry({
+                            role: "assistant",
+                            content: nextThinking,
+                            kind: "thinking_text",
+                            taskId: "main",
+                            streaming: true
+                        });
+                    } else {
+                        this.updateTranscriptEntry(thinkingEntry.id, {
+                            content: nextThinking,
+                            streaming: true,
+                            pendingPlaceholder: false
+                        });
+                    }
+                    return;
+                }
+
+                if (payload.type === "answer_delta") {
+                    answerBuffer += payload.delta || "";
+                    if (!answerBuffer.trim()) {
+                        return;
+                    }
+                    if (!assistantEntry) {
+                        assistantEntry = this.addTranscriptEntry({
+                            role: "assistant",
+                            content: answerBuffer,
+                            kind: "assistant_text",
+                            taskId: "main",
+                            streaming: true
+                        });
+                    } else {
+                        this.updateTranscriptEntry(assistantEntry.id, {
+                            content: answerBuffer,
+                            streaming: true
+                        });
+                    }
+                    return;
+                }
+
+                if (payload.content) {
+                    answerBuffer += payload.content || "";
+                    if (!answerBuffer.trim()) {
+                        return;
+                    }
+                    if (!assistantEntry) {
+                        assistantEntry = this.addTranscriptEntry({
+                            role: "assistant",
+                            content: answerBuffer,
+                            kind: "assistant_text",
+                            taskId: "main",
+                            streaming: true
+                        });
+                    } else {
+                        this.updateTranscriptEntry(assistantEntry.id, {
+                            content: answerBuffer,
+                            streaming: true
+                        });
+                    }
+                }
+
+                if (payload.error) {
+                    throw new Error(payload.error);
+                }
+
+                if (payload.done) {
+                    if (workflowNoticeEntry) {
+                        this.updateTranscriptEntry(workflowNoticeEntry.id, {
+                            content: requestMode === "review"
+                                ? "Review workflow finished waiting for planner output."
+                                : "Planning workflow finished waiting for planner output."
+                        });
+                        workflowNoticeEntry = null;
+                    }
+                    if (assistantEntry) {
+                        this.updateTranscriptEntry(assistantEntry.id, { streaming: false });
+                    } else if (answerBuffer.trim()) {
+                        assistantEntry = this.addTranscriptEntry({
+                            role: "assistant",
+                            content: answerBuffer.trim(),
+                            kind: "assistant_text",
+                            taskId: "main",
+                            streaming: false
+                        });
+                    } else if (!payload.error) {
+                        throw new Error("模型没有返回可显示的正文");
+                    }
+                    if (thinkingEntry) {
+                        if (thinkingEntry.pendingPlaceholder && !(thinkingEntry.content || "").trim()) {
+                            this.removeTranscriptEntry(thinkingEntry.id);
+                            thinkingEntry = null;
+                        } else {
+                            this.updateTranscriptEntry(thinkingEntry.id, {
+                                streaming: false,
+                                pendingPlaceholder: false
+                            });
+                        }
+                    }
+                }
+            };
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
 
             while (true) {
                 const { value, done } = await reader.read();
-                if (done) break;
+                if (value) {
+                    buffer += decoder.decode(value, { stream: !done });
+                }
 
-                buffer += decoder.decode(value, { stream: true });
-                const chunks = buffer.split("\n\n");
-                buffer = chunks.pop() || "";
+                // 更即时地处理每一行，不等待完整的 chunk
+                const normalizedBuffer = buffer.replace(/\r\n/g, "\n");
+                const lines = normalizedBuffer.split("\n");
+                buffer = lines.pop() || "";
 
-                for (const chunk of chunks) {
-                    const line = chunk.split("\n").find((part) => part.startsWith("data: "));
-                    if (!line) continue;
-
-                    const payload = JSON.parse(line.slice(6));
-
-                    if (payload.type === "plan") {
-                        const planText = this.formatPlanPayload(payload);
-                        if (!assistantEntry) {
-                            assistantEntry = this.addTranscriptEntry({
-                                role: "assistant",
-                                content: planText,
-                                kind: "assistant_text",
-                                taskId: "main",
-                                streaming: false
-                            });
-                        } else {
-                            this.updateTranscriptEntry(assistantEntry.id, {
-                                content: planText,
-                                streaming: false
-                            });
-                        }
-                        continue;
+                for (const line of lines) {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine && trimmedLine.startsWith("data: ")) {
+                        processSseChunk(trimmedLine);
                     }
+                }
 
-                    if (payload.type === "task_start") {
-                        const task = this.registerTask(
-                            payload.task_id || `task_${Date.now()}`,
-                            payload.description || payload.skill || "Task"
-                        );
-                        this.addTranscriptEntry({
-                            role: "assistant",
-                            content: payload.description || `Started ${task.title}`,
-                            kind: "tool_use",
-                            taskId: task.id,
-                            toolName: payload.skill || task.title,
-                            phase: payload.phase || "execution"
-                        });
-                        continue;
+                if (done) {
+                    const tail = buffer.trim();
+                    if (tail && tail.startsWith("data: ")) {
+                        processSseChunk(tail);
                     }
-
-                    if (payload.type === "task_complete") {
-                        const task = this.completeTaskById(
-                            payload.task_id,
-                            payload.success,
-                            payload.content || payload.description || "Task completed."
-                        );
-                        if (task) {
-                            this.addTranscriptEntry({
-                                role: "assistant",
-                                content: payload.content || "Task completed.",
-                                kind: "tool_result",
-                                taskId: task.id,
-                                toolName: task.title,
-                                phase: payload.phase || "execution",
-                                success: payload.success
-                            });
-                        }
-                        continue;
-                    }
-
-                    if (payload.type === "phase" || payload.type === "layer_start" || payload.type === "verification" || payload.type === "complete") {
-                        if (workflowNoticeEntry) {
-                            this.updateTranscriptEntry(workflowNoticeEntry.id, {
-                                content: payload.content || payload.phase || "System update",
-                                phase: payload.phase || null
-                            });
-                            workflowNoticeEntry = null;
-                        }
-                        this.addTranscriptEntry({
-                            role: "assistant",
-                            content: payload.content || payload.phase || "System update",
-                            kind: "system_notice",
-                            taskId: "main",
-                            phase: payload.phase || null
-                        });
-                        continue;
-                    }
-
-                    if (payload.content) {
-                        rawAssistantText += payload.content;
-                        const parsed = this.parseAssistantStream(rawAssistantText);
-
-                        if (parsed.hasThinking) {
-                            if (!thinkingEntry && parsed.thinkingText) {
-                                thinkingEntry = this.addTranscriptEntry({
-                                    role: "assistant",
-                                    content: parsed.thinkingText,
-                                    kind: "thinking_text",
-                                    taskId: "main",
-                                    streaming: true
-                                });
-                            } else if (thinkingEntry) {
-                                this.updateTranscriptEntry(thinkingEntry.id, {
-                                    content: parsed.thinkingText,
-                                    streaming: parsed.inThinking
-                                });
-                            }
-
-                            if (parsed.answerText) {
-                                if (!assistantEntry) {
-                                    assistantEntry = this.addTranscriptEntry({
-                                        role: "assistant",
-                                        content: parsed.answerText,
-                                        kind: "assistant_text",
-                                        taskId: "main",
-                                        streaming: true
-                                    });
-                                } else {
-                                    this.updateTranscriptEntry(assistantEntry.id, {
-                                        content: parsed.answerText,
-                                        streaming: true
-                                    });
-                                }
-                            }
-                        } else {
-                            if (!assistantEntry) {
-                                assistantEntry = this.addTranscriptEntry({
-                                    role: "assistant",
-                                    content: parsed.answerText || this.getPendingAssistantText(),
-                                    kind: "assistant_text",
-                                    taskId: "main",
-                                    streaming: true
-                                });
-                            } else {
-                                this.updateTranscriptEntry(assistantEntry.id, {
-                                    content: parsed.answerText,
-                                    streaming: true
-                                });
-                            }
-                        }
-                    }
-
-                    if (payload.type === "thinking_delta") {
-                        if (!thinkingEntry) {
-                            thinkingEntry = this.addTranscriptEntry({
-                                role: "assistant",
-                                content: payload.delta || "",
-                                kind: "thinking_text",
-                                taskId: "main",
-                                streaming: true
-                            });
-                        } else {
-                            this.updateTranscriptEntry(thinkingEntry.id, {
-                                content: `${thinkingEntry.content || ""}${payload.delta || ""}`,
-                                streaming: true
-                            });
-                        }
-                        continue;
-                    }
-
-                    if (payload.type === "answer_delta") {
-                        if (!assistantEntry) {
-                            assistantEntry = this.addTranscriptEntry({
-                                role: "assistant",
-                                content: payload.delta || "",
-                                kind: "assistant_text",
-                                taskId: "main",
-                                streaming: true
-                            });
-                        } else {
-                            this.updateTranscriptEntry(assistantEntry.id, {
-                                content: `${assistantEntry.content || ""}${payload.delta || ""}`,
-                                streaming: true
-                            });
-                        }
-                        continue;
-                    }
-
-                    if (payload.error) {
-                        throw new Error(payload.error);
-                    }
-
-                    if (payload.done) {
-                        if (workflowNoticeEntry) {
-                            this.updateTranscriptEntry(workflowNoticeEntry.id, {
-                                content: this.store.get().mode === "review"
-                                    ? "Review workflow finished waiting for planner output."
-                                    : "Planning workflow finished waiting for planner output."
-                            });
-                            workflowNoticeEntry = null;
-                        }
-                        if (thinkingEntry) {
-                            this.updateTranscriptEntry(thinkingEntry.id, { streaming: false });
-                        }
-                        if (assistantEntry) {
-                            this.updateTranscriptEntry(assistantEntry.id, { streaming: false });
-                        } else if (!thinkingEntry) {
-                            assistantEntry = this.addTranscriptEntry({
-                                role: "assistant",
-                                content: this.getPendingAssistantText(),
-                                kind: "assistant_text",
-                                taskId: "main",
-                                streaming: false
-                            });
-                        }
-                    }
+                    break;
                 }
             }
 
-            if (thinkingEntry) {
-                this.updateTranscriptEntry(thinkingEntry.id, { streaming: false });
-            }
             if (assistantEntry) {
                 this.updateTranscriptEntry(assistantEntry.id, { streaming: false });
+            }
+            if (thinkingEntry) {
+                if (thinkingEntry.pendingPlaceholder && !(thinkingEntry.content || "").trim()) {
+                    this.removeTranscriptEntry(thinkingEntry.id);
+                } else {
+                    this.updateTranscriptEntry(thinkingEntry.id, {
+                        streaming: false,
+                        pendingPlaceholder: false
+                    });
+                }
             }
         } catch (error) {
             if (workflowNoticeEntry) {
                 this.updateTranscriptEntry(workflowNoticeEntry.id, {
                     content: `Workflow interrupted: ${error.message}`
                 });
+            }
+            if (thinkingEntry) {
+                if (thinkingEntry.pendingPlaceholder && !(thinkingEntry.content || "").trim()) {
+                    this.removeTranscriptEntry(thinkingEntry.id);
+                } else {
+                    this.updateTranscriptEntry(thinkingEntry.id, {
+                        streaming: false,
+                        pendingPlaceholder: false
+                    });
+                }
             }
             this.addTranscriptEntry({
                 role: "assistant",
@@ -1073,8 +1479,17 @@ class ObsAgentConsole {
             });
         } finally {
             this.isSending = false;
+            this.setSendingState(false);
             this.updateStatusLine();
         }
+    }
+
+    setSendingState(isSending) {
+        this.sendBtn.disabled = isSending;
+        this.sendBtn.classList.toggle("is-sending", isSending);
+        this.sendBtn.innerHTML = isSending
+            ? '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i>'
+            : '<i class="fas fa-arrow-up" aria-hidden="true"></i>';
     }
 
     formatPlanPayload(payload) {
@@ -1119,7 +1534,7 @@ class ObsAgentConsole {
         task.state = "running";
         task.phase = "execution";
         session.tasks[taskId] = task;
-        this.store.set({ tasks: Object.values(session.tasks), selectedTaskId: taskId });
+        this.store.set({ tasks: Object.values(session.tasks) });
         this.renderTasks();
         this.renderTranscript();
         return task;
@@ -1246,9 +1661,9 @@ class ObsAgentConsole {
 
     renderModePills() {
         const mode = this.store.get().mode;
-        document.querySelectorAll(".mode-pill").forEach((button) => {
-            button.classList.toggle("active", button.dataset.mode === mode);
-        });
+        if (this.modeSelect) {
+            this.modeSelect.value = mode;
+        }
     }
 
     async refreshRuntime() {
@@ -1347,6 +1762,7 @@ class ObsAgentConsole {
         [
             `mode:${state.mode}`,
             `permission:${this.getEffectivePermissionMode()}`,
+            `context:${state.toolContext}`,
             `messages:${transcriptCount}`,
             `model:${this.shortenModel(state.runtime?.model)}`
         ].forEach((text) => this.statuslineLeft.appendChild(this.createStatusItem(text)));
@@ -1361,10 +1777,170 @@ class ObsAgentConsole {
 
     bumpContextPercent(input) {
         const session = this.getCurrentSession();
+        const baseline = typeof session?.contextPercentOverride === "number" ? session.contextPercentOverride : null;
         const historySize = (session?.transcript || []).reduce((sum, entry) => sum + (entry.content?.length || 0), 0) + input.length;
-        const contextPercent = Math.min(98, Math.max(1, Math.round(historySize / 120)));
+        const contextBonus = this.store.get().toolContext === "agents" ? 8 : 4;
+        const estimated = Math.min(98, Math.max(1, Math.round(historySize / 140) + contextBonus));
+        const contextPercent = baseline !== null
+            ? Math.min(98, Math.max(baseline, baseline + Math.round(input.length / 120)))
+            : estimated;
         this.store.set({ contextPercent });
         this.contextPill.textContent = `Context · ${contextPercent}%`;
+    }
+
+    refreshContextPercent() {
+        const session = this.getCurrentSession();
+        if (typeof session?.contextPercentOverride === "number") {
+            this.store.set({ contextPercent: session.contextPercentOverride });
+            this.contextPill.textContent = `Context · ${session.contextPercentOverride}%`;
+            return;
+        }
+        const historySize = (session?.transcript || []).reduce((sum, entry) => sum + (entry.content?.length || 0), 0);
+        const contextBonus = this.store.get().toolContext === "agents" ? 8 : 4;
+        const contextPercent = historySize > 0
+            ? Math.min(98, Math.max(1, Math.round(historySize / 140) + contextBonus))
+            : contextBonus;
+        this.store.set({ contextPercent });
+        this.contextPill.textContent = `Context · ${contextPercent}%`;
+    }
+
+    appendSessionLog(entry) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+        session.logs = session.logs || [];
+        const normalized = {
+            id: `log_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+            ...entry
+        };
+        const fingerprint = JSON.stringify([
+            normalized.type,
+            normalized.phase || null,
+            normalized.direction || null,
+            normalized.timestamp || null,
+            normalized.payload || null
+        ]);
+        const duplicate = session.logs.some((item) => JSON.stringify([
+            item.type,
+            item.phase || null,
+            item.direction || null,
+            item.timestamp || null,
+            item.payload || null
+        ]) === fingerprint);
+        if (duplicate) {
+            return;
+        }
+        session.logs.push(normalized);
+        session.logs = session.logs.slice(-400);
+        session.updatedAt = new Date().toISOString();
+        this.persistSessions();
+        this.renderLogs();
+    }
+
+    toggleLogsDrawer(force = null) {
+        if (!this.logsDrawer) return;
+        const shouldOpen = typeof force === "boolean" ? force : this.logsDrawer.classList.contains("hidden");
+        this.logsDrawer.classList.toggle("hidden", !shouldOpen);
+        this.logsDrawer.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+        if (this.logsToggleBtn) {
+            this.logsToggleBtn.classList.toggle("active", shouldOpen);
+        }
+        if (shouldOpen) {
+            this.refreshLogsFromBackend();
+        }
+    }
+
+    async refreshLogsFromBackend() {
+        const session = this.getCurrentSession();
+        if (!session || !this.settings.apiUrl) {
+            this.renderLogs();
+            return;
+        }
+
+        try {
+            const params = new URLSearchParams({ limit: "400" });
+            const { start, end } = this.getLogFilterIsoRange();
+            if (start) params.set("start", start);
+            if (end) params.set("end", end);
+
+            const response = await fetch(`${this.settings.apiUrl}/logs/${encodeURIComponent(session.id)}?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            const logs = (payload.logs || []).map((entry, index) => ({
+                id: entry.id || `server_log_${index}_${entry.timestamp || Date.now()}`,
+                type: "llm_log",
+                ...entry
+            }));
+            session.logs = logs;
+            this.persistSessions();
+        } catch (error) {
+            console.debug("Failed to refresh logs from backend", error);
+        }
+        this.renderLogs();
+    }
+
+    renderLogs() {
+        if (!this.logsList) return;
+        const session = this.getCurrentSession();
+        const logs = this.getFilteredLogs(session?.logs || []);
+        if (logs.length === 0) {
+            this.logsList.innerHTML = '<p class="panel-empty">No LLM logs yet.</p>';
+            return;
+        }
+
+        this.logsList.innerHTML = logs.slice().reverse().map((entry) => {
+            const title = [entry.type, entry.phase, entry.direction].filter(Boolean).join(" · ");
+            const timestamp = new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            const body = this.escapeHtml(JSON.stringify(entry.payload || {}, null, 2));
+            return `
+                <article class="log-entry">
+                    <div class="log-entry-head">
+                        <strong>${this.escapeHtml(title || "log")}</strong>
+                        <span>${timestamp}</span>
+                    </div>
+                    <pre class="log-entry-body"><code>${body}</code></pre>
+                </article>
+            `;
+        }).join("");
+    }
+
+    getFilteredLogs(logs) {
+        const { fromMs, toMs } = this.getLogFilterRange();
+
+        return logs.filter((entry) => {
+            const ts = new Date(entry.timestamp || Date.now()).getTime();
+            if (Number.isFinite(fromMs) && ts < fromMs) return false;
+            if (Number.isFinite(toMs) && ts > toMs) return false;
+            return true;
+        });
+    }
+
+    getLogFilterRange() {
+        const now = Date.now();
+        let fromMs = null;
+        let toMs = null;
+
+        if (this.logRange === "15m") {
+            fromMs = now - 15 * 60 * 1000;
+        } else if (this.logRange === "1h") {
+            fromMs = now - 60 * 60 * 1000;
+        } else if (this.logRange === "24h") {
+            fromMs = now - 24 * 60 * 60 * 1000;
+        } else if (this.logRange === "custom") {
+            fromMs = this.logsFromInput?.value ? new Date(this.logsFromInput.value).getTime() : null;
+            toMs = this.logsToInput?.value ? new Date(this.logsToInput.value).getTime() : null;
+        }
+
+        return { fromMs, toMs };
+    }
+
+    getLogFilterIsoRange() {
+        const { fromMs, toMs } = this.getLogFilterRange();
+        return {
+            start: Number.isFinite(fromMs) ? new Date(fromMs).toISOString() : null,
+            end: Number.isFinite(toMs) ? new Date(toMs).toISOString() : null
+        };
     }
 
     openSettings() {
@@ -1382,7 +1958,7 @@ class ObsAgentConsole {
         this.settings.apiUrl = this.apiUrlInput.value.trim() || this.apiBaseUrl;
         this.settings.autoSave = this.autoSaveInput.checked;
         this.settings.theme = this.themeSelect.value || "dark";
-        localStorage.setItem("obs-agent-settings", JSON.stringify(this.settings));
+        this.persistPreferenceState();
         this.closeSettings();
         this.refreshRuntime();
         this.fetchSkills();
@@ -1392,9 +1968,13 @@ class ObsAgentConsole {
         this.settings = {
             apiUrl: this.apiBaseUrl,
             autoSave: true,
-            theme: "dark"
+            theme: "dark",
+            permissionMode: "ask",
+            thinkingMode: true,
+            toolContext: "workspace"
         };
         localStorage.removeItem("obs-agent-settings");
+        this.applyStoredPreferences();
         this.openSettings();
     }
 
@@ -1404,13 +1984,38 @@ class ObsAgentConsole {
             if (stored) {
                 this.settings = { ...this.settings, ...stored };
             }
+            const currentOriginApi = this.resolveDefaultApiBaseUrl();
+            const legacyDefaultApi = "http://127.0.0.1:8000";
+            if (!this.settings.apiUrl || this.settings.apiUrl === legacyDefaultApi) {
+                this.settings.apiUrl = currentOriginApi;
+            }
         } catch (error) {
             console.warn("Failed to load settings", error);
         }
     }
 
+    applyStoredPreferences() {
+        this.store.set({
+            permissionMode: this.settings.permissionMode || "ask",
+            thinkingMode: typeof this.settings.thinkingMode === "boolean" ? this.settings.thinkingMode : true,
+            toolContext: this.settings.toolContext || "workspace"
+        });
+    }
+
+    persistPreferenceState() {
+        this.settings.permissionMode = this.store.get().permissionMode;
+        this.settings.thinkingMode = this.store.get().thinkingMode;
+        this.settings.toolContext = this.store.get().toolContext;
+        localStorage.setItem("obs-agent-settings", JSON.stringify(this.settings));
+    }
+
     loadSessions() {
         try {
+            const storedVersion = localStorage.getItem("obs-agent-storage-version");
+            if (storedVersion !== this.storageVersion) {
+                localStorage.removeItem("obs-agent-sessions");
+                localStorage.setItem("obs-agent-storage-version", this.storageVersion);
+            }
             const raw = localStorage.getItem("obs-agent-sessions");
             if (!raw) {
                 this.renderSessionList();
@@ -1418,6 +2023,7 @@ class ObsAgentConsole {
             }
             const sessions = JSON.parse(raw);
             sessions.forEach((session) => this.sessions.set(session.id, this.upgradeSession(session)));
+            this.persistSessions();
             this.renderSessionList();
         } catch (error) {
             console.warn("Failed to load sessions", error);

@@ -1,10 +1,129 @@
 """配置管理"""
 import os
-from typing import Optional, Dict, Any, List
+import sys
+from typing import Optional, Dict, Any, List, Iterable
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 from loguru import logger
+from dotenv import load_dotenv
+
+from ..utils.paths import app_root, claude_skills_root
+
+
+def _runtime_data_root() -> Path:
+    """Return a writable per-user directory for packaged/native desktop runs."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "OBS Agent Desktop"
+    if os.name == "nt":
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            return Path(appdata) / "OBS Agent Desktop"
+        return Path.home() / "AppData" / "Roaming" / "OBS Agent Desktop"
+    xdg_config = os.getenv("XDG_CONFIG_HOME")
+    base = Path(xdg_config) if xdg_config else Path.home() / ".config"
+    return base / "obs-agent"
+
+
+def _config_base_dir() -> Path:
+    """Choose the base directory for relative runtime paths."""
+    if getattr(sys, "frozen", False):
+        root = _runtime_data_root()
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+    return app_root()
+
+
+def _iter_env_candidates() -> Iterable[Path]:
+    """Yield candidate .env files in descending priority order."""
+    seen: set[Path] = set()
+    explicit_env = os.getenv("OMNI_AGENT_ENV_FILE")
+    if explicit_env:
+        candidate = Path(explicit_env).expanduser()
+        if candidate not in seen:
+            seen.add(candidate)
+            yield candidate
+
+    candidates = [
+        Path.cwd() / ".env",
+        _runtime_data_root() / ".env",
+        Path(sys.executable).resolve().parent / ".env",
+        app_root() / ".env",
+    ]
+
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            yield candidate
+
+
+def _load_env_files() -> None:
+    for env_file in _iter_env_candidates():
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
+
+
+def _ensure_directory(path: Path, fallback: Path, label: str) -> Path:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError as exc:
+        logger.warning(f"Failed to create {label} at {path}: {exc}. Falling back to {fallback}")
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def _resolve_dir_setting(raw_value: str, default_name: str, label: str) -> str:
+    base_dir = _config_base_dir()
+    fallback = base_dir / default_name
+    candidate = Path(raw_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = base_dir / candidate
+    return str(_ensure_directory(candidate, fallback, label))
+
+
+def _resolve_file_setting(raw_value: Optional[str], fallback_relative: str, label: str) -> Optional[str]:
+    if not raw_value:
+        return None
+
+    base_dir = _config_base_dir()
+    fallback = base_dir / fallback_relative
+    candidate = Path(raw_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = base_dir / candidate
+
+    try:
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        return str(candidate)
+    except OSError as exc:
+        logger.warning(f"Failed to prepare {label} path {candidate}: {exc}. Falling back to {fallback}")
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
+
+
+def _resolve_skills_dir(raw_value: Optional[str]) -> Optional[str]:
+    bundled_skills = claude_skills_root()
+    candidates: List[Path] = []
+
+    if raw_value:
+        candidate = Path(raw_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = _config_base_dir() / candidate
+        candidates.append(candidate)
+
+    candidates.extend(
+        [
+            Path.cwd() / ".claude" / "skills",
+            bundled_skills,
+            _runtime_data_root() / ".claude" / "skills",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+
+    return str(bundled_skills) if bundled_skills.exists() else None
 
 
 class VLLMConfig(BaseModel):
@@ -120,6 +239,8 @@ class AgentConfig(BaseModel):
 
 def load_config(config_file: Optional[str] = None) -> AgentConfig:
     """加载配置"""
+    _load_env_files()
+
     # 首先从环境变量加载
     config = AgentConfig.from_env()
     
@@ -145,8 +266,10 @@ def load_config(config_file: Optional[str] = None) -> AgentConfig:
         except Exception as e:
             logger.warning(f"Failed to load config file {config_file}: {e}")
     
-    # 确保工作目录存在
-    Path(config.work_dir).mkdir(parents=True, exist_ok=True)
-    Path(config.screenshot_dir).mkdir(parents=True, exist_ok=True)
+    config.work_dir = _resolve_dir_setting(config.work_dir, "workspace", "work_dir")
+    config.screenshot_dir = _resolve_dir_setting(config.screenshot_dir, "screenshots", "screenshot_dir")
+    config.web_browsing.screenshot_dir = config.screenshot_dir
+    config.log.file_path = _resolve_file_setting(config.log.file_path, "logs/omni_agent.log", "log_file")
+    config.skills_dir = _resolve_skills_dir(config.skills_dir)
     
     return config

@@ -19,11 +19,18 @@
 
 - 🎯 **Claude Skills三级架构** - 完全按照[Claude官方Skills文档](https://code.claude.com/docs/en/skills)实现
 - 🌐 **现代化Web界面** - 实时聊天、会话管理、主题切换
+- 🧩 **可选技能面板** - 按字母排序启用/禁用技能，控制模型当前可用能力
 - 🖥️ **计算机视觉操作** - 屏幕截图、鼠标键盘控制、网页浏览
 - 📁 **文件管理** - 查看、编辑、创建各种格式文件  
 - 🔧 **终端执行** - 安全的命令行操作
 - 🚀 **高性能部署** - Docker容器化，代码热重载
 - 💾 **会话记忆** - 持久化对话历史和上下文管理
+
+## 🖼️ 界面预览
+
+下图为当前运行中的 Claude-style 控制台界面，包含会话侧栏、流式对话区、Thinking 折叠块、技能选择和日志抽屉等能力：
+
+![OBS Claude-style Console Screenshot](screenshots/chat-ui-20260409.png)
 
 ## 🚀 快速开始
 
@@ -59,6 +66,30 @@ docker-compose up -d
 # 启动交互式聊天
 python chat_demo.py
 ```
+
+### 方式4：macOS 原生桌面版
+
+本项目现在包含一个不依赖浏览器的原生桌面版入口，基于 Tkinter 启动本地窗口。
+
+本机调试运行：
+
+```bash
+cd /Users/wangshuang/PycharmProjects/obs/obs
+chmod +x scripts/run_macos_desktop.sh
+./scripts/run_macos_desktop.sh
+```
+
+构建 `.app` 和 `.dmg`：
+
+```bash
+cd /Users/wangshuang/PycharmProjects/obs/obs
+chmod +x scripts/build_macos_app.sh
+./scripts/build_macos_app.sh
+```
+
+构建完成后：
+- `.app` 位于 `dist/OBS Agent.app`
+- `.dmg` 位于 `dist/OBS-Agent-<timestamp>.dmg`
 
 ## 🎮 使用指南
 

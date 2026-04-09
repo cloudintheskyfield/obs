@@ -5,9 +5,12 @@ FastAPI应用定义 - 独立模块
 import logging
 import json
 import asyncio
+import os
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, Request
+from datetime import datetime
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,16 +19,18 @@ from loguru import logger
 import httpx
 
 from .config.config import load_config
+from .utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
 import sys
 from pathlib import Path
 
 # Add .claude/skills and root skills to Python path for skills
-claude_skills_path = Path(__file__).parent.parent.parent / ".claude" / "skills"
-root_skills_path = Path(__file__).parent.parent.parent / "skills"
+claude_skills_path = claude_skills_root()
+root_skills_path = repo_skills_root()
 if claude_skills_path.exists():
     sys.path.insert(0, str(claude_skills_path))
 if root_skills_path.exists():
     sys.path.insert(0, str(root_skills_path))
+os.environ.setdefault("SKILLS_DIR", str(claude_skills_path))
 
 from skill_manager import SkillManager
 from .core.vllm_client import VLLMClient
@@ -51,11 +56,31 @@ class SkillExecuteRequest(BaseModel):
     tool_name: str
     parameters: Dict[str, Any] = {}
 
+
+class ChatStreamRequest(BaseModel):
+    tool_name: Optional[str] = None
+    parameters: Dict[str, Any] = {}
+    message: Optional[str] = None
+    session_id: Optional[str] = None
+    mode: Optional[str] = None
+    permission_mode: Optional[str] = None
+    permission_confirmed: Optional[bool] = None
+    context: Optional[str] = None
+    tool_context: Optional[str] = None
+    thinking_mode: Optional[bool] = None
+    enabled_skills: Optional[List[str]] = None
+
 class LocationUpdateRequest(BaseModel):
     session_id: str
     lat: float
     lon: float
     accuracy_m: Optional[float] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country_name: Optional[str] = None
+    source: Optional[str] = None
+    ip: Optional[str] = None
+    provider: Optional[str] = None
 
 class LocationResolveRequest(BaseModel):
     session_id: str
@@ -79,7 +104,7 @@ app.add_middleware(
 
 # 挂载静态文件服务（禁用缓存）
 try:
-    frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+    frontend_dir = frontend_static_root()
     if frontend_dir.exists():
         app.mount("/static", NoCacheStaticFiles(directory=str(frontend_dir)), name="static")
         print(f"Mounted frontend directory: {frontend_dir}")
@@ -91,6 +116,87 @@ skill_manager: Optional[SkillManager] = None
 vllm_client: Optional[VLLMClient] = None
 chat_sessions: Dict[str, List[Dict[str, Any]]] = {}
 session_locations: Dict[str, Dict[str, Any]] = {}
+llm_trace_dir = Path(config.log.file_path).parent / "llm_traces" if config.log.file_path else Path(config.work_dir).parent / "logs" / "llm_traces"
+llm_trace_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _get_runtime_temporal_context() -> Dict[str, Any]:
+    now = datetime.now().astimezone()
+    return {
+        "current_datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "current_date": now.strftime("%Y-%m-%d"),
+        "current_time": now.strftime("%H:%M:%S"),
+        "timezone": now.tzname() or "local",
+        "utc_offset": now.strftime("%z"),
+        "weekday": now.strftime("%A"),
+    }
+
+
+def _format_runtime_context(context: Dict[str, Any], location: Optional[Dict[str, Any]]) -> str:
+    lines = [
+        "Runtime context you must treat as authoritative:",
+        f"- Current date: {context['current_date']}",
+        f"- Current time: {context['current_time']}",
+        f"- Current datetime: {context['current_datetime']}",
+        f"- Timezone: {context['timezone']} (UTC{context['utc_offset']})",
+        f"- Weekday: {context['weekday']}",
+        "- Interpret relative references like today / 今日 / 今天 using the exact current date above.",
+    ]
+    if location:
+        city = location.get("city")
+        region = location.get("region")
+        country = location.get("country_name")
+        lat = location.get("lat")
+        lon = location.get("lon")
+        source = location.get("source")
+        place_bits = [part for part in [city, region, country] if part]
+        if place_bits:
+            lines.append(f"- Approximate user location: {', '.join(place_bits)}")
+        if lat is not None and lon is not None:
+            lines.append(f"- Approximate coordinates: {lat}, {lon}")
+        if source:
+            lines.append(f"- Location source: {source}")
+        lines.append("- Prefer local relevance when the request depends on user location.")
+    return "\n".join(lines)
+
+
+def _sanitize_session_id(session_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", session_id)[:120]
+
+
+def _llm_trace_file(session_id: str) -> Path:
+    return llm_trace_dir / f"{_sanitize_session_id(session_id)}.jsonl"
+
+
+def _persist_llm_trace(session_id: str, payload: Dict[str, Any]) -> None:
+    record = {
+        "session_id": session_id,
+        "timestamp": payload.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds"),
+        "phase": payload.get("phase"),
+        "direction": payload.get("direction"),
+        "payload": payload.get("payload"),
+        "type": "llm_log",
+    }
+    trace_file = _llm_trace_file(session_id)
+    with trace_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _load_llm_traces(session_id: str) -> List[Dict[str, Any]]:
+    trace_file = _llm_trace_file(session_id)
+    if not trace_file.exists():
+        return []
+    records: List[Dict[str, Any]] = []
+    with trace_file.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
 
 async def _resolve_location_from_ip(request: Request) -> Optional[Dict[str, Any]]:
     """Resolve approximate location from IP.
@@ -122,32 +228,66 @@ async def _resolve_location_from_ip(request: Request) -> Optional[Dict[str, Any]
                     ip = (r.json() or {}).get("ip") or ip
         except Exception as e:
             logger.debug(f"Public IP resolve failed: {e}")
-            return None
 
+    if ip in {"127.0.0.1", "::1"}:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get("https://ipwho.is/")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("success") is not False:
+                        lat = data.get("latitude")
+                        lon = data.get("longitude")
+                        if lat is not None and lon is not None:
+                            return {
+                                "source": "ip",
+                                "provider": "ipwhois",
+                                "lat": float(lat),
+                                "lon": float(lon),
+                                "city": data.get("city"),
+                                "region": data.get("region"),
+                                "country_name": data.get("country_name") or data.get("country"),
+                                "ip": data.get("ip") or ip,
+                            }
+        except Exception as e:
+            logger.debug(f"Fallback IP location resolve failed: {e}")
+
+    candidates = [
+        ("ipapi", f"https://ipapi.co/{ip}/json/"),
+        ("ipwhois", f"https://ipwho.is/{ip}"),
+    ]
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(f"https://ipapi.co/{ip}/json/")
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
+            for source_name, url in candidates:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    if source_name == "ipwhois" and data.get("success") is False:
+                        continue
 
-        lat = data.get("latitude")
-        lon = data.get("longitude")
-        if lat is None or lon is None:
-            return None
+                    lat = data.get("latitude")
+                    lon = data.get("longitude")
+                    if lat is None or lon is None:
+                        continue
 
-        return {
-            "source": "ip",
-            "lat": float(lat),
-            "lon": float(lon),
-            "city": data.get("city"),
-            "region": data.get("region"),
-            "country_name": data.get("country_name"),
-            "ip": ip,
-        }
+                    return {
+                        "source": "ip",
+                        "provider": source_name,
+                        "lat": float(lat),
+                        "lon": float(lon),
+                        "city": data.get("city"),
+                        "region": data.get("region"),
+                        "country_name": data.get("country_name") or data.get("country"),
+                        "ip": ip,
+                    }
+                except Exception as inner_exc:
+                    logger.debug(f"IP location provider {source_name} failed: {inner_exc}")
+                    continue
     except Exception as e:
         logger.warning(f"IP location resolve failed: {e}")
-        return None
+    return None
 
 async def _execute_tool_call(tool_name: str, tool_input: Dict[str, Any], session_id: Optional[str] = None) -> str:
     """执行工具调用"""
@@ -178,10 +318,15 @@ async def _execute_tool_call(tool_name: str, tool_input: Dict[str, Any], session
 async def update_location(payload: LocationUpdateRequest):
     """Update precise location from browser geolocation."""
     session_locations[payload.session_id] = {
-        "source": "geolocation",
+        "source": payload.source or "geolocation",
         "lat": payload.lat,
         "lon": payload.lon,
         "accuracy_m": payload.accuracy_m,
+        "city": payload.city,
+        "region": payload.region,
+        "country_name": payload.country_name,
+        "ip": payload.ip,
+        "provider": payload.provider,
     }
     return JSONResponse({"success": True})
 
@@ -253,7 +398,7 @@ async def shutdown_event():
 async def root():
     """根路径 - 返回前端页面"""
     try:
-        frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+        frontend_dir = frontend_static_root()
         index_file = frontend_dir / "index.html"
         if index_file.exists():
             response = FileResponse(str(index_file), media_type="text/html")
@@ -307,20 +452,92 @@ async def skills():
         return JSONResponse({"skills": []})
     return JSONResponse({"skills": skill_manager.get_anthropic_tools()})
 
+
+@app.get("/skill-catalog")
+async def skill_catalog():
+    if skill_manager is None:
+        return JSONResponse({"skills": []})
+    return JSONResponse({"skills": skill_manager.get_skill_catalog()})
+
+
+@app.get("/logs/{session_id}")
+async def get_session_logs(
+    session_id: str,
+    start: Optional[str] = Query(default=None),
+    end: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    records = _load_llm_traces(session_id)
+    start_dt = datetime.fromisoformat(start) if start else None
+    end_dt = datetime.fromisoformat(end) if end else None
+
+    filtered: List[Dict[str, Any]] = []
+    for record in records:
+        try:
+            ts = datetime.fromisoformat(record.get("timestamp"))
+        except Exception:
+            ts = None
+        if start_dt and ts and ts < start_dt:
+            continue
+        if end_dt and ts and ts > end_dt:
+            continue
+        filtered.append(record)
+
+    return JSONResponse({
+        "session_id": session_id,
+        "logs": filtered[-limit:],
+    })
+
+
+@app.get("/session/{session_id}/context")
+async def get_session_context_state(session_id: str):
+    messages = chat_sessions.get(session_id, [])
+    context_percent = 0
+    streaming_agent = getattr(app.state, "streaming_agent", None)
+    if streaming_agent is not None:
+        context_percent = streaming_agent._estimate_context_percent(messages)
+    return JSONResponse({
+        "session_id": session_id,
+        "messages_count": len(messages),
+        "context_percent": context_percent,
+    })
+
 @app.post("/chat/stream")
-async def chat_stream(request_data: SkillExecuteRequest):
+async def chat_stream(request_data: ChatStreamRequest, request: Request):
     """流式聊天"""
     if vllm_client is None:
         return JSONResponse({"success": False, "error": "VLLM client not initialized"})
-    
-    message = request_data.parameters.get("message", "")
-    session_id = request_data.parameters.get("session_id", "default")
-    mode = request_data.parameters.get("mode", "agent")
-    permission_mode = request_data.parameters.get("permission_mode", "ask")
-    permission_confirmed = bool(request_data.parameters.get("permission_confirmed", False))
+
+    params = request_data.parameters or {}
+    message = request_data.message if request_data.message is not None else params.get("message", "")
+    session_id = request_data.session_id if request_data.session_id is not None else params.get("session_id", "default")
+    mode = request_data.mode if request_data.mode is not None else params.get("mode", "agent")
+    permission_mode = (
+        request_data.permission_mode
+        if request_data.permission_mode is not None
+        else params.get("permission_mode", "ask")
+    )
+    permission_confirmed = bool(
+        request_data.permission_confirmed
+        if request_data.permission_confirmed is not None
+        else params.get("permission_confirmed", False)
+    )
+    context = request_data.context if request_data.context is not None else params.get("context", "")
+    tool_context = request_data.tool_context if request_data.tool_context is not None else params.get("tool_context", "workspace")
+    enabled_skills = request_data.enabled_skills if request_data.enabled_skills is not None else params.get("enabled_skills")
+    temporal_context = _get_runtime_temporal_context()
     
     async def generate():
         try:
+            location = session_locations.get(session_id)
+            if location is None:
+                location = await _resolve_location_from_ip(request)
+                if location:
+                    session_locations[session_id] = location
+
+            runtime_context_text = _format_runtime_context(temporal_context, location)
+            merged_context = "\n\n".join(part for part in [context, runtime_context_text] if part)
+
             # 获取或创建会话历史
             if session_id not in chat_sessions:
                 chat_sessions[session_id] = []
@@ -339,7 +556,21 @@ async def chat_stream(request_data: SkillExecuteRequest):
                 mode=mode,
                 permission_mode=permission_mode,
                 permission_confirmed=permission_confirmed,
+                context=merged_context,
+                tool_context=tool_context,
+                enabled_skills=enabled_skills or [],
+                request_context={
+                    **temporal_context,
+                    "location": location,
+                },
             ):
+                if chunk.startswith("data: "):
+                    try:
+                        payload = json.loads(chunk[6:].strip())
+                        if payload.get("type") == "llm_log":
+                            _persist_llm_trace(session_id, payload)
+                    except Exception:
+                        pass
                 yield chunk
             
         except Exception as e:

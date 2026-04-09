@@ -23,6 +23,9 @@ workspace/
 .DS_Store
 Thumbs.db
 
+# frontend
+ui/node_modules/
+
 # Agent testing and operation dirs
 .transcripts/
 .task_outputs/

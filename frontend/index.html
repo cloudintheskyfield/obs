@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>OBS Claude-style Console</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260402-04">
+    <link rel="stylesheet" href="/static/styles.css?v=20260408-01">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -21,10 +21,6 @@
                     <i class="fas fa-sparkles"></i>
                     <span>Search</span>
                 </button>
-                <button id="computer-nav-btn" class="nav-pill active" type="button">
-                    <i class="fas fa-terminal"></i>
-                    <span>Computer</span>
-                </button>
             </div>
 
             <div class="sidebar-group">
@@ -35,22 +31,6 @@
                 <button id="history-link-btn" class="sidebar-link" type="button">
                     <i class="fas fa-clock-rotate-left"></i>
                     <span>History</span>
-                </button>
-                <button id="discover-link-btn" class="sidebar-link" type="button">
-                    <i class="fas fa-compass"></i>
-                    <span>Discover</span>
-                </button>
-                <button id="agents-link-btn" class="sidebar-link" type="button">
-                    <i class="fas fa-diagram-project"></i>
-                    <span>Agents</span>
-                </button>
-                <button id="connectors-link-btn" class="sidebar-link" type="button">
-                    <i class="fas fa-plug"></i>
-                    <span>Connectors</span>
-                </button>
-                <button id="permissions-link-btn" class="sidebar-link" type="button">
-                    <i class="fas fa-shield-halved"></i>
-                    <span>Permissions</span>
                 </button>
             </div>
 
@@ -87,10 +67,13 @@
             </header>
 
             <section class="modebar">
-                <div class="mode-pills">
-                    <button class="mode-pill active" data-mode="agent" type="button">Agent</button>
-                    <button class="mode-pill" data-mode="plan" type="button">Plan</button>
-                    <button class="mode-pill" data-mode="review" type="button">Review</button>
+                <div class="mode-selector">
+                    <label class="mode-selector-label" for="mode-select">Mode</label>
+                    <select id="mode-select" class="mode-select" aria-label="Select mode">
+                        <option value="agent">Agent</option>
+                        <option value="plan">Plan</option>
+                        <option value="review">Review</option>
+                    </select>
                 </div>
                 <div class="runtime-pills">
                     <span class="runtime-pill" id="model-pill">Model · --</span>
@@ -131,17 +114,21 @@
                     <textarea id="message-input" rows="1" placeholder="Describe the task, mention files, or ask for a coordinated refactor"></textarea>
                     <div class="composer-foot">
                         <div class="composer-left">
-                            <button class="small-tool active" data-tool-context="computer" type="button">
+                            <button class="small-tool" data-tool-context="computer" type="button">
                                 <i class="fas fa-desktop"></i>
                                 <span>Computer</span>
                             </button>
-                            <button class="small-tool" data-tool-context="workspace" type="button">
+                            <button class="small-tool active" data-tool-context="workspace" type="button">
                                 <i class="fas fa-folder-tree"></i>
                                 <span>Workspace</span>
                             </button>
                             <button class="small-tool" data-tool-context="agents" type="button">
                                 <i class="fas fa-diagram-project"></i>
                                 <span>Agents</span>
+                            </button>
+                            <button id="logs-toggle-btn" class="small-tool" type="button">
+                                <i class="fas fa-wave-square"></i>
+                                <span>Logs</span>
                             </button>
                         </div>
                         <div class="composer-right">
@@ -158,6 +145,34 @@
                 </div>
             </section>
         </main>
+
+        <section id="logs-drawer" class="logs-drawer hidden" aria-hidden="true">
+            <div class="logs-backdrop"></div>
+            <div class="logs-sheet">
+                <div class="logs-header">
+                    <div>
+                        <strong>LLM Logs</strong>
+                        <span class="logs-meta">Structured request / response events</span>
+                    </div>
+                    <div class="logs-filters">
+                        <select id="logs-range-filter" class="mode-select logs-range-select" aria-label="Log time range">
+                            <option value="all">All</option>
+                            <option value="15m">Last 15m</option>
+                            <option value="1h">Last 1h</option>
+                            <option value="24h">Last 24h</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        <input id="logs-from-input" class="logs-time-input hidden" type="datetime-local" aria-label="Logs from time">
+                        <input id="logs-to-input" class="logs-time-input hidden" type="datetime-local" aria-label="Logs to time">
+                        <button id="logs-refresh-btn" class="tiny-pill" type="button">Refresh</button>
+                    </div>
+                    <button id="logs-close-btn" class="icon-button" type="button" title="关闭日志">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="logs-list" class="logs-list"></div>
+            </div>
+        </section>
 
         <aside id="inspector" class="inspector hidden">
             <section class="panel runtime-panel">
@@ -267,7 +282,7 @@
             <div class="modal-body">
                 <label class="field">
                     <span>API URL</span>
-                    <input id="api-url" type="text" value="http://127.0.0.1:8000">
+                    <input id="api-url" type="text" value="" placeholder="Auto-detect current origin">
                 </label>
                 <label class="field checkbox-field">
                     <input id="auto-save" type="checkbox" checked>
@@ -320,6 +335,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=20260402-05"></script>
+    <script src="/static/app.js?v=20260408-01"></script>
 </body>
 </html>

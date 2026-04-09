@@ -13,10 +13,11 @@ from ..core.logger import setup_logger, start_live_logging
 from ..agents.web_agent import WebAgent
 import sys
 from pathlib import Path
+from ..utils.paths import claude_skills_root, repo_skills_root
 
 # Add .claude/skills and root skills to Python path for skills
-claude_skills_path = Path(__file__).parent.parent.parent.parent / ".claude" / "skills"
-root_skills_path = Path(__file__).parent.parent.parent.parent / "skills"
+claude_skills_path = claude_skills_root()
+root_skills_path = repo_skills_root()
 if claude_skills_path.exists():
     sys.path.insert(0, str(claude_skills_path))
 if root_skills_path.exists():

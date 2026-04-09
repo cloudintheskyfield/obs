@@ -38,6 +38,7 @@ services:
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true
       - SKILLS_DIR=${SKILLS_DIR:-/app/.claude/skills}
+      - PYTHONPATH=/app/src
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 20s
@@ -48,7 +49,7 @@ services:
     networks:
       - omni-network
     restart: unless-stopped
-    command: ["uv", "run", "uvicorn", "omni_agent.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src", "--reload-dir", "/app/.claude", "--reload-dir", "/app/frontend", "--reload-delay", "0.1"]
+    command: ["/app/.venv/bin/python", "-m", "uvicorn", "omni_agent.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src", "--reload-dir", "/app/.claude", "--reload-dir", "/app/frontend", "--reload-delay", "0.1"]
 
   redis:
     image: redis:7-alpine
