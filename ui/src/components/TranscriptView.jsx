@@ -7,6 +7,15 @@ import {
 } from "../lib/formatting.js";
 
 export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, onReplay, requestIndicator }) {
+    const lastUserIndex = (() => {
+        for (let index = transcript.length - 1; index >= 0; index -= 1) {
+            if (transcript[index]?.role === "user") {
+                return index;
+            }
+        }
+        return -1;
+    })();
+
     return (
         <section className="chat-region">
             <div className="transcript-toolbar">
@@ -15,25 +24,13 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                 </div>
             </div>
             <div id="chat-messages" className="chat-messages" ref={chatMessagesRef}>
-                {requestIndicator?.active ? (
-                    <div className="request-loading-inline" aria-live="polite">
-                        <span className="request-loading-line" aria-hidden="true" />
-                        <span className="request-loading-copy">
-                            <span className="request-loading-spinner" aria-hidden="true">
-                                <i className="fas fa-spinner" />
-                            </span>
-                            <span>{requestIndicator.label || "Working on your request"}</span>
-                        </span>
-                        <span className="request-loading-line" aria-hidden="true" />
-                    </div>
-                ) : null}
                 {!transcript.length ? (
                     <div className="transcript-empty">
                         No transcript items yet. Start with a task request, or ask for a real-time search.
                     </div>
                 ) : (
                     <div className="message-list">
-                        {transcript.map((entry) => {
+                        {transcript.map((entry, index) => {
                             const isThinking = entry.kind === "thinking_text";
                             const isCompressionNotice = entry.kind === "system_notice" && entry.phase === "compression";
                             const isExpanded = Boolean(expandedThinking[entry.id]);
@@ -124,6 +121,19 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                             <button type="button" className="message-toggle" onClick={() => onReplay(entry.content || "")}>
                                                 Replay
                                             </button>
+                                        </div>
+                                    ) : null}
+
+                                    {requestIndicator?.active && index === lastUserIndex ? (
+                                        <div className="request-loading-inline" aria-live="polite">
+                                            <span className="request-loading-line" aria-hidden="true" />
+                                            <span className="request-loading-copy">
+                                                <span className="request-loading-spinner" aria-hidden="true">
+                                                    <i className="fas fa-spinner" />
+                                                </span>
+                                                <span>{requestIndicator.label || "Working on your request"}</span>
+                                            </span>
+                                            <span className="request-loading-line" aria-hidden="true" />
                                         </div>
                                     ) : null}
                                 </article>

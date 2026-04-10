@@ -16,11 +16,15 @@ export function shortenModel(model) {
 export function formatWorkspaceBreadcrumb(path, maxParts = 5) {
     const normalized = String(path || "").trim();
     if (!normalized) return "No workspace selected";
-    const segments = normalized.split(/[\\/]+/).filter(Boolean).reverse();
-    if (segments.length <= maxParts) {
-        return segments.join(" / ");
+    const segments = normalized.split(/[\\/]+/).filter(Boolean);
+    const parentSegments = segments.slice(0, -1).filter((segment, index, list) => segment !== list[index - 1]);
+    if (parentSegments.length === 0) {
+        return segments[segments.length - 1] || normalized;
     }
-    return `${segments.slice(0, maxParts).join(" / ")} / ...`;
+    if (parentSegments.length <= maxParts) {
+        return parentSegments.join(" / ");
+    }
+    return `... / ${parentSegments.slice(-maxParts).join(" / ")}`;
 }
 
 export function renderMarkdown(text) {

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import Composer from "./components/Composer.jsx";
+import ArchitectureDrawer from "./components/ArchitectureDrawer.jsx";
 import LogsDrawer from "./components/LogsDrawer.jsx";
 import RuntimePills from "./components/RuntimePills.jsx";
 import SkillsDrawer from "./components/SkillsDrawer.jsx";
@@ -13,6 +14,8 @@ const SESSIONS_KEY = "obs-agent-sessions";
 const VERSION_KEY = "obs-agent-storage-version";
 const DEFAULT_SELECTED_SKILLS = ["code-sandbox", "file-operations", "terminal", "web-search"];
 const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
+const GITHUB_REPO_URL = "https://github.com/cloudintheskyfield/obs";
+const LOGO_SRC = "/static/obs-code-logo.svg";
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
@@ -100,7 +103,7 @@ function buildContextPayload(toolContext, workspacePath) {
         workspace: [
             "Focus on the current workspace, local files, directories, code structure, and repository state.",
             workspacePath ? `Current workspace root: ${workspacePath}` : null,
-            workspacePath ? `Workspace hierarchy (leaf to root): ${breadcrumb}` : null,
+            workspacePath ? `Workspace parent chain: ${breadcrumb}` : null,
             "The workspace should be treated as the main writable environment for solving the user's goal."
         ].filter(Boolean).join("\n")
     };
@@ -240,6 +243,7 @@ function App() {
     const [requestIndicator, setRequestIndicator] = useState(null);
     const [logsOpen, setLogsOpen] = useState(false);
     const [skillsOpen, setSkillsOpen] = useState(false);
+    const [architectureOpen, setArchitectureOpen] = useState(false);
     const [logRange, setLogRange] = useState("all");
     const [logsFrom, setLogsFrom] = useState("");
     const [logsTo, setLogsTo] = useState("");
@@ -1155,20 +1159,19 @@ function App() {
         <div className="app-shell">
             <aside className="sidebar">
                 <div className="brand-panel">
-                    <button className="search-shell active" type="button">
-                        <i className="fas fa-sparkles" />
-                        <span>Search</span>
-                    </button>
+                    <div className="brand-lockup">
+                        <img className="brand-mark" src={LOGO_SRC} alt="OBS Code logo" />
+                        <div className="brand-copy">
+                            <span className="brand-name">OBS Code</span>
+                            <span className="brand-tagline">Local AI workbench for real tasks</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="sidebar-group">
                     <button className="sidebar-action" type="button" onClick={createSession}>
                         <i className="fas fa-plus" />
                         <span>New thread</span>
-                    </button>
-                    <button className="sidebar-link active" type="button">
-                        <i className="fas fa-clock-rotate-left" />
-                        <span>History</span>
                     </button>
                 </div>
 
@@ -1204,15 +1207,21 @@ function App() {
 
             <main className="workspace">
                 <header className="topbar">
-                    <div>
-                        <p className="eyebrow">OBS Agent Workspace</p>
-                        <h1>{currentSession?.title || "New thread"}</h1>
+                    <div className="topbar-brand">
+                        <img className="topbar-logo" src={LOGO_SRC} alt="OBS Code logo" />
+                        <div>
+                            <p className="eyebrow">OBS Code</p>
+                            <h1>{currentSession?.title || "New thread"}</h1>
+                        </div>
                     </div>
                     <div className="topbar-actions">
                         <div className={`status-chip ${runtime ? "online" : "offline"}`}>
                             <span className="status-dot" />
                             <span>{runtimeStatus}</span>
                         </div>
+                        <a className="icon-button" href={GITHUB_REPO_URL} target="_blank" rel="noreferrer noopener" title="Open GitHub repository">
+                            <i className="fab fa-github" />
+                        </a>
                         <button className="icon-button" type="button" title="导出会话" onClick={exportCurrentSession}>
                             <i className="fas fa-download" />
                         </button>
@@ -1232,7 +1241,8 @@ function App() {
 
                 <Composer
                     selectedModel={selectedModel}
-                    onModelToggle={cycleModel}
+                    availableModels={availableModels}
+                    onModelChange={setSelectedModel}
                     permissionMode={permissionMode}
                     onPermissionToggle={cyclePermissionMode}
                     thinkingMode={thinkingMode}
@@ -1248,6 +1258,8 @@ function App() {
                     onLogsToggle={() => setLogsOpen((current) => !current)}
                     skillsOpen={skillsOpen}
                     onSkillsToggle={() => setSkillsOpen((current) => !current)}
+                    architectureOpen={architectureOpen}
+                    onArchitectureToggle={() => setArchitectureOpen((current) => !current)}
                     workspacePath={activeWorkspacePath}
                     workspaceSummary={workspaceSummary}
                     onWorkspaceOpen={openWorkspaceModal}
@@ -1281,6 +1293,10 @@ function App() {
                 onToggleAll={toggleAllSkills}
                 onToggleSkill={toggleSkillSelection}
                 onClose={() => setSkillsOpen(false)}
+            />
+            <ArchitectureDrawer
+                open={architectureOpen}
+                onClose={() => setArchitectureOpen(false)}
             />
             <WorkspaceModal
                 open={workspaceModalOpen}

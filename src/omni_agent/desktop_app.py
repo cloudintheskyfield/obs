@@ -105,7 +105,7 @@ class OBSDesktopApp:
         self.is_sending = False
 
         self.root = tk.Tk()
-        self.root.title("OBS Agent")
+        self.root.title("OBS Code")
         self.root.geometry("1320x860")
         self.root.minsize(1100, 720)
         self.root.configure(bg="#141414")

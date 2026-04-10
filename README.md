@@ -1,8 +1,12 @@
-# OBS Agent
+<p align="center">
+  <img src="assets/obs-code-logo.svg" alt="OBS Code logo" width="120" />
+</p>
+
+# OBS Code
 
 把一个会聊天的 Agent，升级成一个真正能干活的工作台。
 
-OBS Agent 不是单纯的对话框，而是一套面向真实任务的本地 AI 控制台：它能在你指定的工作区里读写文件、执行终端命令、调用 Python、搜索实时信息、控制浏览器，还会把上下文压缩、工具调用、日志和会话状态都落到本地，适合拿来做日常开发助手、研究助手、自动化助手，甚至直接作为你自己的 Claude-style 本地工作台。
+OBS Code 不是单纯的对话框，而是一套面向真实任务的本地 AI 控制台：它能在你指定的工作区里读写文件、执行终端命令、调用 Python、搜索实时信息、控制浏览器，还会把上下文压缩、工具调用、日志和会话状态都落到本地，适合拿来做日常开发助手、研究助手、自动化助手，甚至直接作为你自己的 Claude-style 本地工作台。
 
 ## 为什么它会让人上头
 
@@ -33,7 +37,7 @@ OBS Agent 不是单纯的对话框，而是一套面向真实任务的本地 AI 
 
 当前界面已经是完整可交互的 Claude-style 控制台，包括会话侧栏、Thinking 折叠块、工作区抽屉、日志抽屉和技能筛选：
 
-![OBS Claude-style Console Screenshot](screenshots/chat-ui-20260409.png)
+![OBS Code Console Screenshot](screenshots/chat-ui-20260410.png)
 
 ## 快速开始
 
@@ -75,8 +79,8 @@ chmod +x scripts/build_macos_app.sh
 
 生成物位置：
 
-- `dist/OBS Agent.app`
-- `dist/OBS-Agent-<timestamp>.dmg`
+- `dist/OBS Code.app`
+- `dist/OBS-Code-<timestamp>.dmg`
 
 ## 上手体验
 

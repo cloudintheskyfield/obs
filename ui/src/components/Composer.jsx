@@ -1,44 +1,20 @@
 import React from "react";
 
-const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
-
-function renderComposerPreview(value, images) {
-    const source = String(value || "");
-    const imageMap = new Map((images || []).map((image, index) => [image.id, { ...image, label: `Image ${index + 1}` }]));
-    const nodes = [];
-    let cursor = 0;
-    let match;
-
-    IMAGE_TOKEN_PATTERN.lastIndex = 0;
-    while ((match = IMAGE_TOKEN_PATTERN.exec(source)) !== null) {
-        const before = source.slice(cursor, match.index);
-        if (before) {
-            nodes.push(<span key={`text_${cursor}`}>{before}</span>);
-        }
-        const image = imageMap.get(match[1]);
-        if (image) {
-            nodes.push(
-                <span key={image.id} className="composer-image-chip">
-                    <span className="composer-image-chip-label">{image.label}</span>
-                    <span className="composer-image-preview">
-                        <img src={image.dataUrl} alt={image.name || image.label} />
-                    </span>
-                </span>
-            );
-        }
-        cursor = match.index + match[0].length;
-    }
-
-    const tail = source.slice(cursor);
-    if (tail) {
-        nodes.push(<span key={`text_tail_${cursor}`}>{tail}</span>);
-    }
-    return nodes;
+function renderComposerImages(images) {
+    return (images || []).map((image, index) => (
+        <span key={image.id} className="composer-image-chip">
+            <span className="composer-image-chip-label">{image.name || `Image ${index + 1}`}</span>
+            <span className="composer-image-preview">
+                <img src={image.dataUrl} alt={image.name || `Image ${index + 1}`} />
+            </span>
+        </span>
+    ));
 }
 
 export default function Composer({
     selectedModel,
-    onModelToggle,
+    availableModels,
+    onModelChange,
     permissionMode,
     onPermissionToggle,
     thinkingMode,
@@ -54,6 +30,8 @@ export default function Composer({
     onLogsToggle,
     skillsOpen,
     onSkillsToggle,
+    architectureOpen,
+    onArchitectureToggle,
     workspacePath,
     workspaceSummary,
     onWorkspaceOpen,
@@ -68,24 +46,29 @@ export default function Composer({
                         <div className="composer-workspace">
                             <span className="composer-placeholder">Current workspace</span>
                             <strong className="workspace-inline-path">{workspacePath || "No workspace selected"}</strong>
-                            <span className="workspace-inline-breadcrumb">{workspaceSummary}</span>
+                            <span className="workspace-inline-breadcrumb">Parents · {workspaceSummary}</span>
                         </div>
                         <div className="composer-toggles">
-                            <button className="tiny-pill" type="button" onClick={onModelToggle}>
-                                Model · {selectedModel}
-                            </button>
+                            <label className="tiny-select-shell" htmlFor="model-select">
+                                <span>Model</span>
+                                <select id="model-select" className="tiny-select" value={selectedModel} onChange={(event) => onModelChange(event.target.value)}>
+                                    {(availableModels || []).map((model) => (
+                                        <option key={model} value={model}>{model}</option>
+                                    ))}
+                                </select>
+                            </label>
                             <button className="tiny-pill" type="button" onClick={onPermissionToggle}>
                                 Permission · {permissionMode}
                             </button>
-                            <button className={`tiny-pill${thinkingMode ? " active" : ""}`} type="button" onClick={onThinkingToggle}>
+                            <button className={`tiny-pill thinking-pill${thinkingMode ? " active" : ""}`} type="button" onClick={onThinkingToggle}>
                                 Thinking · {thinkingMode ? "on" : "off"}
                             </button>
                         </div>
                     </div>
                 </div>
-                {value ? (
+                {images?.length ? (
                     <div className="composer-rich-preview" aria-hidden="true">
-                        {renderComposerPreview(value, images)}
+                        {renderComposerImages(images)}
                     </div>
                 ) : null}
                 <textarea
@@ -111,6 +94,10 @@ export default function Composer({
                         <button className={`small-tool${skillsOpen ? " active" : ""}`} type="button" onClick={onSkillsToggle}>
                             <i className="fas fa-sliders" />
                             <span>Skills</span>
+                        </button>
+                        <button className={`small-tool${architectureOpen ? " active" : ""}`} type="button" onClick={onArchitectureToggle}>
+                            <i className="fas fa-diagram-project" />
+                            <span>Architecture</span>
                         </button>
                     </div>
                     <div className="composer-right">

@@ -88,6 +88,40 @@ select {
     gap: 8px;
 }
 
+.brand-lockup {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 8px 6px;
+}
+
+.brand-mark,
+.topbar-logo {
+    width: 42px;
+    height: 42px;
+    display: block;
+    filter: drop-shadow(0 0 20px rgba(90, 238, 255, 0.18));
+}
+
+.brand-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.brand-name {
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: var(--text);
+}
+
+.brand-tagline {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
 .search-shell,
 .nav-pill,
 .sidebar-action,
@@ -122,13 +156,13 @@ select {
 }
 
 .history-panel {
-    margin-top: auto;
     border-top: 1px solid var(--line);
     padding-top: 16px;
     min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    flex: 1;
 }
 
 .section-heading {
@@ -237,6 +271,12 @@ select {
     gap: 16px;
 }
 
+.topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
 .eyebrow {
     font-size: 12px;
     text-transform: uppercase;
@@ -333,6 +373,30 @@ select {
     transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
+.tiny-select-shell {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.02);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tiny-select-shell > span {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.tiny-select {
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    min-width: 126px;
+    cursor: pointer;
+}
+
 .mode-select {
     min-width: 112px;
     padding-right: 34px;
@@ -363,6 +427,15 @@ select {
 .small-tool:hover {
     background: rgba(255, 255, 255, 0.04);
     border-color: var(--line-strong);
+}
+
+.thinking-pill.active {
+    color: #dcfeff;
+    border-color: rgba(91, 238, 255, 0.34);
+    background:
+        radial-gradient(circle at top, rgba(91, 238, 255, 0.18), transparent 55%),
+        rgba(8, 24, 31, 0.84);
+    box-shadow: inset 0 0 0 1px rgba(91, 238, 255, 0.16), 0 0 26px rgba(91, 238, 255, 0.12);
 }
 
 .hero {
@@ -439,7 +512,7 @@ select {
     color: rgba(243, 239, 231, 0.82);
     font-size: 13px;
     letter-spacing: 0.01em;
-    padding: 4px 2px 12px;
+    padding: 12px 2px 0;
 }
 
 .request-loading-line {
@@ -1162,6 +1235,7 @@ select {
     color: var(--text);
     line-height: 1.35;
     word-break: break-all;
+    font-family: "Space Grotesk", sans-serif;
 }
 
 .workspace-inline-breadcrumb {
@@ -1176,9 +1250,7 @@ select {
     align-items: center;
     gap: 8px;
     padding: 6px 10px 2px;
-    min-height: 28px;
-    color: var(--text-soft);
-    line-height: 1.55;
+    min-height: 24px;
 }
 
 .composer-image-chip {
@@ -1266,6 +1338,35 @@ select {
     color: var(--text);
 }
 
+.architecture-sheet {
+    max-width: 980px;
+}
+
+.architecture-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.architecture-card {
+    padding: 18px;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.028);
+}
+
+.architecture-card strong {
+    display: block;
+    margin-bottom: 10px;
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 16px;
+}
+
+.architecture-card p {
+    color: var(--text-soft);
+    line-height: 1.7;
+}
+
 .send-btn {
     width: 44px;
     height: 44px;
@@ -1293,10 +1394,6 @@ select {
 }
 
 .statusline {
-    display: none;
-}
-
-.topbar {
     display: none;
 }
 
@@ -1551,14 +1648,9 @@ select {
         padding: 12px;
     }
 
-    .brand-panel {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-    }
-
+    .brand-panel,
     .sidebar-group {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        display: flex;
     }
 
     .workspace {
@@ -1574,6 +1666,10 @@ select {
     .transcript-toolbar {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .architecture-list {
+        grid-template-columns: 1fr;
     }
 
     .runtime-pills,
