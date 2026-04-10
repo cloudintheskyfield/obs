@@ -6,7 +6,7 @@ import {
     transcriptRole
 } from "../lib/formatting.js";
 
-export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, onReplay }) {
+export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, onReplay, requestIndicator }) {
     return (
         <section className="chat-region">
             <div className="transcript-toolbar">
@@ -15,6 +15,18 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                 </div>
             </div>
             <div id="chat-messages" className="chat-messages" ref={chatMessagesRef}>
+                {requestIndicator?.active ? (
+                    <div className="request-loading-inline" aria-live="polite">
+                        <span className="request-loading-line" aria-hidden="true" />
+                        <span className="request-loading-copy">
+                            <span className="request-loading-spinner" aria-hidden="true">
+                                <i className="fas fa-spinner" />
+                            </span>
+                            <span>{requestIndicator.label || "Working on your request"}</span>
+                        </span>
+                        <span className="request-loading-line" aria-hidden="true" />
+                    </div>
+                ) : null}
                 {!transcript.length ? (
                     <div className="transcript-empty">
                         No transcript items yet. Start with a task request, or ask for a real-time search.
@@ -23,23 +35,26 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                     <div className="message-list">
                         {transcript.map((entry) => {
                             const isThinking = entry.kind === "thinking_text";
+                            const isCompressionNotice = entry.kind === "system_notice" && entry.phase === "compression";
                             const isExpanded = Boolean(expandedThinking[entry.id]);
                             const collapsed = isThinking && !isExpanded;
                             const bodyHtml = entry.kind === "thinking_text" && entry.pendingPlaceholder && !String(entry.content || "").trim()
                                 ? null
-                                : ((entry.kind === "assistant_text" || entry.kind === "system_notice" || entry.kind === "tool_result")
+                                : ((entry.kind === "assistant_text" || entry.kind === "system_notice" || entry.kind === "tool_result" || entry.kind === "thinking_text")
                                     ? renderMarkdown(entry.content)
                                     : null);
 
                             return (
                                 <article
                                     key={entry.id}
-                                    className={`message ${transcriptRole(entry)}${entry.kind === "system_notice" && entry.phase === "compression" ? " compression-notice" : ""}`}
+                                    className={`message ${transcriptRole(entry)}${isCompressionNotice ? " compression-notice" : ""}`}
                                 >
-                                    <div className="message-meta">
-                                        <span>{entryLabel(entry)}</span>
-                                        <span>{new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                                    </div>
+                                    {!isCompressionNotice ? (
+                                        <div className="message-meta">
+                                            <span>{entryLabel(entry)}</span>
+                                            <span>{new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                                        </div>
+                                    ) : null}
 
                                     {isThinking ? (
                                         <div className="message-actions">
@@ -84,10 +99,18 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                                     <span />
                                                 </span>
                                             </div>
-                                        ) : entry.kind === "system_notice" && entry.phase === "compression" ? (
-                                            <div className="compression-inline">
-                                                <span className="compression-spinner"><i className="fas fa-spinner" /></span>
-                                                <span>{entry.content || "Compressing context..."}</span>
+                                        ) : isCompressionNotice ? (
+                                            <div className="compression-inline" aria-live="polite">
+                                                <span className="compression-line" aria-hidden="true" />
+                                                <span className="compression-copy">
+                                                    {String(entry.content || "").toLowerCase().includes("compacted") ? (
+                                                        <i className="fas fa-check compression-check" />
+                                                    ) : (
+                                                        <span className="compression-spinner"><i className="fas fa-spinner" /></span>
+                                                    )}
+                                                    <span>{entry.content || "Automatically compacting context"}</span>
+                                                </span>
+                                                <span className="compression-line" aria-hidden="true" />
                                             </div>
                                         ) : bodyHtml !== null ? (
                                             <div dangerouslySetInnerHTML={{ __html: bodyHtml }} />

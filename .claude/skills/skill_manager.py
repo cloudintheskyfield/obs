@@ -118,6 +118,41 @@ class SkillManager:
         """获取指定Skill"""
         return self.skills.get(name)
 
+    def get_current_workspace(self) -> str:
+        for skill_name in ["bash", "str_replace_editor"]:
+            skill = self.skills.get(skill_name)
+            if skill is not None and hasattr(skill, "work_dir"):
+                return str(Path(skill.work_dir).resolve())
+
+        sandbox = self.skills.get("code_sandbox")
+        if sandbox is not None and hasattr(sandbox, "workspace_dir"):
+            return str(Path(sandbox.workspace_dir).resolve())
+
+        return str(Path(self.config.get("work_dir", "workspace")).expanduser().resolve())
+
+    def set_workspace(self, work_dir: str) -> str:
+        workspace = Path(work_dir).expanduser().resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        self.config["work_dir"] = str(workspace)
+
+        for skill_name in ["bash", "str_replace_editor"]:
+            skill = self.skills.get(skill_name)
+            if skill is None or not hasattr(skill, "work_dir"):
+                continue
+            skill.work_dir = workspace
+            skill.work_dir.mkdir(parents=True, exist_ok=True)
+
+        sandbox = self.skills.get("code_sandbox")
+        if sandbox is not None and hasattr(sandbox, "workspace_dir"):
+            sandbox_root = workspace / ".obs_code_sandbox"
+            sandbox_root.mkdir(parents=True, exist_ok=True)
+            sandbox.workspace_dir = sandbox_root
+            if hasattr(sandbox, "config") and isinstance(sandbox.config, dict):
+                sandbox.config["workspace_dir"] = str(sandbox_root)
+
+        logger.info(f"Workspace updated to {workspace}")
+        return str(workspace)
+
     def resolve_skill_name_for_tool(self, tool_name: str) -> Optional[str]:
         """Map runtime tool names back to SKILL.md skill names."""
         if tool_name in self.TOOL_SKILL_ALIASES:

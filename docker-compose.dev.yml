@@ -18,6 +18,7 @@ services:
       - ./workspace:/app/workspace:rw
       - ./logs:/app/logs:rw
       - ./screenshots:/app/screenshots:rw
+      - ${HOME}:/host-home:rw
     environment:
       - VLLM_BASE_URL=${VLLM_BASE_URL:-https://api.minimaxi.com/v1/chat/completions}
       - VLLM_API_KEY=${VLLM_API_KEY:-dummy_key}
@@ -25,6 +26,9 @@ services:
       - WORK_DIR=${WORK_DIR:-/app/workspace}
       - LOG_LEVEL=DEBUG
       - RUNNING_IN_DOCKER=true
+      - HOST_HOME=${HOME}
+      - HOST_HOME_MOUNT=/host-home
+      - HOST_REPO_ROOT=${PWD}
       - ENABLE_COMPUTER_USE=true
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true

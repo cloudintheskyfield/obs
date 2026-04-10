@@ -414,20 +414,27 @@ class ComputerUseSkill(BaseSkill):
                     return SkillResult(
                         success=False,
                         error="Key action requires text parameter (key name)"
-                    )
+                )
                 
                 if not self.page:
                     await self.initialize()
-                
-                await self.page.keyboard.press(text)
+
+                normalized_key = {
+                    "return": "Enter",
+                    "enter": "Enter",
+                    "esc": "Escape",
+                    "del": "Delete",
+                }.get(str(text).strip().lower(), text)
+
+                await self.page.keyboard.press(normalized_key)
                 await self.page.wait_for_timeout(500)
                 
                 screenshot = await self.take_screenshot()
                 return SkillResult(
                     success=True,
                     base64_image=screenshot,
-                    content=f"Pressed key: '{text}'",
-                    metadata={"action": action, "key": text}
+                    content=f"Pressed key: '{normalized_key}'",
+                    metadata={"action": action, "key": normalized_key}
                 )
             
             elif action == "cursor_position":

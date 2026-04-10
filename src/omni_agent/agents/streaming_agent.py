@@ -1,8 +1,15 @@
 import json
+import hashlib
 import re
+import base64
+import io
+import subprocess
+import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Any, AsyncGenerator, Optional
 from loguru import logger
+from PIL import Image
 
 
 READ_ONLY_TOOLS = {"web_search", "advanced_web_search", "weather"}
@@ -21,6 +28,23 @@ RUNTIME_CONTEXT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SIMPLE_GREETING_PATTERN = re.compile(r"^\s*(hi|hello|hey|你好|嗨|在吗)\W*\s*$", re.IGNORECASE)
+RAW_TOOL_CALL_MARKERS = ("<minimax:tool_call>", "<invoke ", "<parameter ")
+RAW_TOOL_CALL_BLOCK_PATTERN = re.compile(
+    r"<minimax:tool_call>\s*(.*?)\s*</minimax:tool_call>",
+    re.IGNORECASE | re.DOTALL,
+)
+RAW_TOOL_INVOKE_PATTERN = re.compile(
+    r"<invoke\s+name=\"([^\"]+)\"\s*>(.*?)</invoke>",
+    re.IGNORECASE | re.DOTALL,
+)
+RAW_TOOL_PARAMETER_PATTERN = re.compile(
+    r"<parameter\s+name=\"([^\"]+)\"\s*>(.*?)</parameter>",
+    re.IGNORECASE | re.DOTALL,
+)
+IMAGE_UNAVAILABLE_PATTERN = re.compile(
+    r"(没有.*图片|没.*看到.*图片|未.*看到.*图片|看起来图片.*没有成功|don'?t\s+see\s+any\s+image|no\s+image\s+(was\s+)?provided|image.*not.*attached)",
+    re.IGNORECASE,
+)
 
 
 class StreamingAgent:
@@ -37,6 +61,289 @@ class StreamingAgent:
         self.skill_manager = skill_manager
         self.execution_engine = execution_engine
         self.plan_agent = plan_agent
+        self.session_context_cache: Dict[str, Dict[str, Any]] = {}
+
+    def _contains_raw_tool_markup(self, raw_text: str) -> bool:
+        text = raw_text or ""
+        return any(marker in text for marker in RAW_TOOL_CALL_MARKERS)
+
+    def _sanitize_visible_text(self, raw_text: str) -> str:
+        text = raw_text or ""
+        text = RAW_TOOL_CALL_BLOCK_PATTERN.sub("", text)
+        marker_positions = [text.find(marker) for marker in RAW_TOOL_CALL_MARKERS if marker in text]
+        if marker_positions:
+            text = text[: min(marker_positions)]
+        return text
+
+    def _message_content_to_text(self, content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text") or ""))
+            return "".join(parts)
+        return ""
+
+    def _compose_user_message_content(
+        self,
+        prompt_text: str,
+        message_parts: Optional[List[Dict[str, Any]]],
+    ) -> Any:
+        if not message_parts:
+            return prompt_text
+
+        content: List[Dict[str, Any]] = []
+        leading_text = prompt_text.strip()
+        if leading_text:
+            content.append({"type": "text", "text": leading_text})
+
+        for part in message_parts:
+            if not isinstance(part, dict):
+                continue
+            part_type = part.get("type")
+            if part_type == "text":
+                text_value = str(part.get("text") or "")
+                if text_value:
+                    content.append({"type": "text", "text": text_value})
+            elif part_type == "image":
+                data_url = part.get("data_url") or part.get("url")
+                if data_url:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": data_url},
+                    })
+        return content or prompt_text
+
+    def _has_image_parts(self, message_parts: Optional[List[Dict[str, Any]]]) -> bool:
+        for part in message_parts or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image" and (part.get("data_url") or part.get("url")):
+                return True
+        return False
+
+    def _iter_inline_images(self, message_parts: Optional[List[Dict[str, Any]]]) -> List[str]:
+        images: List[str] = []
+        for part in message_parts or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image":
+                data_url = part.get("data_url") or part.get("url")
+                if isinstance(data_url, str) and data_url.startswith("data:image"):
+                    images.append(data_url)
+        return images
+
+    def _text_only_message_parts(self, message_parts: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        text_parts: List[Dict[str, Any]] = []
+        for part in message_parts or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                text_value = str(part.get("text") or "")
+                if text_value:
+                    text_parts.append({"type": "text", "text": text_value})
+        return text_parts
+
+    def _color_name(self, rgb: tuple[int, int, int]) -> str:
+        r, g, b = rgb
+        if max(rgb) < 40:
+            return "黑色"
+        if min(rgb) > 220:
+            return "白色"
+        if abs(r - g) < 18 and abs(g - b) < 18:
+            return "灰色"
+        if r > 200 and g > 160 and b < 120:
+            return "黄色"
+        if r > 180 and g < 110 and b < 110:
+            return "红色"
+        if r > 180 and 100 < g < 180 and b < 120:
+            return "橙色"
+        if g > 150 and r < 140 and b < 140:
+            return "绿色"
+        if b > 150 and r < 150 and g < 170:
+            return "蓝色"
+        if r > 150 and b > 150 and g < 140:
+            return "紫色"
+        if r > 120 and g > 80 and b < 80:
+            return "棕色"
+        return "综合色"
+
+    def _extract_ocr_text(self, image: Image.Image) -> str:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
+                image.save(tmp.name)
+                result = subprocess.run(
+                    ["tesseract", tmp.name, "stdout", "-l", "eng"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                text = (result.stdout or "").strip()
+                text = re.sub(r"\s+", " ", text)
+                return text[:160]
+        except Exception as exc:
+            logger.debug(f"OCR extraction skipped: {exc}")
+            return ""
+
+    def _analyze_inline_images_locally(self, message_parts: Optional[List[Dict[str, Any]]]) -> str:
+        image_data_urls = self._iter_inline_images(message_parts)
+        if not image_data_urls:
+            return ""
+
+        summaries: List[str] = []
+        for index, data_url in enumerate(image_data_urls[:4], start=1):
+            try:
+                _, encoded = data_url.split(",", 1)
+                image_bytes = base64.b64decode(encoded)
+                image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                width, height = image.size
+
+                palette = image.resize((24, 24)).getcolors(24 * 24) or []
+                dominant = sorted(palette, key=lambda item: item[0], reverse=True)[:3]
+                color_names: List[str] = []
+                for _, color in dominant:
+                    name = self._color_name(tuple(color))
+                    if name not in color_names:
+                        color_names.append(name)
+                ocr_text = self._extract_ocr_text(image)
+
+                fragments = [
+                    f"第{index}张图片尺寸约为 {width}x{height} 像素",
+                ]
+                if color_names:
+                    fragments.append(f"主色调偏{ '、'.join(color_names[:3]) }")
+                if ocr_text:
+                    fragments.append(f"可识别文字为“{ocr_text}”")
+                summaries.append("，".join(fragments) + "。")
+            except Exception as exc:
+                logger.warning(f"Failed to analyze inline image locally: {exc}")
+
+        if not summaries:
+            return ""
+
+        return (
+            "我已经读取到你贴进来的图片。基于本地视觉兜底分析，我看到：\n\n- "
+            + "\n- ".join(summaries)
+            + "\n\n如果你希望，我还可以继续结合你的问题，围绕这些图片做更具体的说明。"
+        )
+
+    def _should_use_local_image_fallback(self, answer_text: str) -> bool:
+        text = (answer_text or "").strip()
+        if not text:
+            return True
+        return bool(IMAGE_UNAVAILABLE_PATTERN.search(text))
+
+    def _canonical_tool_name(self, tool_name: str) -> str:
+        raw_name = (tool_name or "").strip()
+        lowered = raw_name.lower()
+        if lowered in {"bash", "shell", "terminal", "run_command", "cli-mcp-server_run_command"}:
+            return "bash"
+        if lowered in {"read", "view", "view_file", "read_file", "open_file"}:
+            return "str_replace_editor"
+        return raw_name
+
+    def _workspace_relative_path(self, raw_path: str, request_context: Optional[Dict[str, Any]]) -> str:
+        path_text = (raw_path or "").strip()
+        if not path_text:
+            return path_text
+        path = Path(path_text).expanduser()
+        if not path.is_absolute():
+            return path_text
+
+        candidates = []
+        if request_context:
+            for key in ("workspace_display_path", "workspace_runtime_path"):
+                value = request_context.get(key)
+                if value:
+                    candidates.append(value)
+        if self.skill_manager:
+            candidates.append(self.skill_manager.get_current_workspace())
+
+        for candidate in candidates:
+            try:
+                relative = path.relative_to(Path(candidate).expanduser())
+                return str(relative) or "."
+            except Exception:
+                continue
+        return path_text
+
+    def _rewrite_command_workspace_paths(self, command: str, request_context: Optional[Dict[str, Any]]) -> str:
+        text = command or ""
+        if not request_context:
+            return text
+        display_path = (request_context.get("workspace_display_path") or "").strip()
+        runtime_path = (request_context.get("workspace_runtime_path") or "").strip()
+        if display_path and runtime_path and display_path != runtime_path:
+            text = text.replace(display_path, runtime_path)
+        return text
+
+    def _normalize_tool_invocation(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        request_context: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        canonical_name = self._canonical_tool_name(tool_name)
+        normalized_args = dict(tool_args or {})
+
+        if canonical_name == "bash":
+            if "cmd" in normalized_args and "command" not in normalized_args:
+                normalized_args["command"] = normalized_args.pop("cmd")
+            if normalized_args.get("command"):
+                normalized_args["command"] = self._rewrite_command_workspace_paths(
+                    str(normalized_args["command"]),
+                    request_context,
+                )
+
+        if canonical_name == "str_replace_editor":
+            if "file_path" in normalized_args and "path" not in normalized_args:
+                normalized_args["path"] = normalized_args.pop("file_path")
+            if "filepath" in normalized_args and "path" not in normalized_args:
+                normalized_args["path"] = normalized_args.pop("filepath")
+            command_name = normalized_args.get("command") or normalized_args.get("action")
+            if not command_name:
+                normalized_args["command"] = "view"
+            elif str(command_name).lower() in {"read", "view", "view_file", "read_file", "open_file"}:
+                normalized_args["command"] = "view"
+            if normalized_args.get("path"):
+                normalized_args["path"] = self._workspace_relative_path(
+                    str(normalized_args["path"]),
+                    request_context,
+                )
+
+        return {
+            "name": canonical_name,
+            "arguments": normalized_args,
+        }
+
+    def _extract_tool_calls_from_xml_markup(self, raw_text: str) -> List[Dict[str, Any]]:
+        text = raw_text or ""
+        if not self._contains_raw_tool_markup(text):
+            return []
+
+        tool_calls: List[Dict[str, Any]] = []
+        for index, match in enumerate(RAW_TOOL_INVOKE_PATTERN.finditer(text), start=1):
+            raw_name = match.group(1).strip()
+            argument_text = match.group(2) or ""
+            params: Dict[str, Any] = {}
+            for param_match in RAW_TOOL_PARAMETER_PATTERN.finditer(argument_text):
+                param_name = param_match.group(1).strip()
+                param_value = (param_match.group(2) or "").strip()
+                params[param_name] = param_value
+            tool_calls.append({
+                "id": f"xml_tool_call_{index}",
+                "type": "function",
+                "function": {
+                    "name": self._canonical_tool_name(raw_name),
+                    "arguments": json.dumps(params, ensure_ascii=False),
+                },
+            })
+        return tool_calls
 
     def _split_thinking_and_answer(self, raw_text: str) -> Dict[str, Any]:
         open_tag = "<think>"
@@ -47,7 +354,7 @@ class StreamingAgent:
             return {
                 "has_thinking": False,
                 "thinking_text": "",
-                "answer_text": raw_text,
+                "answer_text": self._sanitize_visible_text(raw_text),
                 "in_thinking": False,
             }
 
@@ -58,8 +365,8 @@ class StreamingAgent:
         if close_index == -1:
             return {
                 "has_thinking": True,
-                "thinking_text": after_open,
-                "answer_text": before_open,
+                "thinking_text": self._sanitize_visible_text(after_open),
+                "answer_text": self._sanitize_visible_text(before_open),
                 "in_thinking": True,
             }
 
@@ -67,8 +374,8 @@ class StreamingAgent:
         after_close = after_open[close_index + len(close_tag):]
         return {
             "has_thinking": True,
-            "thinking_text": thinking_text,
-            "answer_text": f"{before_open}{after_close}",
+            "thinking_text": self._sanitize_visible_text(thinking_text),
+            "answer_text": self._sanitize_visible_text(f"{before_open}{after_close}"),
             "in_thinking": False,
         }
 
@@ -104,7 +411,7 @@ class StreamingAgent:
         for entry in reversed(messages):
             if entry.get("role") != "tool":
                 continue
-            content = (entry.get("content") or "").strip()
+            content = self._sanitize_visible_text((entry.get("content") or "")).strip()
             tool_name = entry.get("name") or "tool"
             if not content:
                 continue
@@ -120,7 +427,7 @@ class StreamingAgent:
         return bool(RUNTIME_CONTEXT_PATTERN.search(text))
 
     def _estimate_context_percent(self, messages: List[Dict[str, Any]]) -> int:
-        text_size = sum(len((item.get("content") or "")) for item in messages if isinstance(item.get("content"), str))
+        text_size = sum(len(self._message_content_to_text(item.get("content"))) for item in messages)
         return min(98, max(1, round(text_size / 140) + 4))
 
     def _emit_context_state(self, session_id: str, messages: List[Dict[str, Any]]) -> str:
@@ -129,6 +436,148 @@ class StreamingAgent:
             "session_id": session_id,
             "context_percent": self._estimate_context_percent(messages),
         })
+
+    def _conversation_to_turns(self, messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        turns: List[Dict[str, str]] = []
+        pending_user: Optional[str] = None
+
+        for item in messages:
+            role = item.get("role")
+            content = self._sanitize_visible_text(self._message_content_to_text(item.get("content"))).strip()
+            if not content:
+                continue
+
+            if role == "user":
+                if pending_user is not None:
+                    turns.append({"user": pending_user, "assistant": ""})
+                pending_user = content
+            elif role == "assistant":
+                if pending_user is None:
+                    continue
+                turns.append({"user": pending_user, "assistant": content})
+                pending_user = None
+
+        if pending_user is not None:
+            turns.append({"user": pending_user, "assistant": ""})
+
+        return turns
+
+    def _serialize_turns(self, turns: List[Dict[str, str]]) -> str:
+        lines: List[str] = []
+        for index, turn in enumerate(turns, start=1):
+            lines.append(f"Round {index}")
+            lines.append(f"User: {turn.get('user', '').strip()}")
+            assistant = (turn.get("assistant") or "").strip()
+            if assistant:
+                lines.append(f"Assistant: {assistant}")
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    def _signature_for_text(self, content: str) -> str:
+        return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+
+    async def _summarize_context_block(
+        self,
+        *,
+        session_id: str,
+        phase: str,
+        instructions: str,
+        content: str,
+        max_tokens: int,
+        model: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        request_messages = [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": content},
+        ]
+        yield self._sse_log(session_id, phase, "request", {
+            "messages": request_messages,
+            "stream": False,
+            "max_tokens": max_tokens,
+            "temperature": 0.2,
+            "model": model,
+        })
+        response = await self.vllm_client.chat_completion(
+            messages=request_messages,
+            temperature=0.2,
+            max_tokens=max_tokens,
+            stream=False,
+            model=model,
+        )
+        message = {}
+        if "choices" in response and response["choices"]:
+            message = response["choices"][0].get("message", {}) or {}
+        yield self._sse_log(session_id, phase, "response", {
+            "message": message,
+        })
+        yield json.dumps({"content": message.get("content", "") or ""}, ensure_ascii=False)
+
+    def _build_compacted_user_prompt(
+        self,
+        *,
+        current_user_message: str,
+        context: str,
+        tool_context: str,
+        request_context: Dict[str, Any],
+        historical_summary: str,
+        recent_summary: str,
+        skill_index_prompt: Optional[str],
+        relevant_skill_instructions: Optional[str],
+        tool_guidance: Optional[str],
+    ) -> str:
+        sections = []
+        historical_summary = self._sanitize_visible_text(historical_summary).strip()
+        recent_summary = self._sanitize_visible_text(recent_summary).strip()
+
+        if context:
+            sections.append(f"[Workspace / tool context]\nTool context: {tool_context}\n{context}")
+
+        runtime_lines = []
+        if request_context:
+            runtime_lines.extend([
+                f"Current date: {request_context.get('current_date') or 'unknown'}",
+                f"Current time: {request_context.get('current_time') or 'unknown'}",
+                f"Current datetime: {request_context.get('current_datetime') or 'unknown'}",
+                f"Timezone: {request_context.get('timezone') or 'unknown'}",
+            ])
+            if request_context.get("workspace_display_path"):
+                runtime_lines.append(f"User-visible workspace path: {request_context.get('workspace_display_path')}")
+            if request_context.get("workspace_runtime_path"):
+                runtime_lines.append(f"Runtime workspace path: {request_context.get('workspace_runtime_path')}")
+            if request_context.get("thread_runtime_dir"):
+                runtime_lines.append(
+                    "Internal thread runtime directory for intermediate artifacts: "
+                    f"{request_context.get('thread_runtime_dir')}"
+                )
+            location = request_context.get("location") or {}
+            loc_parts = [part for part in [location.get("city"), location.get("region"), location.get("country_name")] if part]
+            if loc_parts:
+                runtime_lines.append(f"Approximate user location: {', '.join(loc_parts)}")
+        if runtime_lines:
+            sections.append("[Runtime context]\n" + "\n".join(runtime_lines))
+
+        if historical_summary:
+            sections.append(f"[Historical context summary]\n{historical_summary}")
+
+        if recent_summary:
+            sections.append(f"[Recent {4} rounds summary]\n{recent_summary}")
+
+        if skill_index_prompt:
+            sections.append(skill_index_prompt)
+
+        if relevant_skill_instructions:
+            sections.append(relevant_skill_instructions)
+
+        if tool_guidance:
+            sections.append(f"[Tool selection guidance]\n{tool_guidance}")
+
+        sections.append(
+            "[Current user request]\n"
+            f"{current_user_message}\n\n"
+            "Use the summaries above as context. Do not treat missing older turns as absent; they are already compressed here."
+        )
+
+        return "\n\n".join(section for section in sections if section.strip())
 
     def _sse_log(self, session_id: str, phase: str, direction: str, payload: Dict[str, Any]) -> str:
         return self._sse({
@@ -145,7 +594,7 @@ class StreamingAgent:
             if entry.get("role") != "tool":
                 continue
             tool_name = entry.get("name") or "tool"
-            content = (entry.get("content") or "").strip()
+            content = self._sanitize_visible_text((entry.get("content") or "")).strip()
             if not content:
                 continue
             if tool_name == "weather":
@@ -209,6 +658,7 @@ class StreamingAgent:
         conversation_history: List[Dict[str, Any]],
         messages: List[Dict[str, Any]],
         instruction: str,
+        model: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         final_messages = [
             *messages,
@@ -222,16 +672,27 @@ class StreamingAgent:
             "temperature": 0.4,
             "max_tokens": 2000,
             "stream": False,
+            "model": model,
         })
         raw_content = ""
         synthesis_attempts = 3
         for attempt in range(1, synthesis_attempts + 1):
             try:
+                attempt_messages = list(final_messages)
+                if attempt > 1:
+                    attempt_messages.append({
+                        "role": "user",
+                        "content": (
+                            "Return only the final natural-language answer. "
+                            "Do not output any <minimax:tool_call>, <invoke>, <parameter>, XML, or tool invocation markup."
+                        ),
+                    })
                 response = await self.vllm_client.chat_completion(
-                    messages=final_messages,
+                    messages=attempt_messages,
                     temperature=0.4,
                     max_tokens=2000,
                     stream=False,
+                    model=model,
                 )
                 if "choices" in response and response["choices"]:
                     raw_content = response["choices"][0].get("message", {}).get("content", "") or ""
@@ -239,7 +700,7 @@ class StreamingAgent:
                         "attempt": attempt,
                         "message": response["choices"][0].get("message", {}),
                     })
-                if raw_content.strip():
+                if raw_content.strip() and not self._contains_raw_tool_markup(raw_content):
                     break
             except Exception:
                 logger.exception(f"Final answer synthesis failed on attempt {attempt}")
@@ -354,18 +815,31 @@ class StreamingAgent:
         tools: List[Dict[str, Any]],
     ) -> Optional[str]:
         tool_names = {tool.get("name") for tool in tools}
+        exact_tool_names = ", ".join(sorted(name for name in tool_names if name))
+        exact_name_rule = (
+            f"Use only the exact tool names from this list: {exact_tool_names}. "
+            "Do not invent aliases such as shell, Read, View, cli-mcp-server_run_command, or XML invocation markup."
+            if exact_tool_names
+            else None
+        )
         if self._looks_like_local_shell_request(user_message, tool_context) and "bash" in tool_names:
-            return (
+            guidance = (
                 "This is a local machine or workspace request. You can directly inspect local files and directories "
                 "with the bash tool. Prefer bash for listing files, reading directories, pwd, ls, find, cat, and grep. "
                 "Do not use web search for local filesystem questions, and do not claim you lack file access when bash is available."
             )
+            if exact_name_rule:
+                guidance += " " + exact_name_rule
+            return guidance
         if WEATHER_HINT_PATTERN.search(user_message or "") and "weather" in tool_names:
-            return (
+            guidance = (
                 "This appears to be a weather or temperature question. Prefer the weather tool first. "
                 "Only use search if the weather tool fails or the question requires broader web context."
             )
-        return None
+            if exact_name_rule:
+                guidance += " " + exact_name_rule
+            return guidance
+        return exact_name_rule
 
     def _augment_tool_args(
         self,
@@ -408,8 +882,6 @@ class StreamingAgent:
     ) -> Optional[List[str]]:
         tool_names = {tool.get("name") for tool in tools}
         if "bash" not in tool_names:
-            return None
-        if permission_mode == "ask" and not permission_confirmed:
             return None
         if not self._looks_like_local_shell_request(user_message, tool_context):
             return None
@@ -468,87 +940,118 @@ class StreamingAgent:
         request_context: Dict[str, Any],
     ) -> AsyncGenerator[str, None]:
         original = chat_sessions.get(session_id, [])
-        if len(original) < 4:
+        if len(original) < 2:
+            return
+        selected_model = (request_context or {}).get("model") or None
+
+        prior_messages = original[:-1]
+        turns = self._conversation_to_turns(prior_messages)
+        if not turns:
             return
 
+        recent_turn_count = 4
+        recent_turns = turns[-recent_turn_count:]
+        historical_turns = turns[:-recent_turn_count]
         before_percent = self._estimate_context_percent(original)
-        if before_percent < 80:
-            return
+        should_emit_notice = before_percent >= 80
 
-        yield self._sse({
-            "type": "compression_start",
-            "session_id": session_id,
-            "before_percent": before_percent,
-            "target_percent": 40,
-            "content": "Compressing conversation context to keep the session responsive...",
-        })
+        if should_emit_notice:
+            yield self._sse({
+                "type": "compression_start",
+                "session_id": session_id,
+                "before_percent": before_percent,
+                "target_percent": 40,
+                "content": "Compressing conversation context with model summaries...",
+            })
 
-        keep_tail = 4
-        prefix = original[:-keep_tail]
-        suffix = original[-keep_tail:]
-        if not prefix:
-            return
+        cache = self.session_context_cache.setdefault(session_id, {})
+        historical_summary = cache.get("historical_summary", "")
+        recent_summary = cache.get("recent_summary", "")
 
-        summary_request = [
-            {
-                "role": "system",
-                "content": (
-                    "Summarize the earlier conversation into a compact working memory. "
-                    "Preserve user goals, constraints, decisions, open issues, dates, locations, and any tool results that still matter. "
-                    "Keep it concise and factual."
-                ),
-            },
+        historical_serialized = self._serialize_turns(historical_turns) if historical_turns else ""
+        recent_serialized = self._serialize_turns(recent_turns) if recent_turns else ""
+
+        historical_signature = self._signature_for_text(historical_serialized) if historical_serialized else ""
+        recent_signature = self._signature_for_text(recent_serialized) if recent_serialized else ""
+
+        if historical_serialized and cache.get("historical_signature") != historical_signature:
+            try:
+                summary_chunks: List[str] = []
+                async for chunk in self._summarize_context_block(
+                    session_id=session_id,
+                    phase="compression_historical",
+                    instructions=(
+                        "Summarize the older conversation into compact working memory. "
+                        "Preserve long-term user goals, constraints, decisions, preferences, unresolved issues, dates, locations, "
+                        "and tool findings that still matter. Keep it concise and factual."
+                    ),
+                    content=historical_serialized,
+                    max_tokens=900,
+                    model=selected_model,
+                ):
+                    if chunk.startswith("data: "):
+                        yield chunk
+                    else:
+                        summary_chunks.append(chunk)
+                if summary_chunks:
+                    historical_summary = json.loads(summary_chunks[-1]).get("content", "") or ""
+                    historical_summary = self._split_thinking_and_answer(historical_summary)["answer_text"].strip()
+                    cache["historical_summary"] = historical_summary.strip()
+                    cache["historical_signature"] = historical_signature
+            except Exception:
+                logger.exception("Historical context compression failed")
+
+        if recent_serialized and cache.get("recent_signature") != recent_signature:
+            try:
+                summary_chunks = []
+                async for chunk in self._summarize_context_block(
+                    session_id=session_id,
+                    phase="compression_recent",
+                    instructions=(
+                        "Summarize the recent conversation rounds for immediate continuity. "
+                        "Preserve the latest asks, current assumptions, recent tool outcomes, and what the assistant should continue doing next. "
+                        "Keep it concise, accurate, and action-oriented."
+                    ),
+                    content=recent_serialized,
+                    max_tokens=600,
+                    model=selected_model,
+                ):
+                    if chunk.startswith("data: "):
+                        yield chunk
+                    else:
+                        summary_chunks.append(chunk)
+                if summary_chunks:
+                    recent_summary = json.loads(summary_chunks[-1]).get("content", "") or ""
+                    recent_summary = self._split_thinking_and_answer(recent_summary)["answer_text"].strip()
+                    cache["recent_summary"] = recent_summary.strip()
+                    cache["recent_signature"] = recent_signature
+            except Exception:
+                logger.exception("Recent context compression failed")
+
+        cache["recent_turn_count"] = recent_turn_count
+        after_basis = [
+            {"role": "system", "content": "OBS Agent system prompt"},
             {
                 "role": "user",
-                "content": json.dumps(prefix, ensure_ascii=False),
+                "content": "\n\n".join(
+                    part for part in [
+                        historical_summary.strip(),
+                        recent_summary.strip(),
+                        (original[-1].get("content") or "").strip(),
+                    ] if part
+                ),
             },
         ]
-        yield self._sse_log(session_id, "compression", "request", {
-            "messages": summary_request,
-            "stream": False,
-            "max_tokens": 900,
-            "temperature": 0.2,
-        })
+        after_percent = self._estimate_context_percent(after_basis)
 
-        summary_text = ""
-        try:
-            response = await self.vllm_client.chat_completion(
-                messages=summary_request,
-                temperature=0.2,
-                max_tokens=900,
-                stream=False,
-            )
-            if "choices" in response and response["choices"]:
-                summary_text = response["choices"][0].get("message", {}).get("content", "") or ""
-                yield self._sse_log(session_id, "compression", "response", {
-                    "message": response["choices"][0].get("message", {}),
-                })
-        except Exception:
-            logger.exception("Conversation compression failed")
-
-        if not summary_text.strip():
+        if should_emit_notice:
             yield self._sse({
                 "type": "compression_complete",
                 "session_id": session_id,
                 "before_percent": before_percent,
-                "after_percent": before_percent,
-                "content": "Context compression skipped because a compact summary could not be generated.",
+                "after_percent": after_percent,
+                "content": "Conversation context compressed into historical and recent summaries.",
             })
-            return
-
-        compacted = [{
-            "role": "system",
-            "content": f"[Compressed conversation memory]\n{summary_text.strip()}",
-        }, *suffix]
-        chat_sessions[session_id] = compacted
-        after_percent = self._estimate_context_percent(compacted)
-        yield self._sse({
-            "type": "compression_complete",
-            "session_id": session_id,
-            "before_percent": before_percent,
-            "after_percent": after_percent,
-            "content": "Conversation context compressed.",
-        })
 
     def _extract_tool_calls_from_response_message(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
         tool_calls = []
@@ -558,10 +1061,12 @@ class StreamingAgent:
                 "id": tool_call.get("id", ""),
                 "type": tool_call.get("type", "function"),
                 "function": {
-                    "name": function.get("name", "") or "",
+                    "name": self._canonical_tool_name(function.get("name", "") or ""),
                     "arguments": function.get("arguments", "") or "",
                 },
             })
+        if not tool_calls:
+            tool_calls = self._extract_tool_calls_from_xml_markup(message.get("content", "") or "")
         return tool_calls
 
     async def chat_stream(
@@ -773,6 +1278,7 @@ class StreamingAgent:
         enabled_skills: List[str],
         request_context: Dict[str, Any],
     ) -> AsyncGenerator[str, None]:
+        selected_model = (request_context or {}).get("model") or None
         async for chunk in self._maybe_compact_conversation(
             session_id=session_id,
             chat_sessions=chat_sessions,
@@ -781,11 +1287,14 @@ class StreamingAgent:
             yield chunk
 
         conversation_history = chat_sessions[session_id].copy()
-        messages = self._rewrite_followup_location_query(conversation_history)
-        current_user_message = conversation_history[-1]["content"] if conversation_history else ""
+        rewritten_history = self._rewrite_followup_location_query(conversation_history)
+        current_user_message = rewritten_history[-1]["content"] if rewritten_history else ""
         is_simple_greeting = bool(SIMPLE_GREETING_PATTERN.match((current_user_message or "").strip()))
+        raw_message_parts = (request_context or {}).get("message_parts") or []
+        has_inline_images = self._has_image_parts(raw_message_parts)
+        inline_image_context = self._analyze_inline_images_locally(raw_message_parts) if has_inline_images else ""
         tools = self._get_allowed_tools(permission_mode, permission_confirmed, enabled_skills)
-        if is_simple_greeting:
+        if is_simple_greeting or has_inline_images:
             tools = []
         else:
             tools = self._select_eligible_tools(tools, current_user_message, tool_context)
@@ -804,18 +1313,8 @@ class StreamingAgent:
             for event in direct_events:
                 yield event
             return
-        if conversation_history:
-            yield self._emit_context_state(session_id, conversation_history)
         system_prompts = []
-        if context and not is_simple_greeting:
-            system_prompts.append(
-                "You are OBS Agent. Respect the current working context while answering. "
-                f"Current tool context: {tool_context}. "
-                f"Guidance: {context}"
-            )
         tool_guidance = self._build_request_tool_guidance(current_user_message, tool_context, tools)
-        if tool_guidance:
-            system_prompts.append(tool_guidance)
         if tools:
             system_prompts.append(
                 "You are OBS Agent. When tools are available, use them for requests that need real-time, "
@@ -823,42 +1322,59 @@ class StreamingAgent:
                 "For weather, latest news, prices, search, or current status questions, call a suitable tool "
                 "first and do not answer by claiming you cannot access live data unless a tool call has already failed."
             )
+        elif has_inline_images:
+            system_prompts.append(
+                "The current user message includes inline images. Focus on directly understanding the attached "
+                "images and answering from visual evidence. Do not emit tool-call markup, XML invocation tags, "
+                "or claim the image is unavailable if it was provided in the prompt."
+            )
         elif enabled_skills:
             system_prompts.append(
                 "Only the currently selected skills are available in this session. "
                 "If a needed tool is not enabled, do not fabricate tool calls, XML tags, or internal invocation markup. "
                 "Instead, clearly explain that the required skill is not currently selected."
             )
-        if request_context and self._should_include_runtime_context(current_user_message):
-            current_date = request_context.get("current_date")
-            current_datetime = request_context.get("current_datetime")
-            timezone = request_context.get("timezone")
-            location = request_context.get("location") or {}
-            loc_parts = [part for part in [location.get("city"), location.get("region"), location.get("country_name")] if part]
-            location_text = ", ".join(loc_parts) if loc_parts else "unknown"
-            system_prompts.append(
-                "Use the provided runtime context as ground truth for relative time and location. "
-                f"Current date: {current_date or 'unknown'}. "
-                f"Current datetime: {current_datetime or 'unknown'}. "
-                f"Timezone: {timezone or 'unknown'}. "
-                f"Approximate user location: {location_text}. "
-                "Interpret references like today / 今日 / 今天 using the exact current date above, "
-                "and prefer location-aware results when relevant."
+        tool_names = [tool.get("name", "") for tool in tools if tool.get("name")]
+        skill_index_prompt = self._build_skill_index_prompt(tool_names) if tools else None
+        relevant_skill_instructions = self._build_relevant_skill_instructions(tool_names) if tools else None
+        cache = self.session_context_cache.get(session_id, {})
+        user_prompt = self._build_compacted_user_prompt(
+            current_user_message=current_user_message,
+            context=context if not is_simple_greeting else "",
+            tool_context=tool_context,
+            request_context=request_context if self._should_include_runtime_context(current_user_message) else {},
+            historical_summary=(cache.get("historical_summary") or "").strip(),
+            recent_summary=(cache.get("recent_summary") or "").strip(),
+            skill_index_prompt=skill_index_prompt,
+            relevant_skill_instructions=relevant_skill_instructions,
+            tool_guidance=tool_guidance,
+        )
+        if inline_image_context:
+            user_prompt = (
+                f"{user_prompt}\n\n"
+                "[Inline image analysis]\n"
+                "The following image facts were extracted locally from the attached image(s). "
+                "Use them as grounded visual context for your answer.\n"
+                f"{inline_image_context}"
             )
-        if tools:
-            tool_names = [tool.get("name", "") for tool in tools if tool.get("name")]
-            skill_index_prompt = self._build_skill_index_prompt(tool_names)
-            if skill_index_prompt:
-                system_prompts.append(skill_index_prompt)
-            relevant_skill_instructions = self._build_relevant_skill_instructions(tool_names)
-            if relevant_skill_instructions:
-                system_prompts.append(relevant_skill_instructions)
+        system_prompt = (
+            "You are OBS Agent. Use the provided user prompt as the authoritative working context for this turn. "
+            "The user prompt may already contain compressed historical context, recent context, runtime context, "
+            "and on-demand skill instructions. Do not ask for the same background again unless necessary."
+        )
         if system_prompts:
-            # MiniMax rejects tool-enabled streaming requests when multiple system messages are present.
-            messages = [{
-                "role": "system",
-                "content": "\n\n".join(system_prompts),
-            }, *messages]
+            system_prompt = f"{system_prompt}\n\n" + "\n".join(system_prompts)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": self._compose_user_message_content(
+                    user_prompt,
+                    self._text_only_message_parts(raw_message_parts) if has_inline_images else raw_message_parts,
+                ),
+            },
+        ]
+        yield self._emit_context_state(session_id, messages)
 
         max_iterations = 10
         tool_step_index = 0
@@ -877,6 +1393,7 @@ class StreamingAgent:
                     "temperature": 0.7,
                     "max_tokens": 4000,
                     "stream": True,
+                    "model": selected_model,
                 })
                 stream_generator = await self.vllm_client.chat_completion(
                     messages=messages,
@@ -884,6 +1401,7 @@ class StreamingAgent:
                     temperature=0.7,
                     max_tokens=4000,
                     stream=True,
+                    model=selected_model,
                 )
 
                 async for chunk in stream_generator:
@@ -939,6 +1457,7 @@ class StreamingAgent:
                 yield self._sse_log(session_id, "tool_planning", "response", {
                     "fallback": "stream_to_non_stream",
                     "error": str(exc),
+                    "model": selected_model,
                 })
                 response = await self.vllm_client.chat_completion(
                     messages=messages,
@@ -946,6 +1465,7 @@ class StreamingAgent:
                     temperature=0.7,
                     max_tokens=4000,
                     stream=False,
+                    model=selected_model,
                 )
                 if "choices" not in response or not response["choices"]:
                     raise
@@ -970,11 +1490,20 @@ class StreamingAgent:
                 tool_calls = self._extract_tool_calls_from_response_message(message)
 
             if not tool_calls:
+                tool_calls = self._extract_tool_calls_from_response_message(assistant_message)
+
+            if not tool_calls:
                 yield self._sse_log(session_id, "tool_planning", "response", {
                     "message": assistant_message,
                 })
                 final_parts = self._split_thinking_and_answer(assistant_message["content"])
                 final_answer = final_parts["answer_text"].strip()
+                if has_inline_images and self._should_use_local_image_fallback(final_answer):
+                    local_image_answer = self._analyze_inline_images_locally(
+                        (request_context or {}).get("message_parts")
+                    )
+                    if local_image_answer:
+                        final_answer = local_image_answer
                 if not final_answer:
                     final_answer = self._build_tool_fallback_answer(messages)
                 conversation_history.append({
@@ -996,13 +1525,21 @@ class StreamingAgent:
             messages.append(assistant_message)
 
             for tool_call in tool_calls:
-                tool_name = tool_call["function"]["name"]
+                raw_tool_name = tool_call["function"]["name"]
                 tool_args_str = tool_call["function"]["arguments"]
 
                 try:
                     tool_args = json.loads(tool_args_str) if tool_args_str else {}
                 except json.JSONDecodeError:
                     tool_args = {}
+
+                normalized_invocation = self._normalize_tool_invocation(
+                    raw_tool_name,
+                    tool_args,
+                    request_context,
+                )
+                tool_name = normalized_invocation["name"]
+                tool_args = normalized_invocation["arguments"]
 
                 tool_step_index += 1
                 task_id = f"task_{tool_step_index}"
@@ -1054,14 +1591,15 @@ class StreamingAgent:
                         session_id=session_id,
                         chat_sessions=chat_sessions,
                         conversation_history=conversation_history,
-                        messages=messages,
-                        instruction=(
-                            "请基于上面的工具结果直接给出最终回答。"
-                            "要求：1. 先整合关键信息；2. 明确说明哪些信息最值得关注；"
-                            "3. 不要继续调用任何工具；4. 不要输出 provider 名称、原始调试字段或内部执行说明；"
-                            "5. 如果结果质量一般，就简短说明局限性，但仍然给出最有用的总结。"
-                        ),
-                    ):
+                    messages=messages,
+                    instruction=(
+                        "请基于上面的工具结果直接给出最终回答。"
+                        "要求：1. 先整合关键信息；2. 明确说明哪些信息最值得关注；"
+                        "3. 不要继续调用任何工具；4. 不要输出 provider 名称、原始调试字段或内部执行说明；"
+                        "5. 如果结果质量一般，就简短说明局限性，但仍然给出最有用的总结。"
+                    ),
+                    model=selected_model,
+                ):
                         yield chunk
                     return
 
@@ -1110,9 +1648,6 @@ class StreamingAgent:
 
         if permission_mode == "plan":
             return []
-
-        if permission_mode == "ask" and not permission_confirmed:
-            return [tool for tool in tools if tool.get("name") in READ_ONLY_TOOLS]
 
         return tools
 

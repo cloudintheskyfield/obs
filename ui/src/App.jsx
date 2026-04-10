@@ -4,13 +4,15 @@ import LogsDrawer from "./components/LogsDrawer.jsx";
 import RuntimePills from "./components/RuntimePills.jsx";
 import SkillsDrawer from "./components/SkillsDrawer.jsx";
 import TranscriptView from "./components/TranscriptView.jsx";
-import { shortenModel } from "./lib/formatting.js";
+import WorkspaceModal from "./components/WorkspaceModal.jsx";
+import { formatWorkspaceBreadcrumb, shortenModel } from "./lib/formatting.js";
 
 const STORAGE_VERSION = "20260408-01";
 const SETTINGS_KEY = "obs-agent-settings";
 const SESSIONS_KEY = "obs-agent-sessions";
 const VERSION_KEY = "obs-agent-storage-version";
 const DEFAULT_SELECTED_SKILLS = ["code-sandbox", "file-operations", "terminal", "web-search"];
+const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
@@ -92,11 +94,15 @@ function isSimpleChat(content) {
     return /^(hi|hello|hey|你好|嗨|在吗|早上好|下午好|晚上好)\W*$/i.test((content || "").trim());
 }
 
-function buildContextPayload(toolContext) {
+function buildContextPayload(toolContext, workspacePath) {
+    const breadcrumb = formatWorkspaceBreadcrumb(workspacePath, 6);
     const contextMap = {
-        computer: "Focus on visual/browser/computer-use context. Prefer screenshot, page-state, and UI interaction reasoning when relevant.",
-        workspace: "Focus on the current workspace, local files, directories, code structure, and repository state.",
-        agents: "Focus on agent coordination, task breakdown, review flow, and multi-step execution planning only when the request actually requires it."
+        workspace: [
+            "Focus on the current workspace, local files, directories, code structure, and repository state.",
+            workspacePath ? `Current workspace root: ${workspacePath}` : null,
+            workspacePath ? `Workspace hierarchy (leaf to root): ${breadcrumb}` : null,
+            "The workspace should be treated as the main writable environment for solving the user's goal."
+        ].filter(Boolean).join("\n")
     };
     return {
         toolContext,
@@ -112,7 +118,7 @@ function computeContextPercent(session, toolContext) {
         return session.contextPercentOverride;
     }
     const historySize = (session?.transcript || []).reduce((sum, entry) => sum + (entry.content?.length || 0), 0);
-    const contextBonus = toolContext === "agents" ? 8 : 4;
+    const contextBonus = 4;
     return historySize > 0
         ? Math.min(98, Math.max(1, Math.round(historySize / 140) + contextBonus))
         : contextBonus;
@@ -121,11 +127,83 @@ function computeContextPercent(session, toolContext) {
 function computeNextContextPercent(session, toolContext, input) {
     const baseline = typeof session?.contextPercentOverride === "number" ? session.contextPercentOverride : null;
     const historySize = (session?.transcript || []).reduce((sum, entry) => sum + (entry.content?.length || 0), 0) + input.length;
-    const contextBonus = toolContext === "agents" ? 8 : 4;
+    const contextBonus = 4;
     const estimated = Math.min(98, Math.max(1, Math.round(historySize / 140) + contextBonus));
     return baseline !== null
         ? Math.min(98, Math.max(baseline, baseline + Math.round(input.length / 120)))
         : estimated;
+}
+
+function buildImageToken(id) {
+    return `[[image:${id}]]`;
+}
+
+function createImageLabel(index) {
+    return `Image ${index + 1}`;
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("Failed to read image"));
+        reader.readAsDataURL(file);
+    });
+}
+
+function buildMessageParts(rawValue, images) {
+    const imageMap = new Map((images || []).map((image, index) => [image.id, { ...image, order: index }]));
+    const source = String(rawValue || "");
+    const parts = [];
+    let cursor = 0;
+    let match;
+
+    IMAGE_TOKEN_PATTERN.lastIndex = 0;
+    while ((match = IMAGE_TOKEN_PATTERN.exec(source)) !== null) {
+        const before = source.slice(cursor, match.index);
+        if (before) {
+            parts.push({ type: "text", text: before });
+        }
+        const image = imageMap.get(match[1]);
+        if (image) {
+            parts.push({
+                type: "image",
+                id: image.id,
+                name: image.name || createImageLabel(image.order || 0),
+                data_url: image.dataUrl,
+            });
+        }
+        cursor = match.index + match[0].length;
+    }
+
+    const tail = source.slice(cursor);
+    if (tail) {
+        parts.push({ type: "text", text: tail });
+    }
+
+    const matchedIds = new Set(parts.filter((part) => part.type === "image").map((part) => part.id));
+    (images || []).forEach((image, index) => {
+        if (!matchedIds.has(image.id)) {
+            parts.push({
+                type: "image",
+                id: image.id,
+                name: image.name || createImageLabel(index),
+                data_url: image.dataUrl,
+            });
+        }
+    });
+
+    return parts;
+}
+
+function buildVisibleMessageText(rawValue, images) {
+    const imageMap = new Map((images || []).map((image, index) => [image.id, createImageLabel(index)]));
+    return String(rawValue || "").replace(IMAGE_TOKEN_PATTERN, (_, id) => `[${imageMap.get(id) || "Image"}]`);
+}
+
+function hasSendableInput(rawValue, images) {
+    const visibleText = buildVisibleMessageText(rawValue, images).replace(/\[Image \d+\]/g, "").trim();
+    return Boolean(visibleText || (images || []).length);
 }
 
 function App() {
@@ -144,10 +222,22 @@ function App() {
     const [currentSessionId, setCurrentSessionId] = useState(null);
     const [contextPercent, setContextPercent] = useState(0);
     const [toolContext, setToolContext] = useState("workspace");
+    const [workspacePath, setWorkspacePath] = useState("");
+    const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
+    const [workspaceDraftPath, setWorkspaceDraftPath] = useState("");
+    const [workspaceBrowserPath, setWorkspaceBrowserPath] = useState("");
+    const [workspaceBrowserParent, setWorkspaceBrowserParent] = useState("");
+    const [workspaceBrowserEntries, setWorkspaceBrowserEntries] = useState([]);
+    const [workspaceLoading, setWorkspaceLoading] = useState(false);
+    const [workspaceError, setWorkspaceError] = useState("");
     const [thinkingMode, setThinkingMode] = useState(true);
     const [permissionMode, setPermissionMode] = useState("ask");
+    const [availableModels, setAvailableModels] = useState(["MiniMax-M2"]);
+    const [selectedModel, setSelectedModel] = useState("MiniMax-M2");
     const [messageInput, setMessageInput] = useState("");
+    const [composerImages, setComposerImages] = useState([]);
     const [isSending, setIsSending] = useState(false);
+    const [requestIndicator, setRequestIndicator] = useState(null);
     const [logsOpen, setLogsOpen] = useState(false);
     const [skillsOpen, setSkillsOpen] = useState(false);
     const [logRange, setLogRange] = useState("all");
@@ -189,8 +279,15 @@ function App() {
                 if (stored.toolContext) {
                     setToolContext(stored.toolContext);
                 }
+                if (stored.workspacePath) {
+                    setWorkspacePath(stored.workspacePath);
+                    setWorkspaceDraftPath(stored.workspacePath);
+                }
                 if (Array.isArray(stored.selectedSkills) && stored.selectedSkills.length > 0) {
                     setSelectedSkills(stored.selectedSkills);
+                }
+                if (stored.selectedModel) {
+                    setSelectedModel(stored.selectedModel);
                 }
             }
         } catch (error) {
@@ -223,9 +320,11 @@ function App() {
             permissionMode,
             thinkingMode,
             toolContext,
-            selectedSkills
+            workspacePath,
+            selectedSkills,
+            selectedModel
         }));
-    }, [permissionMode, thinkingMode, toolContext, selectedSkills]);
+    }, [permissionMode, thinkingMode, toolContext, workspacePath, selectedSkills, selectedModel]);
 
     useEffect(() => {
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -269,6 +368,7 @@ function App() {
 
     useEffect(() => {
         refreshRuntime();
+        refreshWorkspaceState();
         fetchSkillCatalog();
     }, []);
 
@@ -399,6 +499,16 @@ function App() {
             const health = await healthResponse.json();
             const runtimePayload = await runtimeResponse.json();
             setRuntime(runtimePayload.runtime || null);
+            const modelOptions = runtimePayload.runtime?.available_models?.length
+                ? runtimePayload.runtime.available_models
+                : [runtimePayload.runtime?.model || "MiniMax-M2"];
+            setAvailableModels(modelOptions);
+            setSelectedModel((current) => modelOptions.includes(current) ? current : (runtimePayload.runtime?.model || modelOptions[0] || "MiniMax-M2"));
+            const runtimeWorkspace = runtimePayload.runtime?.work_dir || "";
+            if (runtimeWorkspace) {
+                setWorkspacePath(runtimeWorkspace);
+                setWorkspaceDraftPath((current) => current || runtimeWorkspace);
+            }
             setRuntimeStatus(health.status === "ok" ? "Runtime online" : "Runtime degraded");
         } catch (error) {
             setRuntime(null);
@@ -425,6 +535,100 @@ function App() {
             });
         } catch (error) {
             console.debug("Failed to load skill catalog", error);
+        }
+    }
+
+    async function refreshWorkspaceState() {
+        try {
+            const response = await fetch(`${settingsRef.current.apiUrl}/workspace`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            const nextPath = payload.workspace?.path || "";
+            if (nextPath) {
+                setWorkspacePath(nextPath);
+                setWorkspaceDraftPath((current) => current || nextPath);
+            }
+        } catch (error) {
+            console.debug("Failed to load workspace state", error);
+        }
+    }
+
+    async function browseWorkspace(nextPath) {
+        setWorkspaceLoading(true);
+        setWorkspaceError("");
+        try {
+            const params = new URLSearchParams();
+            if (nextPath) {
+                params.set("path", nextPath);
+            }
+            const response = await fetch(`${settingsRef.current.apiUrl}/workspace/browser?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            setWorkspaceBrowserPath(payload.current || "");
+            setWorkspaceBrowserParent(payload.parent || "");
+            setWorkspaceBrowserEntries(payload.entries || []);
+            setWorkspaceDraftPath(payload.current || nextPath || "");
+        } catch (error) {
+            setWorkspaceError(error.message || "Failed to browse directories");
+        } finally {
+            setWorkspaceLoading(false);
+        }
+    }
+
+    async function openWorkspaceModal() {
+        setWorkspaceModalOpen(true);
+        const initialPath = workspacePath || runtime?.work_dir || "";
+        setWorkspaceDraftPath(initialPath);
+        await browseWorkspace(initialPath);
+    }
+
+    async function openNativeWorkspacePicker() {
+        if (typeof window.showDirectoryPicker !== "function") {
+            setWorkspaceError("Native folder picking is not available in this browser. Use the path field or directory browser below.");
+            return;
+        }
+        try {
+            const handle = await window.showDirectoryPicker();
+            setWorkspaceError(
+                `Selected “${handle.name}”. Browsers usually do not expose the absolute local path here, so please confirm it with the path field or directory browser before saving.`
+            );
+        } catch (error) {
+            if (error?.name !== "AbortError") {
+                setWorkspaceError(error.message || "Failed to open folder picker");
+            }
+        }
+    }
+
+    async function saveWorkspaceSelection() {
+        if (!workspaceDraftPath.trim()) {
+            setWorkspaceError("Workspace path is required");
+            return;
+        }
+        setWorkspaceLoading(true);
+        setWorkspaceError("");
+        try {
+            const response = await fetch(`${settingsRef.current.apiUrl}/workspace`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: workspaceDraftPath.trim() })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success === false) {
+                throw new Error(payload.error || `HTTP ${response.status}`);
+            }
+            const resolved = payload.workspace?.path || workspaceDraftPath.trim();
+            setWorkspacePath(resolved);
+            setWorkspaceDraftPath(resolved);
+            setWorkspaceModalOpen(false);
+            await refreshRuntime();
+        } catch (error) {
+            setWorkspaceError(error.message || "Failed to update workspace");
+        } finally {
+            setWorkspaceLoading(false);
         }
     }
 
@@ -553,6 +757,17 @@ function App() {
         setPermissionMode((current) => current === "ask" ? "plan" : "ask");
     }
 
+    function cycleModel() {
+        setSelectedModel((current) => {
+            if (!availableModels.length) {
+                return current;
+            }
+            const index = availableModels.indexOf(current);
+            const nextIndex = index === -1 ? 0 : (index + 1) % availableModels.length;
+            return availableModels[nextIndex];
+        });
+    }
+
     function toggleSkillSelection(skillName) {
         setSelectedSkills((current) => current.includes(skillName)
             ? current.filter((name) => name !== skillName)
@@ -567,7 +782,7 @@ function App() {
     }
 
     function handleToolContextChange(nextToolContext) {
-        setToolContext(nextToolContext);
+        setToolContext(nextToolContext || "workspace");
     }
 
     function toggleThinkingEntry(entryId) {
@@ -577,22 +792,68 @@ function App() {
         }));
     }
 
+    async function handleComposerPaste(event) {
+        const clipboardItems = Array.from(event.clipboardData?.items || []);
+        const imageFiles = clipboardItems
+            .filter((item) => item.kind === "file")
+            .map((item) => item.getAsFile())
+            .filter((file) => file && file.type.startsWith("image/"));
+
+        if (!imageFiles.length) {
+            return;
+        }
+
+        event.preventDefault();
+        const start = messageInputRef.current?.selectionStart ?? messageInput.length;
+        const end = messageInputRef.current?.selectionEnd ?? messageInput.length;
+
+        const nextImages = [];
+        for (let index = 0; index < imageFiles.length; index += 1) {
+            const file = imageFiles[index];
+            const imageId = `img_${Date.now()}_${Math.random().toString(16).slice(2, 8)}_${index}`;
+            const dataUrl = await readFileAsDataUrl(file);
+            nextImages.push({
+                id: imageId,
+                name: file.name || createImageLabel(composerImages.length + index),
+                dataUrl,
+            });
+        }
+
+        const insertion = nextImages.map((image) => buildImageToken(image.id)).join(" ");
+        setComposerImages((current) => [...current, ...nextImages]);
+        setMessageInput((current) => `${current.slice(0, start)}${insertion}${current.slice(end)}`);
+
+        requestAnimationFrame(() => {
+            if (!messageInputRef.current) return;
+            const cursor = start + insertion.length;
+            messageInputRef.current.focus();
+            messageInputRef.current.setSelectionRange(cursor, cursor);
+        });
+    }
+
     async function sendMessage() {
         if (isSending) return;
-        const content = messageInput.trim();
-        if (!content || !currentSessionId) return;
+        const rawInput = messageInput;
+        const messageParts = buildMessageParts(rawInput, composerImages);
+        const content = buildVisibleMessageText(rawInput, composerImages).trim();
+        if (!hasSendableInput(rawInput, composerImages) || !currentSessionId) return;
 
         const sessionId = currentSessionId;
         const requestMode = isSimpleChat(content) ? "agent" : mode;
-        const { toolContext: selectedToolContext, context } = buildContextPayload(toolContext);
+        const { toolContext: selectedToolContext, context } = buildContextPayload("workspace", workspacePath || runtime?.work_dir || "");
         setIsSending(true);
+        setRequestIndicator({
+            active: true,
+            label: thinkingMode ? "Preparing reasoning" : "Working on your request",
+        });
         setContextPercent(computeContextPercent(currentSession, toolContext));
 
         appendTranscriptEntry(sessionId, {
             role: "user",
             content,
             kind: "user_text",
-            taskId: "main"
+            taskId: "main",
+            images: composerImages,
         });
         updateSessionById(sessionId, (session) => {
             if (session.transcript.length <= 1) {
@@ -600,21 +861,11 @@ function App() {
             }
         });
         setMessageInput("");
+        setComposerImages([]);
 
         let assistantEntry = null;
         let thinkingEntry = null;
         let answerBuffer = "";
-
-        if (thinkingMode) {
-            thinkingEntry = appendTranscriptEntry(sessionId, {
-                role: "assistant",
-                content: "",
-                kind: "thinking_text",
-                taskId: "main",
-                streaming: true,
-                pendingPlaceholder: true
-            });
-        }
 
         try {
             const response = await fetch(`${settingsRef.current.apiUrl}/chat/stream`, {
@@ -628,8 +879,11 @@ function App() {
                     permission_confirmed: permissionMode !== "ask",
                     thinking_mode: thinkingMode,
                     mode: requestMode,
+                    model: selectedModel,
                     tool_context: selectedToolContext,
+                    workspace_path: workspacePath || runtime?.work_dir || "",
                     enabled_skills: selectedSkills,
+                    message_parts: messageParts,
                     context,
                     parameters: {
                         message: content,
@@ -638,8 +892,11 @@ function App() {
                         permission_confirmed: permissionMode !== "ask",
                         thinking_mode: thinkingMode,
                         mode: requestMode,
+                        model: selectedModel,
                         tool_context: selectedToolContext,
+                        workspace_path: workspacePath || runtime?.work_dir || "",
                         enabled_skills: selectedSkills,
+                        message_parts: messageParts,
                         context
                     }
                 })
@@ -655,35 +912,55 @@ function App() {
                 }
                 const payload = JSON.parse(rawLine.slice(6));
 
+                const appendThinkingTrace = (line) => {
+                    if (!thinkingMode || !line) {
+                        return;
+                    }
+                    const nextThinking = `${thinkingEntry?.content || ""}${thinkingEntry?.content ? "\n" : ""}${line}`;
+                    if (!thinkingEntry) {
+                        thinkingEntry = appendTranscriptEntry(sessionId, {
+                            role: "assistant",
+                            content: nextThinking,
+                            kind: "thinking_text",
+                            taskId: "main",
+                            streaming: true
+                        });
+                    } else {
+                        thinkingEntry = { ...thinkingEntry, content: nextThinking, pendingPlaceholder: false };
+                        patchTranscriptEntry(sessionId, thinkingEntry.id, {
+                            content: nextThinking,
+                            streaming: true,
+                            pendingPlaceholder: false
+                        });
+                    }
+                };
+
                 if (payload.type === "task_start") {
-                    appendTranscriptEntry(sessionId, {
-                        role: "assistant",
-                        content: payload.description || `Started ${payload.skill || "tool"}`,
-                        kind: "tool_use",
-                        taskId: payload.task_id || `task_${Date.now()}`,
-                        toolName: payload.skill || "tool",
-                        phase: payload.phase || "execution"
-                    });
+                    setRequestIndicator((current) => current?.active ? {
+                        ...current,
+                        label: `Running ${payload.skill || "tool"}`,
+                    } : current);
+                    appendThinkingTrace(`- Running \`${payload.skill || "tool"}\``);
                     return;
                 }
 
                 if (payload.type === "task_complete") {
-                    appendTranscriptEntry(sessionId, {
-                        role: "assistant",
-                        content: payload.content || payload.description || "Task completed.",
-                        kind: "tool_result",
-                        taskId: payload.task_id || `task_${Date.now()}`,
-                        toolName: payload.skill || payload.description || "tool",
-                        phase: payload.phase || "execution",
-                        success: payload.success
-                    });
+                    appendThinkingTrace(
+                        payload.success === false
+                            ? `- \`${payload.description || payload.skill || "tool"}\` failed`
+                            : `- \`${payload.description || payload.skill || "tool"}\` completed`
+                    );
                     return;
                 }
 
                 if (payload.type === "compression_start" || payload.type === "compression_complete") {
                     appendTranscriptEntry(sessionId, {
                         role: "assistant",
-                        content: payload.content || (payload.type === "compression_start" ? "Compressing context..." : "Context compression complete."),
+                        content: payload.content || (
+                            payload.type === "compression_start"
+                                ? "Automatically compacting context"
+                                : "Context compacted"
+                        ),
                         kind: "system_notice",
                         taskId: "main",
                         phase: "compression"
@@ -734,7 +1011,11 @@ function App() {
                     if (!thinkingMode) {
                         return;
                     }
-                    const nextThinking = `${thinkingEntry?.content || ""}${payload.delta || ""}`;
+                    setRequestIndicator(null);
+                    const separator = thinkingEntry?.content && payload.delta && !String(thinkingEntry.content).endsWith("\n") && !String(payload.delta).startsWith("\n")
+                        ? "\n"
+                        : "";
+                    const nextThinking = `${thinkingEntry?.content || ""}${separator}${payload.delta || ""}`;
                     if (!thinkingEntry) {
                         thinkingEntry = appendTranscriptEntry(sessionId, {
                             role: "assistant",
@@ -755,6 +1036,7 @@ function App() {
                 }
 
                 if (payload.type === "answer_delta" || payload.content) {
+                    setRequestIndicator(null);
                     answerBuffer += payload.delta || payload.content || "";
                     if (!answerBuffer.trim()) {
                         return;
@@ -780,6 +1062,7 @@ function App() {
                 }
 
                 if (payload.done) {
+                    setRequestIndicator(null);
                     if (assistantEntry) {
                         patchTranscriptEntry(sessionId, assistantEntry.id, { streaming: false });
                     } else if (answerBuffer.trim()) {
@@ -795,15 +1078,10 @@ function App() {
                     }
 
                     if (thinkingEntry) {
-                        if (thinkingEntry.pendingPlaceholder && !(thinkingEntry.content || "").trim()) {
-                            removeTranscriptEntry(sessionId, thinkingEntry.id);
-                            thinkingEntry = null;
-                        } else {
-                            patchTranscriptEntry(sessionId, thinkingEntry.id, {
-                                streaming: false,
-                                pendingPlaceholder: false
-                            });
-                        }
+                        patchTranscriptEntry(sessionId, thinkingEntry.id, {
+                            streaming: false,
+                            pendingPlaceholder: false
+                        });
                     }
                 }
             };
@@ -835,15 +1113,12 @@ function App() {
                 }
             }
         } catch (error) {
+            setRequestIndicator(null);
             if (thinkingEntry) {
-                if (thinkingEntry.pendingPlaceholder && !(thinkingEntry.content || "").trim()) {
-                    removeTranscriptEntry(sessionId, thinkingEntry.id);
-                } else {
-                    patchTranscriptEntry(sessionId, thinkingEntry.id, {
-                        streaming: false,
-                        pendingPlaceholder: false
-                    });
-                }
+                patchTranscriptEntry(sessionId, thinkingEntry.id, {
+                    streaming: false,
+                    pendingPlaceholder: false
+                });
             }
             appendTranscriptEntry(sessionId, {
                 role: "assistant",
@@ -853,6 +1128,7 @@ function App() {
                 streaming: false
             });
         } finally {
+            setRequestIndicator(null);
             setIsSending(false);
         }
     }
@@ -869,6 +1145,11 @@ function App() {
         .sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt));
 
     const logEntries = filteredLogs().slice().reverse();
+    const activeWorkspacePath = workspacePath || runtime?.work_dir || "";
+    const workspaceSummary = formatWorkspaceBreadcrumb(activeWorkspacePath, 6);
+    const nativeWorkspaceLabel = /mac/i.test(window.navigator.platform || "")
+        ? "Pick Folder (macOS)"
+        : (/win/i.test(window.navigator.platform || "") ? "Pick Folder (Windows)" : "Pick Folder");
 
     return (
         <div className="app-shell">
@@ -938,16 +1219,7 @@ function App() {
                     </div>
                 </header>
 
-                <RuntimePills mode={mode} setMode={setMode} runtime={runtime} contextPercent={contextPercent} />
-
-                {!currentSession?.transcript?.length ? (
-                    <section className="hero" id="welcome-screen">
-                        <div className="hero-mark">obs</div>
-                        <p className="hero-copy">
-                            参考 Claude Code 的真实源码结构，把消息流、状态行、任务面板和权限/模式信息合并成一个统一工作台。
-                        </p>
-                    </section>
-                ) : null}
+                <RuntimePills mode={mode} setMode={setMode} contextPercent={contextPercent} />
 
                 <TranscriptView
                     transcript={currentSession?.transcript || []}
@@ -955,11 +1227,12 @@ function App() {
                     expandedThinking={expandedThinking}
                     onToggleThinking={toggleThinkingEntry}
                     onReplay={setMessageInput}
+                    requestIndicator={requestIndicator}
                 />
 
                 <Composer
-                    toolContext={toolContext}
-                    onToolContextChange={handleToolContextChange}
+                    selectedModel={selectedModel}
+                    onModelToggle={cycleModel}
                     permissionMode={permissionMode}
                     onPermissionToggle={cyclePermissionMode}
                     thinkingMode={thinkingMode}
@@ -967,17 +1240,21 @@ function App() {
                     value={messageInput}
                     onChange={setMessageInput}
                     onKeyDown={handleComposerKeyDown}
+                    onPaste={handleComposerPaste}
                     onSend={sendMessage}
                     isSending={isSending}
-                    runtime={runtime}
+                    images={composerImages}
                     logsOpen={logsOpen}
                     onLogsToggle={() => setLogsOpen((current) => !current)}
                     skillsOpen={skillsOpen}
                     onSkillsToggle={() => setSkillsOpen((current) => !current)}
+                    workspacePath={activeWorkspacePath}
+                    workspaceSummary={workspaceSummary}
+                    onWorkspaceOpen={openWorkspaceModal}
                     statusItems={[
                         `mode:${mode}`,
                         `permission:${permissionMode}`,
-                        `context:${toolContext}`,
+                        `workspace:${activeWorkspacePath || "--"}`,
                         `messages:${currentSession?.transcript?.length || 0}`,
                         `model:${shortenModel(runtime?.model)}`
                     ]}
@@ -1004,6 +1281,23 @@ function App() {
                 onToggleAll={toggleAllSkills}
                 onToggleSkill={toggleSkillSelection}
                 onClose={() => setSkillsOpen(false)}
+            />
+            <WorkspaceModal
+                open={workspaceModalOpen}
+                currentPath={activeWorkspacePath}
+                browserPath={workspaceBrowserPath}
+                browserEntries={workspaceBrowserEntries}
+                browserParent={workspaceBrowserParent}
+                isLoading={workspaceLoading}
+                draftPath={workspaceDraftPath}
+                error={workspaceError}
+                onDraftChange={setWorkspaceDraftPath}
+                onBrowse={browseWorkspace}
+                onOpenParent={() => browseWorkspace(workspaceBrowserParent)}
+                onNativePick={openNativeWorkspacePicker}
+                nativePickLabel={nativeWorkspaceLabel}
+                onClose={() => setWorkspaceModalOpen(false)}
+                onSave={saveWorkspaceSelection}
             />
         </div>
     );

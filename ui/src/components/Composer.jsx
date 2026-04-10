@@ -1,15 +1,44 @@
 import React from "react";
-import { shortenModel } from "../lib/formatting.js";
 
-const TOOL_CONTEXTS = [
-    ["computer", "fas fa-desktop", "Computer"],
-    ["workspace", "fas fa-folder-tree", "Workspace"],
-    ["agents", "fas fa-diagram-project", "Agents"]
-];
+const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
+
+function renderComposerPreview(value, images) {
+    const source = String(value || "");
+    const imageMap = new Map((images || []).map((image, index) => [image.id, { ...image, label: `Image ${index + 1}` }]));
+    const nodes = [];
+    let cursor = 0;
+    let match;
+
+    IMAGE_TOKEN_PATTERN.lastIndex = 0;
+    while ((match = IMAGE_TOKEN_PATTERN.exec(source)) !== null) {
+        const before = source.slice(cursor, match.index);
+        if (before) {
+            nodes.push(<span key={`text_${cursor}`}>{before}</span>);
+        }
+        const image = imageMap.get(match[1]);
+        if (image) {
+            nodes.push(
+                <span key={image.id} className="composer-image-chip">
+                    <span className="composer-image-chip-label">{image.label}</span>
+                    <span className="composer-image-preview">
+                        <img src={image.dataUrl} alt={image.name || image.label} />
+                    </span>
+                </span>
+            );
+        }
+        cursor = match.index + match[0].length;
+    }
+
+    const tail = source.slice(cursor);
+    if (tail) {
+        nodes.push(<span key={`text_tail_${cursor}`}>{tail}</span>);
+    }
+    return nodes;
+}
 
 export default function Composer({
-    toolContext,
-    onToolContextChange,
+    selectedModel,
+    onModelToggle,
     permissionMode,
     onPermissionToggle,
     thinkingMode,
@@ -17,13 +46,17 @@ export default function Composer({
     value,
     onChange,
     onKeyDown,
+    onPaste,
     onSend,
     isSending,
-    runtime,
+    images,
     logsOpen,
     onLogsToggle,
     skillsOpen,
     onSkillsToggle,
+    workspacePath,
+    workspaceSummary,
+    onWorkspaceOpen,
     statusItems,
     inputRef
 }) {
@@ -32,14 +65,15 @@ export default function Composer({
             <div className="composer-card">
                 <div className="composer-head">
                     <div className="composer-meta">
-                        <span className="composer-placeholder">
-                            {toolContext === "computer"
-                                ? "Use the computer context to inspect screenshots, browsers, and visual flows"
-                                : toolContext === "agents"
-                                    ? "Ask OBS to coordinate sub-tasks, review architecture, or manage execution flow"
-                                    : "Describe files, directories, or code paths you want OBS to inspect"}
-                        </span>
+                        <div className="composer-workspace">
+                            <span className="composer-placeholder">Current workspace</span>
+                            <strong className="workspace-inline-path">{workspacePath || "No workspace selected"}</strong>
+                            <span className="workspace-inline-breadcrumb">{workspaceSummary}</span>
+                        </div>
                         <div className="composer-toggles">
+                            <button className="tiny-pill" type="button" onClick={onModelToggle}>
+                                Model · {selectedModel}
+                            </button>
                             <button className="tiny-pill" type="button" onClick={onPermissionToggle}>
                                 Permission · {permissionMode}
                             </button>
@@ -49,27 +83,27 @@ export default function Composer({
                         </div>
                     </div>
                 </div>
+                {value ? (
+                    <div className="composer-rich-preview" aria-hidden="true">
+                        {renderComposerPreview(value, images)}
+                    </div>
+                ) : null}
                 <textarea
+                    id="message-input"
                     ref={inputRef}
                     rows="1"
                     value={value}
                     onChange={(event) => onChange(event.target.value)}
                     onKeyDown={onKeyDown}
+                    onPaste={onPaste}
                     placeholder="Describe the task, mention files, or ask for a coordinated refactor"
                 />
                 <div className="composer-foot">
                     <div className="composer-left">
-                        {TOOL_CONTEXTS.map(([context, icon, label]) => (
-                            <button
-                                key={context}
-                                className={`small-tool${toolContext === context ? " active" : ""}`}
-                                type="button"
-                                onClick={() => onToolContextChange(context)}
-                            >
-                                <i className={icon} />
-                                <span>{label}</span>
-                            </button>
-                        ))}
+                        <button className="small-tool workspace-tool active" type="button" onClick={onWorkspaceOpen}>
+                            <i className="fas fa-folder-tree" />
+                            <span>Workspace</span>
+                        </button>
                         <button className={`small-tool${logsOpen ? " active" : ""}`} type="button" onClick={onLogsToggle}>
                             <i className="fas fa-wave-square" />
                             <span>Logs</span>
@@ -80,7 +114,6 @@ export default function Composer({
                         </button>
                     </div>
                     <div className="composer-right">
-                        <span className="model-badge">{shortenModel(runtime?.model)}</span>
                         <button className={`send-btn${isSending ? " is-sending" : ""}`} type="button" onClick={onSend} disabled={isSending}>
                             <i className={`fas ${isSending ? "fa-spinner fa-spin" : "fa-arrow-up"}`} />
                         </button>

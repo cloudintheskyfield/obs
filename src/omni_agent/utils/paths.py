@@ -24,10 +24,6 @@ def frontend_dist_root() -> Path:
 
 
 def frontend_static_root() -> Path:
-    if not getattr(sys, "frozen", False):
-        source = frontend_root()
-        if (source / "index.html").exists():
-            return source
     dist = frontend_dist_root()
     return dist if dist.exists() else frontend_root()
 

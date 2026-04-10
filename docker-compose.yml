@@ -19,6 +19,7 @@ services:
       - ./workspace:/app/workspace:rw
       - ./logs:/app/logs:rw
       - ./screenshots:/app/screenshots:rw
+      - ${HOME}:/host-home:rw
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - VLLM_BASE_URL=${VLLM_BASE_URL:-https://api.minimaxi.com/v1/chat/completions}
@@ -34,6 +35,9 @@ services:
       - WEB_TIMEOUT=30
       - SCREENSHOT_DIR=/app/screenshots
       - RUNNING_IN_DOCKER=true
+      - HOST_HOME=${HOME}
+      - HOST_HOME_MOUNT=/host-home
+      - HOST_REPO_ROOT=${PWD}
       - ENABLE_COMPUTER_USE=true
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true

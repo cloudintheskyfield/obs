@@ -13,6 +13,16 @@ export function shortenModel(model) {
     return normalized.length > 22 ? `${normalized.slice(0, 22)}…` : normalized;
 }
 
+export function formatWorkspaceBreadcrumb(path, maxParts = 5) {
+    const normalized = String(path || "").trim();
+    if (!normalized) return "No workspace selected";
+    const segments = normalized.split(/[\\/]+/).filter(Boolean).reverse();
+    if (segments.length <= maxParts) {
+        return segments.join(" / ");
+    }
+    return `${segments.slice(0, maxParts).join(" / ")} / ...`;
+}
+
 export function renderMarkdown(text) {
     const source = String(text || "").replace(/\r\n/g, "\n").trim();
     if (!source) return "";

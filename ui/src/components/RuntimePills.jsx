@@ -1,7 +1,6 @@
 import React from "react";
-import { shortenModel } from "../lib/formatting.js";
 
-export default function RuntimePills({ mode, setMode, runtime, contextPercent }) {
+export default function RuntimePills({ mode, setMode, contextPercent }) {
     return (
         <section className="modebar">
             <div className="mode-selector">
@@ -13,7 +12,6 @@ export default function RuntimePills({ mode, setMode, runtime, contextPercent })
                 </select>
             </div>
             <div className="runtime-pills">
-                <span className="runtime-pill">Model · {shortenModel(runtime?.model)}</span>
                 <span className="runtime-pill">Context · {contextPercent}%</span>
             </div>
         </section>

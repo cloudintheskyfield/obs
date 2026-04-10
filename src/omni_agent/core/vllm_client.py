@@ -53,7 +53,7 @@ class VLLMClient:
         stream = kwargs.get("stream", False)
         
         payload = {
-            "model": self.config.model,
+            "model": kwargs.get("model") or self.config.model,
             "messages": messages,
             "temperature": kwargs.get("temperature", 0.7),
             "max_tokens": kwargs.get("max_tokens", 4000),

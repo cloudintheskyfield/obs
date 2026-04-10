@@ -1,77 +1,63 @@
-# 🤖 Omni Agent - 全能AI智能助手
+# OBS Agent
 
-基于Claude Skills三级架构的全能AI Agent，支持文件操作、终端执行、网页浏览等多种功能。
+把一个会聊天的 Agent，升级成一个真正能干活的工作台。
 
----
+OBS Agent 不是单纯的对话框，而是一套面向真实任务的本地 AI 控制台：它能在你指定的工作区里读写文件、执行终端命令、调用 Python、搜索实时信息、控制浏览器，还会把上下文压缩、工具调用、日志和会话状态都落到本地，适合拿来做日常开发助手、研究助手、自动化助手，甚至直接作为你自己的 Claude-style 本地工作台。
 
-## 📚 Learn Claude Code (Agent Harness 学习)
+## 为什么它会让人上头
 
-本项目已集成 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的结构和教学内容。
-学习内容位于根目录：
-- **`agents/`:** 12个由浅入深的课程 (s01 到 s12) 和总纲代码。从 `python agents/s01_agent_loop.py` 开始学习。
-- **`docs/zh/`:** 课程对应的中文指南。
-- **`skills/`:** Agent 可以使用的技能说明和工具库。
+- 一个界面里同时拥有聊天、技能选择、日志面板、工作区切换、上下文压缩和本地持久化。
+- 按技能暴露工具，不把所有 schema 一股脑塞给模型，尽量减少上下文膨胀。
+- 对话不是“只会说”，而是能在当前工作区里真的执行文件、终端、Python 和浏览器相关操作。
+- 每轮 LLM 输入输出、会话历史、上下文摘要都会落到本地，方便追踪和排查。
+- 支持 Docker 开发、Web 控制台和 macOS 原生桌面打包。
 
-> **注意:** 运行教程前请配置 `ANTHROPIC_API_KEY` 及 `MODEL_ID` 在 `.env` 中，并安装 `requirements.txt`。
+## 你能拿它做什么
 
----
-## ✨ 特性
+- 让 Agent 在指定项目目录下读代码、改代码、跑命令、生成脚本。
+- 把搜索、天气、新闻这类实时信息接成 skill，像插件一样开关。
+- 用浏览器/Computer Use 能力自动打开页面、截图、点击、输入。
+- 用 Python 或代码沙箱生成图表、处理数据、做实验。
+- 保存长会话并自动压缩上下文，不必每次重头解释项目背景。
 
-- 🎯 **Claude Skills三级架构** - 完全按照[Claude官方Skills文档](https://code.claude.com/docs/en/skills)实现
-- 🌐 **现代化Web界面** - 实时聊天、会话管理、主题切换
-- 🧩 **可选技能面板** - 按字母排序启用/禁用技能，控制模型当前可用能力
-- 🖥️ **计算机视觉操作** - 屏幕截图、鼠标键盘控制、网页浏览
-- 📁 **文件管理** - 查看、编辑、创建各种格式文件  
-- 🔧 **终端执行** - 安全的命令行操作
-- 🚀 **高性能部署** - Docker容器化，代码热重载
-- 💾 **会话记忆** - 持久化对话历史和上下文管理
+## 核心能力
 
-## 🖼️ 界面预览
+- `Workspace` 工作区切换：为每个会话指定当前项目根目录。
+- `Skills` 技能筛选：只让模型使用你允许的能力。
+- `Logs` 本地日志：持久化完整 LLM request / response，支持时间筛选。
+- `Thinking` 折叠块：可查看中间推理与工具过程。
+- `Context compaction`：长对话自动在发送前压缩成模型可继续使用的摘要。
+- `Image paste`：聊天框支持粘贴图片、顺序占位和悬停预览。
 
-下图为当前运行中的 Claude-style 控制台界面，包含会话侧栏、流式对话区、Thinking 折叠块、技能选择和日志抽屉等能力：
+## 运行效果
+
+当前界面已经是完整可交互的 Claude-style 控制台，包括会话侧栏、Thinking 折叠块、工作区抽屉、日志抽屉和技能筛选：
 
 ![OBS Claude-style Console Screenshot](screenshots/chat-ui-20260409.png)
 
-## 🚀 快速开始
+## 快速开始
 
-### 方式1：本地开发模式 (推荐)
+### 1. 本地开发
 
 ```bash
-# 1. 进入项目目录
-cd omni-agent
-
-# 2. 启动服务 (自动安装依赖)
+cd /Users/wangshuang/PycharmProjects/obs/obs
 docker-compose up -d omni-agent
-
-# 3. 浏览器访问
-# 前端界面: http://127.0.0.1:8000
-# API文档: http://127.0.0.1:8000/docs
 ```
 
-### 方式2：Docker部署
+启动后访问：
+
+- Web 控制台: `http://127.0.0.1:8000`
+- OpenAPI: `http://127.0.0.1:8000/docs`
+
+### 2. Docker 整体启动
 
 ```bash
-# Windows用户
-deploy.bat
-
-# 或手动部署
 docker-compose up -d
-
-# 访问: http://localhost:8000
 ```
 
-### 方式3：命令行交互
+### 3. macOS 原生桌面版
 
-```bash
-# 启动交互式聊天
-python chat_demo.py
-```
-
-### 方式4：macOS 原生桌面版
-
-本项目现在包含一个不依赖浏览器的原生桌面版入口，基于 Tkinter 启动本地窗口。
-
-本机调试运行：
+调试运行：
 
 ```bash
 cd /Users/wangshuang/PycharmProjects/obs/obs
@@ -79,7 +65,7 @@ chmod +x scripts/run_macos_desktop.sh
 ./scripts/run_macos_desktop.sh
 ```
 
-构建 `.app` 和 `.dmg`：
+构建 `.app` 与 `.dmg`：
 
 ```bash
 cd /Users/wangshuang/PycharmProjects/obs/obs
@@ -87,48 +73,60 @@ chmod +x scripts/build_macos_app.sh
 ./scripts/build_macos_app.sh
 ```
 
-构建完成后：
-- `.app` 位于 `dist/OBS Agent.app`
-- `.dmg` 位于 `dist/OBS-Agent-<timestamp>.dmg`
+生成物位置：
 
-## 🎮 使用指南
+- `dist/OBS Agent.app`
+- `dist/OBS-Agent-<timestamp>.dmg`
 
-### Web界面操作
+## 上手体验
 
-1. **新建对话** - 点击左侧"新建对话"开始
-2. **输入命令** - 支持多种格式：
-   - `file:view README.md` - 查看文件
-   - `cmd:ls -la` - 执行命令
-   - `screenshot` - 截取屏幕
-   - 普通对话 - 自然语言交互
+打开控制台后，你可以直接这样用：
 
-3. **快捷操作** - 使用底部快捷按钮
-4. **会话管理** - 左侧自动保存所有对话
-5. **主题切换** - 右上角设置按钮
+- `列出当前目录文件`
+- `读取 README.md 并总结这个项目`
+- `打开 https://example.com 并告诉我标题`
+- `北京现在天气怎么样`
+- `今日热点新闻`
+- `使用 python 画一个折线图`
 
-### 命令格式详解
+如果你希望模型只在某个能力范围内工作，可以先打开 `Skills` 抽屉，只保留：
 
-#### 🖼️ 屏幕操作
-```
-screenshot                    # 获取屏幕截图
-click:100,200                # 点击坐标(100,200)
-type:Hello World             # 输入文字
-```
+- `Terminal`
+- `File`
+- `Python`
+- `Web Search`
 
-#### 📁 文件操作
-```
-file:view path/to/file.txt   # 查看文件内容
-file:create test.py "print('hello')"  # 创建文件
-file:edit path line "new content"     # 编辑文件
-```
+## 数据和持久化
 
-#### 🔧 终端命令
-```
-cmd:ls -la                   # 列出目录
-cmd:python --version         # 检查Python版本
-cmd:git status               # Git操作
-cmd:npm install              # 包管理
-```
+所有关键运行数据都保存在本地，便于排查、恢复和长期使用：
+
+- 会话历史：`logs/chat_sessions`
+- 上下文压缩缓存：`logs/context_cache`
+- LLM 输入输出日志：`logs/llm_traces`
+- 线程工作目录：`logs/thread_workspaces`
+- 当前工作区状态：`logs/workspace_state.json`
+
+## 已验证的真实能力
+
+当前版本已经做过真实多轮回归测试，覆盖：
+
+- `terminal`：列目录、执行命令
+- `file-operations`：读取 README、查看文件
+- `weather`：北京实时天气
+- `web-search`：今日热点新闻
+- `code-sandbox`：Python 计算与执行
+- `computer-use`：打开网页并识别页面标题
+- `workspace`：切换工作区后在新目录执行命令
+- `context compaction`：长会话自动压缩并继续回答
+- `image paste`：粘贴图片后可做本地视觉兜底分析
+
+## Learn Claude Code
+
+本项目仍保留了 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的结构与教学内容，可作为 Agent Harness / Skills 设计学习材料：
+
+- `agents/`: 多阶段课程代码
+- `docs/zh/`: 中文教程
+- `skills/`: 技能说明和工具样例
 
 ## 🏗️ 架构设计
 
