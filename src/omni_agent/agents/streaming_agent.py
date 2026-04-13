@@ -23,6 +23,10 @@ NEWS_HINT_PATTERN = re.compile(r"(新闻|热点|头条|快讯|news|headline|brea
 FINANCE_HINT_PATTERN = re.compile(r"(股价|股票|汇率|finance|stock|market|price|\$)", re.IGNORECASE)
 CODE_HINT_PATTERN = re.compile(r"(代码|文件|测试|修复|修改|实现|重构|run|test|debug|fix|edit|code|repo|workspace)", re.IGNORECASE)
 COMPUTER_HINT_PATTERN = re.compile(r"(浏览器|页面|截图|click|open|tab|网页|screen|ui)", re.IGNORECASE)
+CODE_WRITE_PATTERN = re.compile(
+    r"(写|创建|生成|帮我|开发|实现|编写|write|create|build|make|generate|game|贪吃蛇|游戏|程序|项目|app|应用)",
+    re.IGNORECASE,
+)
 RUNTIME_CONTEXT_PATTERN = re.compile(
     r"(今天|今日|当天|目前|当前|现在|latest|today|current|recent|weather|forecast|新闻|热点|头条|price|stock|股价|汇率|news)",
     re.IGNORECASE,
@@ -45,6 +49,9 @@ IMAGE_UNAVAILABLE_PATTERN = re.compile(
     r"(没有.*图片|没.*看到.*图片|未.*看到.*图片|看起来图片.*没有成功|don'?t\s+see\s+any\s+image|no\s+image\s+(was\s+)?provided|image.*not.*attached)",
     re.IGNORECASE,
 )
+MODEL_CONTEXT_WINDOWS = {
+    "minimax-m2": 200_000,
+}
 
 
 class StreamingAgent:
@@ -426,15 +433,48 @@ class StreamingAgent:
             return False
         return bool(RUNTIME_CONTEXT_PATTERN.search(text))
 
+    def _get_context_window_tokens(self, model_name: Optional[str] = None) -> int:
+        normalized = (model_name or getattr(getattr(self.vllm_client, "config", None), "model", "") or "").strip().lower()
+        if normalized in MODEL_CONTEXT_WINDOWS:
+            return MODEL_CONTEXT_WINDOWS[normalized]
+        if "minimax-m2" in normalized:
+            return MODEL_CONTEXT_WINDOWS["minimax-m2"]
+        return 128_000
+
+    def _estimate_text_tokens(self, text: str) -> int:
+        if not text:
+            return 0
+        cjk_chars = re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", text)
+        cjk_count = len(cjk_chars)
+        remaining = re.sub(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", " ", text)
+        word_like = re.findall(r"[A-Za-z0-9_]+", remaining)
+        punctuation_like = re.findall(r"[^\sA-Za-z0-9_]", remaining)
+        word_tokens = sum(max(1, round(len(word) / 4)) for word in word_like)
+        punctuation_tokens = round(len(punctuation_like) * 0.35)
+        return max(0, cjk_count + word_tokens + punctuation_tokens)
+
+    def _estimate_context_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        return sum(
+            self._estimate_text_tokens(self._message_content_to_text(item.get("content")))
+            for item in messages
+        )
+
     def _estimate_context_percent(self, messages: List[Dict[str, Any]]) -> int:
-        text_size = sum(len(self._message_content_to_text(item.get("content"))) for item in messages)
-        return min(98, max(1, round(text_size / 140) + 4))
+        used_tokens = self._estimate_context_tokens(messages)
+        max_tokens = self._get_context_window_tokens()
+        if used_tokens <= 0 or max_tokens <= 0:
+            return 0
+        return min(98, max(1, round((used_tokens / max_tokens) * 100)))
 
     def _emit_context_state(self, session_id: str, messages: List[Dict[str, Any]]) -> str:
+        estimated_tokens = self._estimate_context_tokens(messages)
+        max_context_tokens = self._get_context_window_tokens()
         return self._sse({
             "type": "context_state",
             "session_id": session_id,
             "context_percent": self._estimate_context_percent(messages),
+            "estimated_context_tokens": estimated_tokens,
+            "max_context_tokens": max_context_tokens,
         })
 
     def _conversation_to_turns(self, messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -886,6 +926,9 @@ class StreamingAgent:
         if not self._looks_like_local_shell_request(user_message, tool_context):
             return None
 
+        if CODE_WRITE_PATTERN.search(user_message or ""):
+            return None
+
         command = self._build_direct_shell_command(user_message)
         if not command:
             return None
@@ -907,7 +950,7 @@ class StreamingAgent:
 
         try:
             result = await bash_skill.execute(command=command, timeout=30)
-            tool_result_str = str(result.content) if result.success else f"Error: {result.error}"
+            tool_result_str = str(result.content or "") if result.success else (result.error or result.content or "Unknown error")
             success = result.success
         except Exception as e:
             tool_result_str = f"Error: {e}"
@@ -1645,9 +1688,6 @@ class StreamingAgent:
                 if tool_name in enabled_set or resolved_skill in enabled_set:
                     filtered.append(tool)
             tools = filtered
-
-        if permission_mode == "plan":
-            return []
 
         return tools
 

@@ -12,10 +12,13 @@ const STORAGE_VERSION = "20260408-01";
 const SETTINGS_KEY = "obs-agent-settings";
 const SESSIONS_KEY = "obs-agent-sessions";
 const VERSION_KEY = "obs-agent-storage-version";
-const DEFAULT_SELECTED_SKILLS = ["code-sandbox", "file-operations", "terminal", "web-search"];
+const DEFAULT_SELECTED_SKILLS = ["code-sandbox", "file-operations", "terminal", "web-search", "weather"];
 const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
 const GITHUB_REPO_URL = "https://github.com/cloudintheskyfield/obs";
 const LOGO_SRC = "/static/obs-code-logo.svg";
+const MODEL_CONTEXT_WINDOWS = {
+    "MiniMax-M2": 200000,
+};
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
@@ -37,6 +40,8 @@ function createEmptySession(id) {
         logs: [],
         contextPercentOverride: null,
         serverContextPercent: null,
+        serverContextTokens: 0,
+        serverContextMaxTokens: null,
         tasks: {},
         createdAt: nowIso(),
         updatedAt: nowIso()
@@ -78,6 +83,8 @@ function upgradeSession(session) {
         logs: Array.isArray(session.logs) ? session.logs.filter((entry) => entry && entry.type === "llm_log") : [],
         contextPercentOverride: typeof session.contextPercentOverride === "number" ? session.contextPercentOverride : null,
         serverContextPercent: typeof session.serverContextPercent === "number" ? session.serverContextPercent : null,
+        serverContextTokens: typeof session.serverContextTokens === "number" ? session.serverContextTokens : 0,
+        serverContextMaxTokens: typeof session.serverContextMaxTokens === "number" ? session.serverContextMaxTokens : null,
         title: session.title || "New thread",
         createdAt: session.createdAt || nowIso(),
         updatedAt: session.updatedAt || nowIso()
@@ -125,6 +132,24 @@ function computeContextPercent(session, toolContext) {
     return historySize > 0
         ? Math.min(98, Math.max(1, Math.round(historySize / 140) + contextBonus))
         : contextBonus;
+}
+
+function getModelContextWindow(modelName) {
+    return MODEL_CONTEXT_WINDOWS[modelName] || 128000;
+}
+
+function estimateContextTokensFromTranscript(session) {
+    const text = (session?.transcript || []).map((entry) => entry.content || "").join("\n");
+    if (!text) {
+        return 0;
+    }
+    const cjkCount = (text.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g) || []).length;
+    const remaining = text.replace(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g, " ");
+    const wordLike = remaining.match(/[A-Za-z0-9_]+/g) || [];
+    const punctuationLike = remaining.match(/[^\sA-Za-z0-9_]/g) || [];
+    const wordTokens = wordLike.reduce((sum, word) => sum + Math.max(1, Math.round(word.length / 4)), 0);
+    const punctuationTokens = Math.round(punctuationLike.length * 0.35);
+    return cjkCount + wordTokens + punctuationTokens;
 }
 
 function computeNextContextPercent(session, toolContext, input) {
@@ -224,6 +249,8 @@ function App() {
     const [sessions, setSessions] = useState([]);
     const [currentSessionId, setCurrentSessionId] = useState(null);
     const [contextPercent, setContextPercent] = useState(0);
+    const [contextTokens, setContextTokens] = useState(0);
+    const [contextMaxTokens, setContextMaxTokens] = useState(200000);
     const [toolContext, setToolContext] = useState("workspace");
     const [workspacePath, setWorkspacePath] = useState("");
     const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
@@ -256,6 +283,7 @@ function App() {
     const sessionsRef = useRef([]);
     const currentSessionIdRef = useRef(null);
     const settingsRef = useRef(settings);
+    const initialLoadDoneRef = useRef(false);
 
     useEffect(() => {
         settingsRef.current = settings;
@@ -298,24 +326,31 @@ function App() {
             console.warn("Failed to load settings", error);
         }
 
-        try {
-            const storedVersion = localStorage.getItem(VERSION_KEY);
-            if (storedVersion !== STORAGE_VERSION) {
-                localStorage.setItem(VERSION_KEY, STORAGE_VERSION);
-            }
-            const raw = localStorage.getItem(SESSIONS_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                const upgraded = parsed.map((session) => upgradeSession(session));
-                setSessions(upgraded);
-                if (upgraded[0]) {
-                    const latest = upgraded.slice().sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt))[0];
+        const apiUrl = resolveDefaultApiBaseUrl();
+        fetch(`${apiUrl}/ui-sessions`)
+            .then((response) => response.json())
+            .then((data) => {
+                const loaded = (data.sessions || []).map((session) => upgradeSession(session)).filter(Boolean);
+                if (loaded.length > 0) {
+                    setSessions(loaded);
+                    const latest = loaded.slice().sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt))[0];
                     setCurrentSessionId(latest.id);
+                } else {
+                    const next = createEmptySession(`session_${Date.now()}`);
+                    setSessions([next]);
+                    setCurrentSessionId(next.id);
+                    fetch(`${apiUrl}/ui-sessions/${next.id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(next),
+                    }).catch(() => {});
                 }
-            }
-        } catch (error) {
-            console.warn("Failed to load sessions", error);
-        }
+            })
+            .catch(() => {
+                const next = createEmptySession(`session_${Date.now()}`);
+                setSessions([next]);
+                setCurrentSessionId(next.id);
+            });
     }, []);
 
     useEffect(() => {
@@ -343,9 +378,6 @@ function App() {
 
     useEffect(() => {
         if (sessions.length === 0) {
-            const next = createEmptySession(`session_${Date.now()}`);
-            setSessions([next]);
-            setCurrentSessionId(next.id);
             return;
         }
         if (!currentSessionId || !sessions.some((session) => session.id === currentSessionId)) {
@@ -357,7 +389,24 @@ function App() {
 
     useEffect(() => {
         setContextPercent(computeContextPercent(currentSession, toolContext));
-    }, [currentSession, toolContext]);
+        setContextTokens(
+            typeof currentSession?.serverContextTokens === "number"
+                ? currentSession.serverContextTokens
+                : estimateContextTokensFromTranscript(currentSession)
+        );
+        setContextMaxTokens(
+            typeof currentSession?.serverContextMaxTokens === "number"
+                ? currentSession.serverContextMaxTokens
+                : getModelContextWindow(selectedModel)
+        );
+    }, [currentSession, toolContext, selectedModel]);
+
+    useEffect(() => {
+        setContextMaxTokens(getModelContextWindow(selectedModel));
+        if (currentSessionId) {
+            refreshSessionContextState(currentSessionId);
+        }
+    }, [selectedModel]);
 
     useEffect(() => {
         if (!messageInputRef.current) return;
@@ -406,6 +455,14 @@ function App() {
             });
             transform(clone);
             clone.updatedAt = nowIso();
+            const apiUrl = settingsRef.current.apiUrl;
+            if (apiUrl) {
+                fetch(`${apiUrl}/ui-sessions/${sessionId}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(clone),
+                }).catch(() => {});
+            }
             return clone;
         }));
     }
@@ -462,6 +519,12 @@ function App() {
         const session = createEmptySession(`session_${Date.now()}`);
         updateSessions((previous) => [session, ...previous]);
         setCurrentSessionId(session.id);
+        const apiUrl = settingsRef.current.apiUrl || resolveDefaultApiBaseUrl();
+        fetch(`${apiUrl}/ui-sessions/${session.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(session),
+        }).catch(() => {});
         setMode("agent");
         setToolContext("workspace");
         setExpandedThinking({});
@@ -476,6 +539,8 @@ function App() {
             session.tasks = {};
             session.contextPercentOverride = null;
             session.serverContextPercent = null;
+            session.serverContextTokens = 0;
+            session.serverContextMaxTokens = getModelContextWindow(selectedModel);
         });
         setExpandedThinking({});
     }
@@ -638,15 +703,21 @@ function App() {
 
     async function refreshSessionContextState(sessionId) {
         try {
-            const response = await fetch(`${settingsRef.current.apiUrl}/session/${encodeURIComponent(sessionId)}/context`);
+            const response = await fetch(
+                `${settingsRef.current.apiUrl}/session/${encodeURIComponent(sessionId)}/context?model=${encodeURIComponent(selectedModel)}`
+            );
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
             const payload = await response.json();
             updateSessionById(sessionId, (session) => {
                 session.serverContextPercent = payload.context_percent ?? 0;
+                session.serverContextTokens = payload.estimated_context_tokens ?? 0;
+                session.serverContextMaxTokens = payload.max_context_tokens ?? getModelContextWindow(selectedModel);
             });
             setContextPercent(payload.context_percent ?? 0);
+            setContextTokens(payload.estimated_context_tokens ?? 0);
+            setContextMaxTokens(payload.max_context_tokens ?? getModelContextWindow(selectedModel));
         } catch (error) {
             console.debug("Failed to refresh session context state", error);
         }
@@ -982,10 +1053,16 @@ function App() {
 
                 if (payload.type === "context_state") {
                     const nextPercent = payload.context_percent ?? 0;
+                    const nextTokens = payload.estimated_context_tokens ?? 0;
+                    const nextMaxTokens = payload.max_context_tokens ?? getModelContextWindow(selectedModel);
                     updateSessionById(sessionId, (session) => {
                         session.serverContextPercent = nextPercent;
+                        session.serverContextTokens = nextTokens;
+                        session.serverContextMaxTokens = nextMaxTokens;
                     });
                     setContextPercent(nextPercent);
+                    setContextTokens(nextTokens);
+                    setContextMaxTokens(nextMaxTokens);
                     return;
                 }
 
@@ -1207,13 +1284,6 @@ function App() {
 
             <main className="workspace">
                 <header className="topbar">
-                    <div className="topbar-brand">
-                        <img className="topbar-logo" src={LOGO_SRC} alt="OBS Code logo" />
-                        <div>
-                            <p className="eyebrow">OBS Code</p>
-                            <h1>{currentSession?.title || "New thread"}</h1>
-                        </div>
-                    </div>
                     <div className="topbar-actions">
                         <div className={`status-chip ${runtime ? "online" : "offline"}`}>
                             <span className="status-dot" />
@@ -1228,7 +1298,13 @@ function App() {
                     </div>
                 </header>
 
-                <RuntimePills mode={mode} setMode={setMode} contextPercent={contextPercent} />
+                <RuntimePills
+                    mode={mode}
+                    setMode={setMode}
+                    contextPercent={contextPercent}
+                    contextTokens={contextTokens}
+                    contextMaxTokens={contextMaxTokens}
+                />
 
                 <TranscriptView
                     transcript={currentSession?.transcript || []}

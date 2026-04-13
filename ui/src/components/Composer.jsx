@@ -49,14 +49,11 @@ export default function Composer({
                             <span className="workspace-inline-breadcrumb">Parents · {workspaceSummary}</span>
                         </div>
                         <div className="composer-toggles">
-                            <label className="tiny-select-shell" htmlFor="model-select">
-                                <span>Model</span>
-                                <select id="model-select" className="tiny-select" value={selectedModel} onChange={(event) => onModelChange(event.target.value)}>
-                                    {(availableModels || []).map((model) => (
-                                        <option key={model} value={model}>{model}</option>
-                                    ))}
-                                </select>
-                            </label>
+                            <select id="model-select" className="model-pill-select" value={selectedModel} onChange={(event) => onModelChange(event.target.value)}>
+                                {(availableModels || []).map((model) => (
+                                    <option key={model} value={model}>{model}</option>
+                                ))}
+                            </select>
                             <button className="tiny-pill" type="button" onClick={onPermissionToggle}>
                                 Permission · {permissionMode}
                             </button>

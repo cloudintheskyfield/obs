@@ -18,11 +18,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
 
     return (
         <section className="chat-region">
-            <div className="transcript-toolbar">
-                <div>
-                    <strong>Conversation</strong>
-                </div>
-            </div>
+
             <div id="chat-messages" className="chat-messages" ref={chatMessagesRef}>
                 {!transcript.length ? (
                     <div className="transcript-empty">
@@ -42,8 +38,8 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                     : null);
 
                             return (
+                            <React.Fragment key={entry.id}>
                                 <article
-                                    key={entry.id}
                                     className={`message ${transcriptRole(entry)}${isCompressionNotice ? " compression-notice" : ""}`}
                                 >
                                     {!isCompressionNotice ? (
@@ -124,19 +120,17 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                         </div>
                                     ) : null}
 
-                                    {requestIndicator?.active && index === lastUserIndex ? (
-                                        <div className="request-loading-inline" aria-live="polite">
-                                            <span className="request-loading-line" aria-hidden="true" />
-                                            <span className="request-loading-copy">
-                                                <span className="request-loading-spinner" aria-hidden="true">
-                                                    <i className="fas fa-spinner" />
-                                                </span>
-                                                <span>{requestIndicator.label || "Working on your request"}</span>
-                                            </span>
-                                            <span className="request-loading-line" aria-hidden="true" />
-                                        </div>
-                                    ) : null}
                                 </article>
+
+                                {requestIndicator?.active && index === lastUserIndex ? (
+                                    <div className="request-loading-left" aria-live="polite">
+                                        <span className="request-loading-spinner" aria-hidden="true">
+                                            <i className="fas fa-spinner" />
+                                        </span>
+                                        <span>{requestIndicator.label || "Working on your request"}</span>
+                                    </div>
+                                ) : null}
+                            </React.Fragment>
                             );
                         })}
                     </div>

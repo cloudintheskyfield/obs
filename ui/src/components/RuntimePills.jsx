@@ -1,6 +1,15 @@
 import React from "react";
 
-export default function RuntimePills({ mode, setMode, contextPercent }) {
+function formatTokenCount(tokens) {
+    const value = Number(tokens) || 0;
+    if (value >= 1000) {
+        const kiloValue = value / 1000;
+        return `${kiloValue >= 100 ? Math.round(kiloValue) : kiloValue.toFixed(1).replace(/\.0$/, "")}K`;
+    }
+    return `${Math.round(value)}`;
+}
+
+export default function RuntimePills({ mode, setMode, contextPercent, contextTokens, contextMaxTokens }) {
     return (
         <section className="modebar">
             <div className="mode-selector">
@@ -12,7 +21,9 @@ export default function RuntimePills({ mode, setMode, contextPercent }) {
                 </select>
             </div>
             <div className="runtime-pills">
-                <span className="runtime-pill">Context · {contextPercent}%</span>
+                <span className="runtime-pill">
+                    Context · {formatTokenCount(contextMaxTokens)} · {contextPercent}%
+                </span>
             </div>
         </section>
     );

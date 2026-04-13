@@ -128,10 +128,12 @@ session_store_dir = Path(config.log.file_path).parent / "chat_sessions" if confi
 context_cache_dir = Path(config.log.file_path).parent / "context_cache" if config.log.file_path else Path(config.work_dir).parent / "logs" / "context_cache"
 thread_workspace_dir = Path(config.log.file_path).parent / "thread_workspaces" if config.log.file_path else Path(config.work_dir).parent / "logs" / "thread_workspaces"
 workspace_state_file = Path(config.log.file_path).parent / "workspace_state.json" if config.log.file_path else Path(config.work_dir).parent / "logs" / "workspace_state.json"
+ui_sessions_dir = Path(config.log.file_path).parent / "ui_sessions" if config.log.file_path else Path(config.work_dir).parent / "logs" / "ui_sessions"
 llm_trace_dir.mkdir(parents=True, exist_ok=True)
 session_store_dir.mkdir(parents=True, exist_ok=True)
 context_cache_dir.mkdir(parents=True, exist_ok=True)
 thread_workspace_dir.mkdir(parents=True, exist_ok=True)
+ui_sessions_dir.mkdir(parents=True, exist_ok=True)
 
 HOST_HOME = os.getenv("HOST_HOME")
 HOST_HOME_MOUNT = os.getenv("HOST_HOME_MOUNT", "/host-home")
@@ -660,6 +662,54 @@ async def skill_catalog():
     return JSONResponse({"skills": skill_manager.get_skill_catalog()})
 
 
+def _ui_session_file(session_id: str) -> Path:
+    safe_id = re.sub(r"[^\w\-]", "_", session_id)[:80]
+    return ui_sessions_dir / f"{safe_id}.json"
+
+
+@app.get("/ui-sessions")
+async def list_ui_sessions():
+    sessions = []
+    for f in sorted(ui_sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            sessions.append(data)
+        except Exception:
+            continue
+    return JSONResponse({"sessions": sessions})
+
+
+@app.get("/ui-sessions/{session_id}")
+async def get_ui_session(session_id: str):
+    session_file = _ui_session_file(session_id)
+    if not session_file.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        data = json.loads(session_file.read_text(encoding="utf-8"))
+        return JSONResponse(data)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.put("/ui-sessions/{session_id}")
+async def save_ui_session(session_id: str, request: Request):
+    try:
+        body = await request.json()
+        session_file = _ui_session_file(session_id)
+        session_file.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        return JSONResponse({"ok": True})
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.delete("/ui-sessions/{session_id}")
+async def delete_ui_session(session_id: str):
+    session_file = _ui_session_file(session_id)
+    if session_file.exists():
+        session_file.unlink()
+    return JSONResponse({"ok": True})
+
+
 @app.get("/workspace")
 async def get_workspace_state():
     path_str = _current_workspace()
@@ -758,11 +808,13 @@ async def get_session_logs(
 
 
 @app.get("/session/{session_id}/context")
-async def get_session_context_state(session_id: str):
+async def get_session_context_state(session_id: str, model: Optional[str] = Query(default=None)):
     streaming_agent = getattr(app.state, "streaming_agent", None)
     _ensure_session_state_loaded(session_id, streaming_agent)
     messages = chat_sessions.get(session_id, [])
     context_percent = 0
+    estimated_context_tokens = 0
+    max_context_tokens = 128000
     if streaming_agent is not None:
         cache = getattr(streaming_agent, "session_context_cache", {}).get(session_id, {})
         if cache:
@@ -780,12 +832,17 @@ async def get_session_context_state(session_id: str):
                 },
             ]
             context_percent = streaming_agent._estimate_context_percent(compact_messages)
+            estimated_context_tokens = streaming_agent._estimate_context_tokens(compact_messages)
         else:
             context_percent = streaming_agent._estimate_context_percent(messages)
+            estimated_context_tokens = streaming_agent._estimate_context_tokens(messages)
+        max_context_tokens = streaming_agent._get_context_window_tokens(model)
     return JSONResponse({
         "session_id": session_id,
         "messages_count": len(messages),
         "context_percent": context_percent,
+        "estimated_context_tokens": estimated_context_tokens,
+        "max_context_tokens": max_context_tokens,
     })
 
 @app.post("/chat/stream")
