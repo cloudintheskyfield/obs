@@ -1,6 +1,8 @@
 import json
 import hashlib
+import os
 import re
+import traceback
 import base64
 import io
 import subprocess
@@ -21,7 +23,14 @@ MICROCOMPACT_THRESHOLD = 80   # start micro-compacting at 80 % of the model's co
 AUTOCOMPACT_THRESHOLD = 90    # full auto-compact (summarise turns) only above 90 %
 TOOL_RESULT_KEEP_CHARS = 1_000
 MICROCOMPACT_PROTECTED_TAIL = 20   # protect ~10 turns × 2 msgs from in-turn truncation
-RECENT_TURNS_VERBATIM = 10         # keep last N complete turns uncompressed in context
+RECENT_TURNS_VERBATIM = 10         # target verbatim turns for compaction (see LLM_MAX_RECENT_DIALOG_TURNS)
+# Hard caps on what we send to MiniMax in one request (avoid 400 / overload from giant prompts).
+LLM_MAX_RECENT_DIALOG_TURNS = max(2, min(30, int(os.getenv("OBS_LLM_MAX_RECENT_TURNS", "10"))))
+MAX_CHARS_PER_PROMPT_TURN = max(2_000, min(60_000, int(os.getenv("OBS_LLM_MAX_CHARS_PER_TURN", "10000"))))
+HISTORICAL_SUMMARY_MAX_CHARS = max(8_000, min(120_000, int(os.getenv("OBS_LLM_MAX_HISTORICAL_CHARS", "24000"))))
+TOOL_MESSAGE_SOFT_CHAR_LIMIT = max(4_000, min(200_000, int(os.getenv("OBS_LLM_TOOL_MESSAGE_SOFT_CHARS", "12000"))))
+# Whole "[Recent conversation turns]" block ceiling (after per-turn truncation).
+RECENT_TRANSCRIPT_BLOCK_MAX = max(20_000, min(200_000, int(os.getenv("OBS_LLM_MAX_RECENT_BLOCK_CHARS", "90000"))))
 COMPACTABLE_TOOL_NAMES = frozenset({
     "bash", "str_replace_editor", "web_search", "advanced_web_search",
     "computer", "code_sandbox", "weather",
@@ -635,14 +644,22 @@ class StreamingAgent:
 
         return turns
 
+    @staticmethod
+    def _truncate_prompt_field(text: str, limit: int) -> str:
+        t = (text or "").strip()
+        if len(t) <= limit:
+            return t
+        return t[:limit] + "\n[...truncated for LLM prompt size limit — earlier text omitted]"
+
     def _serialize_turns(self, turns: List[Dict[str, str]]) -> str:
+        lim = MAX_CHARS_PER_PROMPT_TURN
         lines: List[str] = []
         for index, turn in enumerate(turns, start=1):
             lines.append(f"Round {index}")
-            lines.append(f"User: {turn.get('user', '').strip()}")
+            lines.append(f"User: {self._truncate_prompt_field(turn.get('user', '') or '', lim)}")
             assistant = (turn.get("assistant") or "").strip()
             if assistant:
-                lines.append(f"Assistant: {assistant}")
+                lines.append(f"Assistant: {self._truncate_prompt_field(assistant, lim)}")
             lines.append("")
         return "\n".join(lines).strip()
 
@@ -812,13 +829,15 @@ class StreamingAgent:
             sections.append("[Runtime context]\n" + "\n".join(runtime_lines))
 
         if historical_summary:
-            sections.append(f"[Historical context summary]\n{historical_summary}")
+            hs = self._truncate_prompt_field(historical_summary, HISTORICAL_SUMMARY_MAX_CHARS)
+            sections.append(f"[Historical context summary]\n{hs}")
 
         if recent_turn_transcript:
-            sections.append(f"[Recent conversation turns]\n{recent_turn_transcript}")
+            rt = self._truncate_prompt_field(recent_turn_transcript, RECENT_TRANSCRIPT_BLOCK_MAX)
+            sections.append(f"[Recent conversation turns]\n{rt}")
 
         if recent_summary:
-            sections.append(f"[Recent {4} rounds summary]\n{recent_summary}")
+            sections.append(f"[Recent {RECENT_TURNS_VERBATIM} rounds summary]\n{recent_summary}")
 
         if skill_index_prompt:
             sections.append(skill_index_prompt)
@@ -854,7 +873,9 @@ class StreamingAgent:
                 "recent_turn_transcript": "",
             }
 
-        recent_turn_count = max(RECENT_TURNS_VERBATIM, int(cache.get("recent_turn_count") or RECENT_TURNS_VERBATIM))
+        # Keep exactly the latest N turns verbatim and compress anything older.
+        # Older builds may have stored a larger recent_turn_count in cache; ignore it.
+        recent_turn_count = min(LLM_MAX_RECENT_DIALOG_TURNS, RECENT_TURNS_VERBATIM, len(turns))
         recent_turns = turns[-recent_turn_count:]
         historical_turns = turns[:-recent_turn_count]
 
@@ -1130,7 +1151,10 @@ class StreamingAgent:
             "Do not call tools, do not emit XML or tool-call markup, and do not describe internal tool planning. "
             "Use the provided user prompt as the authoritative working context for this turn."
         )
-        historical_image_turns = self._collect_recent_image_turns(conversation_history)
+        historical_image_turns = self._collect_recent_image_turns(
+            conversation_history,
+            max_turns=min(6, LLM_MAX_RECENT_DIALOG_TURNS),
+        )
         messages = [
             {"role": "system", "content": system_prompt},
             *historical_image_turns,
@@ -2011,7 +2035,7 @@ class StreamingAgent:
         if not turns:
             return
 
-        recent_turn_count = RECENT_TURNS_VERBATIM
+        recent_turn_count = min(LLM_MAX_RECENT_DIALOG_TURNS, RECENT_TURNS_VERBATIM, len(turns))
         recent_turns = turns[-recent_turn_count:]
         historical_turns = turns[:-recent_turn_count]
         before_percent = self._estimate_context_percent(original)
@@ -2195,13 +2219,20 @@ class StreamingAgent:
                 yield chunk
         except Exception as e:
             logger.exception("StreamingAgent error")
-            error_text = str(e)
-            friendly_error = "请求暂时失败，请稍后重试。"
-            if "529" in error_text:
-                friendly_error = "模型服务当前较繁忙，请稍后再试。"
-            elif "400" in error_text:
-                friendly_error = "请求参数暂时不兼容，我已经记录下来了，请稍后重试。"
-            yield self._sse({"error": friendly_error, "done": True})
+            error_text = str(e).strip() or repr(e)
+            error_type = type(e).__name__
+            tb = traceback.format_exc()
+            last_line = tb.strip().rsplit("\n", 1)[-1].strip() if tb else error_text
+            # Always surface the root exception to the client — do not replace with vague copy.
+            detail_line = last_line if last_line and last_line not in error_text else ""
+            combined = error_text if not detail_line else f"{error_text}\n↳ {detail_line}"
+            yield self._sse({
+                "error": combined,
+                "error_type": error_type,
+                "error_detail": last_line,
+                "done": True,
+                "session_id": session_id,
+            })
 
     def _apply_context_to_user_message(self, user_message: str, context: str, tool_context: str) -> str:
         if SIMPLE_GREETING_PATTERN.match((user_message or "").strip()):
@@ -2491,7 +2522,10 @@ class StreamingAgent:
         )
         if system_prompts:
             system_prompt = f"{system_prompt}\n\n" + "\n".join(system_prompts)
-        historical_image_turns = self._collect_recent_image_turns(conversation_history)
+        historical_image_turns = self._collect_recent_image_turns(
+            conversation_history,
+            max_turns=min(6, LLM_MAX_RECENT_DIALOG_TURNS),
+        )
         if historical_image_turns:
             system_prompt = (
                 f"{system_prompt}\n\n"
@@ -2785,6 +2819,12 @@ class StreamingAgent:
                 except Exception as e:
                     tool_result_str = str(e)
                     success = False
+
+                if len(tool_result_str) > TOOL_MESSAGE_SOFT_CHAR_LIMIT:
+                    tool_result_str = (
+                        tool_result_str[:TOOL_MESSAGE_SOFT_CHAR_LIMIT]
+                        + "\n[... tool output truncated for API size — see server logs for full output]"
+                    )
 
                 trunc_res = tool_result_str[:400] + "..." if len(tool_result_str) > 400 else tool_result_str
                 yield self._sse({

@@ -302,7 +302,7 @@ def test_prompt_context_ignores_stale_cache_and_keeps_recent_turns() -> None:
         "recent_summary": "stale recent",
         "historical_signature": "bad-old-historical",
         "recent_signature": "bad-old-recent",
-        "recent_turn_count": 4,
+        "recent_turn_count": 20,
     }
 
     conversation_history = [
@@ -320,6 +320,32 @@ def test_prompt_context_ignores_stale_cache_and_keeps_recent_turns() -> None:
     assert prompt_context["recent_summary"] == ""
     assert "://10.25.35.73:8001/skill.md 新建一个房间" in prompt_context["recent_turn_transcript"]
     assert "好的，我来处理" in prompt_context["recent_turn_transcript"]
+
+
+def test_prompt_context_caps_verbatim_history_to_latest_ten_turns() -> None:
+    agent = StreamingAgent(FakeVLLMClient(), FakeSkillManager())
+    agent.session_context_cache["s7"] = {
+        "recent_turn_count": 25,
+    }
+
+    conversation_history = []
+    for idx in range(1, 13):
+        conversation_history.append({"role": "user", "content": f"user turn {idx}"})
+        conversation_history.append({"role": "assistant", "content": f"assistant turn {idx}"})
+    conversation_history.append({"role": "user", "content": "current request"})
+
+    prompt_context = agent._resolve_prompt_context(
+        session_id="s7",
+        conversation_history=conversation_history,
+    )
+
+    transcript = prompt_context["recent_turn_transcript"]
+    assert "User: user turn 1\n" not in transcript
+    assert "Assistant: assistant turn 1\n" not in transcript
+    assert "User: user turn 2\n" not in transcript
+    assert "Assistant: assistant turn 2\n" not in transcript
+    assert "User: user turn 3\n" in transcript
+    assert "Assistant: assistant turn 12" in transcript
 
 
 def test_native_tool_stream_synthesizes_final_answer_after_silent_tool_step() -> None:
