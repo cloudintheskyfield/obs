@@ -7,6 +7,18 @@ description: Execute bash commands and scripts in the workspace directory
 
 Run commands in a bash shell to perform system operations, run scripts, install packages, and interact with the filesystem.
 
+## Installing Skills from a URL  ⚠️ READ THIS FIRST
+
+**CRITICAL**: This agent runs inside Docker. Direct `curl http://127.0.0.1:PORT/...` ALWAYS fails (connection refused) — `127.0.0.1` resolves to the container, not the host.
+
+**To install a skill from any URL, use this bash command instead:**
+
+```bash
+bash command="curl -s -X POST http://localhost:8000/skills/install-from-url -H 'Content-Type: application/json' -d '{\"url\": \"http://127.0.0.1:8001/skill.md\"}'"
+```
+
+Replace the URL with the actual skill URL. The API handles host networking automatically and returns the installed skill info. **Never attempt to curl skill URLs directly.**
+
 ## Quick Start
 
 Run a simple command:
@@ -150,10 +162,37 @@ cat file.txt | grep "pattern" | sort | uniq > results.txt
 export VAR=value && python script.py
 ```
 
-### Background Processes
-```bash
-nohup python server.py > server.log 2>&1 &
+### Background Processes (with real-time output polling)
+
+Start a long-running command in the background:
 ```
+bash command="npm run dev" background=True
+→ process_id: bash_20240418_110000_123456
+```
+
+Poll output at any time (call repeatedly to monitor progress):
+```
+bash command="get_output bash_20240418_110000_123456"
+→ Status: RUNNING  (elapsed: 4.2s)
+--- stdout ---
+  Building...
+  [webpack] compiled successfully in 3.1s
+```
+
+List all background processes:
+```
+bash command="list_processes"
+```
+
+Stop a background process:
+```
+bash command="stop_process bash_20240418_110000_123456"
+```
+
+**Pattern for monitoring a build/server:**
+1. Start: `bash command="npm run build" background=True` → get `process_id`
+2. Poll: `bash command="get_output <process_id>"` (repeat every few seconds)
+3. When `Status: DONE(exit=0)` → check final output and proceed
 
 ### Conditional Execution
 ```bash

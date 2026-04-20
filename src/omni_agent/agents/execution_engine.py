@@ -33,7 +33,8 @@ class ExecutionEngine:
         self, 
         user_message: str, 
         session_id: str, 
-        chat_history: List[Dict[str, Any]]
+        chat_history: List[Dict[str, Any]],
+        allowed_skill_names: Optional[List[str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行用户请求的完整流程（支持并行执行）
@@ -88,7 +89,7 @@ class ExecutionEngine:
                 
                 # 并行执行当前层的所有任务
                 layer_results = await self._execute_parallel_tasks(
-                    task_group, context, chat_history, layer_idx
+                    task_group, context, chat_history, layer_idx, allowed_skill_names
                 )
                 
                 # 收集结果并更新上下文
@@ -154,13 +155,14 @@ class ExecutionEngine:
         self, 
         step: PlanStep, 
         context: str,
-        chat_history: List[Dict[str, Any]]
+        chat_history: List[Dict[str, Any]],
+        allowed_skill_names: Optional[List[str]] = None,
     ) -> TaskResult:
         """执行单个任务"""
         try:
             if step.action == "skill":
                 # 执行技能调用
-                return await self._execute_skill_task(step, context)
+                return await self._execute_skill_task(step, context, allowed_skill_names)
                 
             elif step.action == "response":
                 # 直接生成响应
@@ -177,18 +179,29 @@ class ExecutionEngine:
             logger.error(f"Task execution error: {e}")
             return TaskResult(False, None, str(e))
     
-    async def _execute_skill_task(self, step: PlanStep, context: str) -> TaskResult:
+    async def _execute_skill_task(
+        self,
+        step: PlanStep,
+        context: str,
+        allowed_skill_names: Optional[List[str]] = None,
+    ) -> TaskResult:
         """执行技能任务"""
         try:
             skill_name = step.skill
             if not skill_name or skill_name not in self.skill_manager.skills:
                 return TaskResult(False, None, f"技能 {skill_name} 不存在")
+
+            if allowed_skill_names:
+                allowed_set = set(allowed_skill_names)
+                resolved_skill = self.skill_manager.resolve_skill_name_for_tool(skill_name)
+                if skill_name not in allowed_set and (resolved_skill is None or resolved_skill not in allowed_set):
+                    return TaskResult(False, None, f"技能 {skill_name} 当前未在 Skills 面板中启用")
             
             # 获取技能实例
             skill = self.skill_manager.skills[skill_name]
             
             # 执行技能
-            result = await skill.execute(**step.params)
+            result = await skill.safe_execute(**step.params)
             
             if result.success:
                 return TaskResult(True, result.content)
@@ -357,7 +370,8 @@ class ExecutionEngine:
         task_group: List[TaskNode],
         context: str,
         chat_history: List[Dict[str, Any]],
-        layer_idx: int
+        layer_idx: int,
+        allowed_skill_names: Optional[List[str]] = None,
     ) -> List[tuple[TaskNode, TaskResult]]:
         """
         并行执行一组任务
@@ -375,7 +389,7 @@ class ExecutionEngine:
             )
             
             # 使用自愈机制执行任务
-            result = await self._execute_single_task_with_retry(step, context, chat_history)
+            result = await self._execute_single_task_with_retry(step, context, chat_history, allowed_skill_names=allowed_skill_names)
             return (task_node, result)
         
         # 使用asyncio.gather并行执行
@@ -388,7 +402,8 @@ class ExecutionEngine:
         step: PlanStep,
         context: str,
         chat_history: List[Dict[str, Any]],
-        max_retries: int = 5
+        max_retries: int = 5,
+        allowed_skill_names: Optional[List[str]] = None,
     ) -> TaskResult:
         """
         执行单个任务（带自愈重试机制）
@@ -398,7 +413,7 @@ class ExecutionEngine:
                 logger.info(f"执行任务: {step.description} (尝试 {retry+1}/{max_retries})")
                 
                 # 执行任务
-                result = await self._execute_single_task(step, context, chat_history)
+                result = await self._execute_single_task(step, context, chat_history, allowed_skill_names)
                 
                 # 如果成功，直接返回
                 if result.success:

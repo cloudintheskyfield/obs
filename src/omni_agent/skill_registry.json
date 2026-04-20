@@ -1,0 +1,86 @@
+{
+  "version": "1",
+  "updated": "2026-04-18",
+  "skills": [
+    {
+      "name": "translator",
+      "display_name": "Translator · 翻译助手",
+      "description": "Translate text between Chinese, English, Japanese, Korean, French, Spanish and more via free APIs.",
+      "tags": ["translate", "translation", "language", "翻译", "多语言", "chinese", "english", "japanese", "korean"],
+      "category": "productivity",
+      "skill_md": "---\nname: translator\ndescription: Translate text between languages using free APIs\n---\n\n# Translator\n\nTranslate text between languages. Try APIs in order until one works.\n\n## Method 1 — MyMemory (free, no auth)\n```bash\ncurl -s \"https://api.mymemory.translated.net/get?q=<ENCODED_TEXT>&langpair=<SRC>|<TGT>\" \\\n  | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d['responseData']['translatedText'])\"\n```\nExample — translate \"Hello\" from English to Chinese:\n```bash\ncurl -s \"https://api.mymemory.translated.net/get?q=Hello+world&langpair=en|zh\" \\\n  | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d['responseData']['translatedText'])\"\n```\n\n## Method 2 — web_search fallback\nUse web_search with query: `translate \"<text>\" to <language>`\n\n## Language codes\n`en` English · `zh` Chinese · `ja` Japanese · `ko` Korean · `fr` French · `de` German · `es` Spanish · `ru` Russian · `ar` Arabic · `pt` Portuguese\n"
+    },
+    {
+      "name": "pomodoro",
+      "display_name": "Pomodoro Timer · 番茄钟",
+      "description": "Run focused work sessions with the Pomodoro technique — 25 min work, 5 min break, tracked in terminal.",
+      "tags": ["pomodoro", "timer", "focus", "productivity", "番茄钟", "时间管理", "专注"],
+      "category": "productivity",
+      "skill_md": "---\nname: pomodoro\ndescription: Pomodoro focus timer using bash sleep\n---\n\n# Pomodoro Timer\n\nRun timed Pomodoro work/break sessions via bash.\n\n## Start a 25-minute work session (background)\n```bash\n(\n  sleep 1500\n  echo \"DONE\" > /tmp/pomodoro_status\n  echo \"🍅 Pomodoro complete! Time for a break.\"\n) &\necho $! > /tmp/pomodoro.pid\necho \"Pomodoro started (PID $(cat /tmp/pomodoro.pid)). 25 minutes remaining.\"\n```\n\n## Check status\n```bash\nif [ -f /tmp/pomodoro_status ]; then\n  echo \"✅ Pomodoro complete!\"\nelse\n  PID=$(cat /tmp/pomodoro.pid 2>/dev/null)\n  if kill -0 $PID 2>/dev/null; then echo \"⏳ Still running (PID $PID)\"; else echo \"Timer not running\"; fi\nfi\n```\n\n## Cancel\n```bash\nkill $(cat /tmp/pomodoro.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/pomodoro.pid /tmp/pomodoro_status; echo \"Cancelled\"\n```\n\n## Quick short timer (custom minutes)\n```bash\nMINS=5; sleep $((MINS*60)) && echo \"⏰ ${MINS}min timer done\"\n```\n"
+    },
+    {
+      "name": "system-monitor",
+      "display_name": "System Monitor · 系统监控",
+      "description": "Check CPU, memory, disk usage and running processes inside the Docker container.",
+      "tags": ["system", "monitor", "cpu", "memory", "disk", "performance", "系统监控", "性能", "资源"],
+      "category": "utility",
+      "skill_md": "---\nname: system-monitor\ndescription: Monitor CPU, memory, disk and processes via bash\n---\n\n# System Monitor\n\nCheck system resource usage via bash commands inside the container.\n\n## CPU & Memory summary\n```bash\necho \"=== CPU ===\"; top -bn1 | grep -E \"^(%Cpu|Cpu)\" | head -3\necho \"=== Memory ===\"; free -h\necho \"=== Load ===\"; uptime\n```\n\n## Disk usage\n```bash\ndf -h --output=source,size,used,avail,pcent,target | head -20\n```\n\n## Top processes by CPU\n```bash\nps aux --sort=-%cpu | head -15\n```\n\n## Top processes by memory\n```bash\nps aux --sort=-%mem | head -10\n```\n\n## Network connections\n```bash\nss -tuln 2>/dev/null || netstat -tuln 2>/dev/null\n```\n\n## All-in-one snapshot\n```bash\necho \"CPU:\"; grep 'cpu ' /proc/stat | awk '{usage=($2+$4)*100/($2+$3+$4+$5)} END {print usage \"%\"}';\necho \"MEM:\"; free -h | grep Mem;\necho \"DISK:\"; df -h / | tail -1;\necho \"PROCS:\"; ps aux | wc -l\n```\n"
+    },
+    {
+      "name": "ip-lookup",
+      "display_name": "IP Lookup · IP查询",
+      "description": "Look up geolocation, ISP, and network info for any IP address or your own public IP.",
+      "tags": ["ip", "geolocation", "network", "lookup", "ip查询", "地理位置", "whois"],
+      "category": "utility",
+      "skill_md": "---\nname: ip-lookup\ndescription: Look up IP geolocation and network info\n---\n\n# IP Lookup\n\n## Look up any IP address\n```bash\ncurl -s \"http://ip-api.com/json/<IP_ADDRESS>?fields=status,country,regionName,city,isp,org,as,query\" \\\n  | python3 -m json.tool\n```\n\n## Get your own public IP\n```bash\ncurl -s https://api.ipify.org\n```\n\n## Full details on your public IP\n```bash\ncurl -s \"http://ip-api.com/json/\" | python3 -m json.tool\n```\n\n## Batch lookup (multiple IPs)\n```bash\nfor IP in 8.8.8.8 1.1.1.1; do\n  echo \"--- $IP ---\"\n  curl -s \"http://ip-api.com/json/$IP?fields=country,city,isp,query\" | python3 -m json.tool\ndone\n```\n\nReplace `<IP_ADDRESS>` with the actual IP or hostname.\n"
+    },
+    {
+      "name": "uuid-gen",
+      "display_name": "UUID Generator · UUID生成器",
+      "description": "Generate UUIDs (v4), random hex tokens, and secure passwords of any length.",
+      "tags": ["uuid", "random", "token", "password", "generator", "生成", "随机", "密码"],
+      "category": "developer",
+      "skill_md": "---\nname: uuid-gen\ndescription: Generate UUIDs, random tokens and secure passwords\n---\n\n# UUID & Random Generator\n\n## Generate UUID v4\n```bash\npython3 -c \"import uuid; print(uuid.uuid4())\"\n```\n\n## Generate multiple UUIDs\n```bash\npython3 -c \"import uuid; [print(uuid.uuid4()) for _ in range(5)]\"\n```\n\n## Secure random hex token (64 chars)\n```bash\npython3 -c \"import secrets; print(secrets.token_hex(32))\"\n```\n\n## URL-safe token\n```bash\npython3 -c \"import secrets; print(secrets.token_urlsafe(32))\"\n```\n\n## Random password (letters + digits + symbols)\n```bash\npython3 -c \"\nimport secrets, string\nchars = string.ascii_letters + string.digits + '!@#\\$%^&*'\nprint(''.join(secrets.choice(chars) for _ in range(20)))\n\"\n```\n\n## Bulk generation\n```bash\npython3 -c \"import uuid, secrets; [print(f'{uuid.uuid4()} | {secrets.token_hex(16)}') for _ in range(3)]\"\n```\n"
+    },
+    {
+      "name": "json-tools",
+      "display_name": "JSON Tools · JSON工具",
+      "description": "Format, validate, compact, and query JSON data from files or stdin.",
+      "tags": ["json", "format", "validate", "query", "data", "工具", "格式化", "developer"],
+      "category": "developer",
+      "skill_md": "---\nname: json-tools\ndescription: Format, validate and query JSON data via bash\n---\n\n# JSON Tools\n\n## Pretty-print JSON string\n```bash\necho '<JSON_STRING>' | python3 -m json.tool\n```\n\n## Pretty-print JSON file\n```bash\npython3 -m json.tool <FILE_PATH>\n```\n\n## Validate JSON file\n```bash\npython3 -c \"import json,sys; json.load(open('<FILE>')); print('✅ Valid JSON')\" 2>&1\n```\n\n## Extract a field\n```bash\necho '<JSON>' | python3 -c \"import json,sys; d=json.load(sys.stdin); print(d['<KEY>'])\"\n```\n\n## Compact / minify JSON\n```bash\npython3 -c \"import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, separators=(',',':')))\"\n```\n\n## Sort keys\n```bash\npython3 -c \"import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, indent=2, ensure_ascii=False))\"\n```\n\n## Count items in array\n```bash\necho '<JSON_ARRAY>' | python3 -c \"import json,sys; print(len(json.load(sys.stdin)))\"\n```\n"
+    },
+    {
+      "name": "git-assistant",
+      "display_name": "Git Assistant · Git助手",
+      "description": "Common git workflows: status overview, diff, branch management, log summary, and commit helpers.",
+      "tags": ["git", "version control", "commit", "branch", "代码管理", "版本控制", "diff", "log"],
+      "category": "developer",
+      "skill_md": "---\nname: git-assistant\ndescription: Git workflow helper via bash\n---\n\n# Git Assistant\n\nHelper for common git operations. Use `ls /host-home` to find repo paths first.\n\n## Quick status overview\n```bash\nREPO=<REPO_PATH>\ngit -C $REPO status --short && echo \"---\" && git -C $REPO log --oneline -5\n```\n\n## View uncommitted changes\n```bash\ngit -C <REPO_PATH> diff --stat HEAD\n```\n\n## Full diff of changes\n```bash\ngit -C <REPO_PATH> diff HEAD\n```\n\n## Commit all changes\n```bash\ngit -C <REPO_PATH> add -A && git -C <REPO_PATH> commit -m \"<message>\"\n```\n\n## Create and switch to new branch\n```bash\ngit -C <REPO_PATH> checkout -b <branch-name>\n```\n\n## List branches\n```bash\ngit -C <REPO_PATH> branch -av\n```\n\n## Pretty commit log\n```bash\ngit -C <REPO_PATH> log --oneline --graph --decorate -20\n```\n\n## Search commits by keyword\n```bash\ngit -C <REPO_PATH> log --oneline --grep=\"<keyword>\" -20\n```\n\n## Show files changed in last commit\n```bash\ngit -C <REPO_PATH> show --stat HEAD\n```\n"
+    },
+    {
+      "name": "docker-helper",
+      "display_name": "Docker Helper · Docker助手",
+      "description": "Manage Docker containers, images, and volumes on the host machine via the Docker socket.",
+      "tags": ["docker", "container", "image", "devops", "容器", "部署", "compose"],
+      "category": "devops",
+      "skill_md": "---\nname: docker-helper\ndescription: Manage Docker containers and images via bash\n---\n\n# Docker Helper\n\nRun Docker commands via bash. The container has access to the host Docker socket at `/var/run/docker.sock`.\n\n## List running containers\n```bash\ndocker ps --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"\n```\n\n## List all containers\n```bash\ndocker ps -a --format \"table {{.Names}}\\t{{.Status}}\\t{{.Image}}\"\n```\n\n## View container logs\n```bash\ndocker logs <container_name> --tail=50 -f\n```\n\n## Restart a container\n```bash\ndocker restart <container_name>\n```\n\n## Execute command in container\n```bash\ndocker exec -it <container_name> <command>\n```\n\n## List images\n```bash\ndocker images --format \"table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}\"\n```\n\n## Disk usage overview\n```bash\ndocker system df\n```\n\n## Docker Compose — restart a service\n```bash\ncd <compose_dir> && docker compose restart <service_name>\n```\n\n## Docker Compose — view all service logs\n```bash\ncd <compose_dir> && docker compose logs --tail=50\n```\n"
+    },
+    {
+      "name": "countdown",
+      "display_name": "Countdown Timer · 倒计时",
+      "description": "Show a live countdown in terminal for any number of minutes or seconds.",
+      "tags": ["timer", "countdown", "time", "计时", "倒计时", "提醒"],
+      "category": "utility",
+      "skill_md": "---\nname: countdown\ndescription: Live countdown timer via bash\n---\n\n# Countdown Timer\n\n## Countdown with live display (seconds)\n```bash\nfor i in $(seq <SECONDS> -1 1); do\n  printf \"\\r⏳ %02d:%02d remaining...\" $((i/60)) $((i%60))\n  sleep 1\ndone\necho -e \"\\n⏰ Time's up!\"\n```\n\n## Quick N-minute timer\n```bash\nMINS=10\nfor i in $(seq $((MINS*60)) -1 1); do\n  printf \"\\r⏳ %02d:%02d\" $((i/60)) $((i%60))\n  sleep 1\ndone\necho -e \"\\n⏰ Done!\"\n```\n\n## Silent background countdown (check later)\n```bash\nMINS=5\n(\n  sleep $((MINS*60))\n  echo \"DONE\" > /tmp/countdown_done\n) &\necho \"Timer started: ${MINS}min. Check /tmp/countdown_done for completion.\"\n```\n\n## Check background timer\n```bash\ncat /tmp/countdown_done 2>/dev/null && echo \"Complete!\" || echo \"Still running...\"\n```\n"
+    },
+    {
+      "name": "http-tester",
+      "display_name": "HTTP Tester · HTTP测试",
+      "description": "Test HTTP endpoints: GET/POST/PUT/DELETE requests with headers, body, timing, and response inspection.",
+      "tags": ["http", "api", "curl", "test", "rest", "request", "接口测试", "API测试"],
+      "category": "developer",
+      "skill_md": "---\nname: http-tester\ndescription: Test HTTP endpoints with curl\n---\n\n# HTTP Tester\n\nTest HTTP endpoints with detailed output. Always use `host.docker.internal` instead of `127.0.0.1` for local services.\n\n## GET request\n```bash\ncurl -v -s \"<URL>\" | python3 -m json.tool 2>/dev/null || cat\n```\n\n## POST with JSON body\n```bash\ncurl -s -X POST \"<URL>\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '<JSON_BODY>' \\\n  | python3 -m json.tool\n```\n\n## PUT request\n```bash\ncurl -s -X PUT \"<URL>\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '<JSON_BODY>'\n```\n\n## DELETE request\n```bash\ncurl -s -X DELETE \"<URL>\"\n```\n\n## With auth header\n```bash\ncurl -s -H \"Authorization: Bearer <TOKEN>\" \"<URL>\"\n```\n\n## Measure response time\n```bash\ncurl -s -o /dev/null -w \"HTTP %{http_code} | Time: %{time_total}s | Size: %{size_download} bytes\" \"<URL>\"\n```\n\n## Test multiple endpoints\n```bash\nfor URL in <URL1> <URL2>; do\n  CODE=$(curl -s -o /dev/null -w \"%{http_code}\" \"$URL\")\n  echo \"$CODE $URL\"\ndone\n```\n\n**Remember**: Use `http://host.docker.internal:<PORT>` for local services running on the host.\n"
+    }
+  ]
+}

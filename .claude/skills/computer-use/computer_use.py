@@ -33,7 +33,7 @@ class ComputerUseSkill(BaseSkill):
     def __init__(self, screenshot_dir: str = "screenshots"):
         super().__init__(
             name="computer",
-            description="Use a mouse and keyboard to interact with a computer, and take screenshots. Actions: screenshot, mouse_move, left_click, right_click, middle_click, double_click, left_click_drag, type, key, cursor_position"
+            description="Use a mouse and keyboard to interact with a computer, open web pages, and take screenshots. Actions: screenshot, navigate, mouse_move, left_click, right_click, middle_click, double_click, left_click_drag, type, key, cursor_position"
         )
         
         self.screenshot_dir = Path(screenshot_dir)
@@ -49,7 +49,7 @@ class ComputerUseSkill(BaseSkill):
         self.add_parameter(
             "action",
             "str",
-            "The action to perform. Options: screenshot, mouse_move, left_click, right_click, middle_click, double_click, left_click_drag, type, key, cursor_position",
+            "The action to perform. Options: screenshot, navigate, mouse_move, left_click, right_click, middle_click, double_click, left_click_drag, type, key, cursor_position",
             True
         )
         self.add_parameter(
@@ -62,6 +62,12 @@ class ComputerUseSkill(BaseSkill):
             "text",
             "str",
             "The text to type. Required for 'type' action",
+            False
+        )
+        self.add_parameter(
+            "url",
+            "str",
+            "The URL to open. Required for 'navigate' action",
             False
         )
     
@@ -445,11 +451,26 @@ class ComputerUseSkill(BaseSkill):
                     content="Current cursor position retrieved",
                     metadata={"action": action}
                 )
+
+            elif action == "navigate":
+                url = kwargs.get("url")
+                if not url:
+                    return SkillResult(
+                        success=False,
+                        error="Navigate action requires url parameter"
+                    )
+                screenshot = await self.navigate_to(url)
+                return SkillResult(
+                    success=True,
+                    base64_image=screenshot,
+                    content=f"Navigated to URL: {url}",
+                    metadata={"action": action, "url": url}
+                )
             
             else:
                 return SkillResult(
                     success=False,
-                    error=f"Unsupported action: {action}. Supported actions: screenshot, mouse_move, left_click, right_click, double_click, type, key, cursor_position"
+                    error=f"Unsupported action: {action}. Supported actions: screenshot, mouse_move, left_click, right_click, double_click, type, key, cursor_position, navigate"
                 )
         
         except Exception as e:

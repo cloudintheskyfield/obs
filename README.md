@@ -134,53 +134,98 @@ chmod +x scripts/build_macos_app.sh
 
 ## 🏗️ 架构设计
 
-### Claude Skills三级架构
+> 参考 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) Harness Engineering 核心设计。
+> Agency comes from the model. The harness makes agency real.
 
-项目严格按照Claude官方Skills架构设计：
+### 功能流程总览
+
+```
+用户输入 (Web UI / macOS Desktop)
+    ↓ HTTP / SSE streaming
+FastAPI API 层
+    ↓
+StreamingAgent — 核心 Agent Loop
+    while True:
+        response = vllm_client.chat(messages, tools)
+        if stop_reason != "tool_use": break
+        results = dispatch_tools(response.tool_calls)
+        messages.append(tool_results)
+        yield SSE chunks → 前端实时渲染
+
+    Mode Router:
+    ├── agent  → 原生工具调用循环（默认）
+    ├── plan   → PlanAgent → TaskGraph DAG → Human确认
+    ├── review → ExecutionEngine 结构化执行转录
+    └── battle → 直接回答 vs 工具辅助回答 → LLM裁判
+    ↓
+SkillManager (工具分发)      PlanAgent + ExecutionEngine
+bash / str_replace_editor    ↓ LLM生成ExecutionPlan
+web_search / computer        ↓ NetworkX DAG依赖分析
+code_sandbox / weather       ↓ 分层并行: asyncio.gather
+                             ↓ 自愈重试 (最多5次 + LLM修复)
+    ↓
+3-Level Skill System
+    Level 1: SKILL.md YAML元数据 (始终加载)
+    Level 2: SKILL.md 正文指令  (触发时注入 system prompt)
+    Level 3: Python 实现代码    (按需执行)
+    ↓
+Context Compaction (3层压缩)
+    Sliding Window → Checkpoint → LLM Summary
+    ↓
+Session Persistence
+    logs/chat_sessions/  logs/llm_traces/  logs/context_cache/
+```
+
+### learn-claude-code → OBS Code 机制映射
+
+| Harness 机制 | learn-claude-code | OBS Code 实现 |
+|---|---|---|
+| Agent Loop | s01: `while + stop_reason` | `StreamingAgent` 核心循环 + SSE 推流 |
+| Tool Use | s02: dispatch map | `SkillManager.dispatch()` |
+| Plan-first | s03: TodoWrite | `PlanAgent.create_plan()` → `ExecutionPlan` |
+| Subagents | s04: 独立 messages[] | `ExpertAgentOrchestrator` 六大专家独立上下文 |
+| Skills | s05: on-demand SKILL.md | 3-Level Skill System |
+| Context Compact | s06: 3层压缩 | `session_context_cache` + `logs/context_cache/` |
+| Task Graph | s07: 文件化DAG | `TaskGraph` (NetworkX) + 拓扑分层 |
+| Background Tasks | s08: daemon threads | `asyncio.gather()` 并行执行层 |
+| Agent Teams | s09: JSONL 信箱 | `ExpertAgentOrchestrator` + 任务路由 |
+| Team Protocols | s10: Request-Response FSM | `plan` / `review` 执行协议 |
+| Autonomous | s11: 自主认领 | `ExecutionEngine` 自愈重试 + LLM修复 |
+| Worktree | s12: 独立目录 | Workspace切换 + Code Sandbox Docker隔离 |
+
+### Expert Agent 系统
+
+```
+用户任务 → ExpertAgentOrchestrator.select_expert(关键词路由)
+    ├── ProductManagerAgent   → web_search
+    ├── ArchitectAgent        → web_search, str_replace_editor
+    ├── BackendDeveloperAgent → str_replace_editor, bash, web_search
+    ├── FrontendDeveloperAgent→ str_replace_editor, web_search
+    ├── QAReviewerAgent       → bash, str_replace_editor, web_search
+    └── TravelPlannerAgent    → web_search, str_replace_editor
+    ↓
+独立 agent loop → 结果聚合 → 返回主 StreamingAgent
+```
+
+### Skills 三级架构
 
 ```
 .claude/skills/
-├── computer-use/           # 计算机视觉操作技能
-│   ├── SKILL.md           # Level 1: 元数据 + Level 2: 指令
-│   ├── computer_use.py    # Level 3: Python实现
-│   └── examples/          # 使用示例
-├── file-operations/        # 文件操作技能  
+├── computer-use/
+│   ├── SKILL.md      # Level 1: YAML元数据  Level 2: 操作指令
+│   └── computer_use.py  # Level 3: Python实现
+├── file-operations/
 │   ├── SKILL.md
-│   ├── text_editor.py
-│   └── examples/
-└── terminal/              # 终端执行技能
-    ├── SKILL.md
-    ├── bash.py
-    └── examples/
+│   └── text_editor.py
+├── terminal/
+│   ├── SKILL.md
+│   └── bash.py
+├── code-sandbox/     # Docker隔离执行 (--network none, --memory 256m)
+├── web-search/
+└── weather/
 ```
 
-#### Level 1: 元数据 (始终加载)
-```yaml
----
-name: computer-use
-description: Use mouse and keyboard to interact with computer
----
-```
-
-#### Level 2: 指令 (触发时加载)
-```markdown
-# Computer Use Skill
-
-使用此技能通过视觉界面与计算机交互...
-
-## Quick Start
-## Available Actions  
-## Workflows
-## Best Practices
-```
-
-#### Level 3: 代码 (按需加载)
-```python
-class ComputerUseSkill(BaseSkill):
-    async def execute(self, **kwargs):
-        # 具体实现逻辑
-        pass
-```
+详细架构文档见 [`.zencoder/docs/architecture.md`](.zencoder/docs/architecture.md)
 
 ## 🔧 技能详解
 
@@ -419,13 +464,23 @@ curl http://127.0.0.1:8000/health
 
 ## 🎯 路线图
 
-- [ ] 集成VLLM多模态推理
-- [ ] 支持更多文件格式
-- [ ] 增强网页爬虫能力
-- [ ] 添加数据库操作技能
-- [ ] 支持插件市场
-- [ ] 移动端适配
+按 learn-claude-code harness 完备性标准排优先级：
+
+**高优先级**
+- [ ] Human-in-the-loop — `plan` 模式生成 DAG 后前端确认再执行 (s10 pattern)
+- [ ] PostgreSQL 会话持久化 — 替换内存存储，支持重启恢复 (s07 pattern)
+- [ ] Artifacts 面板 — Monaco Editor + iframe 预览 + Mermaid DAG 实时渲染
+
+**中优先级**
+- [ ] Autonomous heartbeat — 定时扫描待完成任务，自主认领执行 (s11 pattern)
+- [ ] Worktree 隔离 — 并行 Expert Agent 任务各自独立工作目录 (s12 pattern)
+- [ ] MCP 协议 — 将技能暴露为标准 MCP tools，接入外部 Agent 生态
+
+**低优先级**
+- [ ] 多模态图像生成 (Stable Diffusion)
+- [ ] 移动端适配 / PWA
 - [ ] 多用户支持
+- [ ] 插件市场
 
 ## 📄 许可证
 

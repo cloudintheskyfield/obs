@@ -4,16 +4,17 @@
 import asyncio
 import os
 import sys
+import uuid
 from pathlib import Path
 
 # 添加项目根目录到path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from omni_agent.skills import SkillManager, SkillResult
+from omni_agent.skills import SkillManager
 
 
-async def test_text_editor_skill():
+async def _test_text_editor_skill():
     """测试文本编辑Skill"""
     print("Testing Text Editor Skill...")
     
@@ -26,11 +27,13 @@ async def test_text_editor_skill():
     
     manager = SkillManager(config)
     
+    test_file = f"test_skill_suite_{uuid.uuid4().hex[:8]}.txt"
+
     # 创建测试文件
     result = await manager.execute_skill(
-        "text_editor",
+        "str_replace_editor",
         command="create",
-        path="test.txt",
+        path=test_file,
         file_text="Hello World!\nThis is a test file.\nLine 3 content."
     )
     
@@ -41,9 +44,9 @@ async def test_text_editor_skill():
     
     # 查看文件
     result = await manager.execute_skill(
-        "text_editor",
+        "str_replace_editor",
         command="view", 
-        path="test.txt"
+        path=test_file
     )
     
     print(f"View file result: {result.success}")
@@ -54,9 +57,9 @@ async def test_text_editor_skill():
     
     # 字符串替换
     result = await manager.execute_skill(
-        "text_editor",
+        "str_replace_editor",
         command="str_replace",
-        path="test.txt",
+        path=test_file,
         old_str="Hello World!",
         new_str="Hello Claude Skills!"
     )
@@ -69,7 +72,7 @@ async def test_text_editor_skill():
     return True
 
 
-async def test_bash_skill():
+async def _test_bash_skill():
     """测试Bash Skill"""
     print("\nTesting Bash Skill...")
     
@@ -95,10 +98,7 @@ async def test_bash_skill():
         print(f"Error: {result.error}")
     
     # 测试列出文件
-    result = await manager.execute_skill(
-        "bash",
-        command="dir"  # Windows equivalent of ls
-    )
+    result = await manager.execute_skill("bash", command="ls")
     
     print(f"Dir command result: {result.success}")
     if result.success:
@@ -110,7 +110,7 @@ async def test_bash_skill():
     return True
 
 
-async def test_skill_manager():
+async def _test_skill_manager():
     """测试Skills管理器功能"""
     print("\nTesting Skill Manager...")
     
@@ -138,7 +138,7 @@ async def test_skill_manager():
     print(f"Health check: {'OK' if health['overall_healthy'] else 'FAILED'}")
     
     # 获取Skill详细信息
-    info = manager.get_skill_info("text_editor")
+    info = manager.get_skill_info("str_replace_editor")
     if info:
         print(f"Text Editor info: {len(info['parameters'])} parameters")
         print(f"  Examples: {len(info['usage_examples'])}")
@@ -160,9 +160,9 @@ async def main():
         # 运行测试
         success = True
         
-        success &= await test_skill_manager()
-        success &= await test_text_editor_skill() 
-        success &= await test_bash_skill()
+        success &= await _test_skill_manager()
+        success &= await _test_text_editor_skill() 
+        success &= await _test_bash_skill()
         
         print("\n" + "=" * 50)
         if success:
@@ -182,3 +182,7 @@ async def main():
 if __name__ == "__main__":
     success = asyncio.run(main())
     sys.exit(0 if success else 1)
+
+
+def test_skill_manager_suite():
+    assert asyncio.run(main())

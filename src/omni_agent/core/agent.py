@@ -193,7 +193,8 @@ class OmniAgent:
         if not self.web_agent:
             self.web_agent = WebAgent(
                 vllm_client=self.vllm_client,
-                config=self.config.web_browsing
+                config=self.config.web_browsing,
+                skill_manager=self.skill_manager,
             )
             await self.web_agent.__aenter__()
         

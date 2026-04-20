@@ -131,8 +131,8 @@ class VLLMConfig(BaseModel):
     base_url: str = "https://api.minimaxi.com/v1/chat/completions"
     api_key: str = "dummy_key"
     model: str = "MiniMax-M2"
-    timeout: int = 60
-    max_retries: int = 3
+    timeout: int = 35
+    max_retries: int = 2
 
 
 class WebBrowsingConfig(BaseModel):

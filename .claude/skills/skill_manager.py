@@ -1,8 +1,9 @@
 """Skills管理器 - 管理Claude官方Skills"""
 import os
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 
@@ -21,6 +22,7 @@ class SkillManager:
         "code_sandbox": "code-sandbox",
         "computer": "computer-use",
         "weather": "weather",
+        "skill_manager": "skill-manager",
     }
     
     def __init__(self, config: Dict[str, Any]):
@@ -61,15 +63,21 @@ class SkillManager:
                         # 关联SKILL.md定义
                         skill_instance.skill_definition = skill_def
                         
-                        # Skip regular web_search if we already have advanced web_search loaded
+                        # Skip regular web_search if we already have advanced web_search loaded,
+                        # but associate the SKILL.md definition so it doesn't warn as missing
                         if skill_instance.name == "web_search" and "web_search" in self.skills:
+                            existing = self.skills["web_search"]
+                            if not getattr(existing, "skill_definition", None):
+                                existing.skill_definition = skill_def
+                                if "advanced_web_search" in self.skills:
+                                    self.skills["advanced_web_search"].skill_definition = skill_def
                             logger.info(f"Skipping regular web_search, using enhanced version")
                             continue
                             
                         self.skills[skill_instance.name] = skill_instance
                         logger.info(f"Initialized skill from .claude/skills: {skill_name} -> {skill_instance.name}")
                     else:
-                        logger.warning(f"Failed to create instance for skill: {skill_name}")
+                        logger.debug(f"Skill '{skill_name}' loaded as definition-only (no Python tools, instructions only)")
                         
                 except Exception as e:
                     logger.error(f"Error initializing skill {skill_name}: {e}")
@@ -110,8 +118,8 @@ class SkillManager:
             except Exception as e:
                 logger.error(f"Failed to create instance from Level 3 implementation for {skill_name}: {e}")
         
-        # 如果没有Level 3实现，返回None（或可以创建一个基础的skill实例）
-        logger.warning(f"No Level 3 implementation found for skill: {skill_name}")
+        # No Level 3 implementation — this is a documentation/instructions-only skill, which is valid
+        logger.debug(f"Skill '{skill_name}' has no Python implementation; will be used as context instructions only")
         return None
     
     def get_skill(self, name: str) -> Optional[BaseSkill]:
@@ -480,8 +488,56 @@ class SkillManager:
             })
         return entries
 
+    @staticmethod
+    def _read_skill_meta(skill_dir: Optional[Path]) -> dict:
+        """Read _meta.json if present; return {} otherwise."""
+        if skill_dir is None:
+            return {}
+        meta_file = skill_dir / "_meta.json"
+        if meta_file.exists():
+            try:
+                return json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    @staticmethod
+    def _skill_installed_at(skill_dir: Optional[Path], meta: Optional[dict] = None) -> str:
+        """Return ISO timestamp for when a skill was installed."""
+        if meta and meta.get("installed_at"):
+            return meta["installed_at"]
+        if skill_dir is None:
+            return "1970-01-01T00:00:00+00:00"
+        skill_md = skill_dir / "SKILL.md"
+        target = skill_md if skill_md.exists() else skill_dir
+        try:
+            mtime = target.stat().st_mtime
+            return datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            return "1970-01-01T00:00:00+00:00"
+
+    @staticmethod
+    def _is_protected(skill_dir: Optional[Path], meta: Optional[dict] = None) -> bool:
+        """A skill is protected if _meta.json has protected=true OR SKILL.md frontmatter has protected: true."""
+        if meta and meta.get("protected"):
+            return True
+        if skill_dir is None:
+            return False
+        skill_md_file = skill_dir / "SKILL.md"
+        if skill_md_file.exists():
+            try:
+                text = skill_md_file.read_text(encoding="utf-8")
+                # Quick frontmatter check
+                import re as _re
+                m = _re.search(r"^protected:\s*true", text, _re.MULTILINE | _re.IGNORECASE)
+                if m:
+                    return True
+            except Exception:
+                pass
+        return False
+
     def get_skill_catalog(self) -> List[Dict[str, Any]]:
-        """Return available skills with their mapped runtime tools."""
+        """Return available skills sorted by install time (oldest first)."""
         catalog = []
         metadata_map = self.list_skill_metadata()
         tool_map: Dict[str, List[str]] = {}
@@ -492,12 +548,78 @@ class SkillManager:
 
         for skill_name, metadata in metadata_map.items():
             definition = self.skill_loader.skills.get(skill_name)
+            skill_dir = definition.skill_dir if definition else None
+            meta = self._read_skill_meta(skill_dir)
             tool_names = sorted(tool_map.get(skill_name, []))
+            installed_at = self._skill_installed_at(skill_dir, meta)
+            protected = self._is_protected(skill_dir, meta)
             catalog.append({
                 "name": skill_name,
                 "description": metadata.get("description", ""),
-                "location": str(definition.skill_dir / "SKILL.md") if definition else "",
+                "location": str(skill_dir / "SKILL.md") if skill_dir else "",
                 "tool_names": tool_names,
+                "installed_at": installed_at,
+                "protected": protected,
             })
 
-        return sorted(catalog, key=lambda item: item["name"].lower())
+        # Default: built-ins (by mtime = old) first, newly installed last
+        return sorted(catalog, key=lambda item: item["installed_at"])
+
+    # ------------------------------------------------------------------ #
+    #  Hot-reload & install                                                #
+    # ------------------------------------------------------------------ #
+
+    def reload_skills(self) -> Dict[str, Any]:
+        """Hot-reload all skills from disk without restarting the server."""
+        before = set(self.skills.keys())
+        self.skills = {}
+        self.skill_loader = SkillLoader(skills_root=self.config.get("skills_dir"))
+        self._initialize_skills()
+        after = set(self.skills.keys())
+        added = sorted(after - before)
+        removed = sorted(before - after)
+        logger.info(f"Skills reloaded: +{added} -{removed}")
+        return {"added": added, "removed": removed, "total": len(self.skills)}
+
+    def install_skill(self, name: str, skill_md: str, python_code: str = "") -> Dict[str, Any]:
+        """
+        Install a new skill from SKILL.md content (and optional Python implementation).
+        Creates the skill directory under .claude/skills/<name>/ then hot-reloads.
+        Returns the updated catalog entry or raises on error.
+        """
+        skills_root = self.skill_loader.skills_root if hasattr(self.skill_loader, "skills_root") else None
+        if skills_root is None:
+            # Fall back: derive from existing skill locations
+            for defn in self.skill_loader.skills.values():
+                skills_root = defn.skill_dir.parent
+                break
+        if skills_root is None:
+            raise RuntimeError("Cannot determine skills root directory")
+
+        skill_dir = Path(skills_root) / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+
+        skill_md_path = skill_dir / "SKILL.md"
+        skill_md_path.write_text(skill_md, encoding="utf-8")
+
+        if python_code.strip():
+            py_path = skill_dir / f"{name.replace('-', '_')}.py"
+            py_path.write_text(python_code, encoding="utf-8")
+
+        # Record install timestamp (preserved across reloads)
+        meta_file = skill_dir / "_meta.json"
+        if not meta_file.exists():
+            meta_file.write_text(
+                json.dumps({"installed_at": datetime.now(tz=timezone.utc).isoformat()}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        logger.info(f"Installed skill '{name}' to {skill_dir}")
+        reload_info = self.reload_skills()
+        catalog = self.get_skill_catalog()
+        installed = next((s for s in catalog if s["name"] == name), None)
+        return {
+            "skill_dir": str(skill_dir),
+            "reload": reload_info,
+            "catalog_entry": installed,
+        }
