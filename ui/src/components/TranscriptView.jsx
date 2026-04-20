@@ -6,10 +6,25 @@ import {
     transcriptRole
 } from "../lib/formatting.js";
 
-export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, onReplay, requestIndicator }) {
+const IMAGE_TOKEN_RE = /\[\[image:[^\]]+\]\]/g;
+
+function stripImageTokens(text) {
+    return (text || "").replace(IMAGE_TOKEN_RE, "").trim();
+}
+
+export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, requestIndicator, workingTimerLabel, completedLabel }) {
     const lastUserIndex = (() => {
         for (let index = transcript.length - 1; index >= 0; index -= 1) {
             if (transcript[index]?.role === "user") {
+                return index;
+            }
+        }
+        return -1;
+    })();
+
+    const lastNonUserIndex = (() => {
+        for (let index = transcript.length - 1; index >= 0; index -= 1) {
+            if (transcript[index]?.role !== "user") {
                 return index;
             }
         }
@@ -29,13 +44,17 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                         {transcript.map((entry, index) => {
                             const isThinking = entry.kind === "thinking_text";
                             const isCompressionNotice = entry.kind === "system_notice" && entry.phase === "compression";
+                            const isCompressionComplete = entry.compressionState === "complete";
                             const isExpanded = Boolean(expandedThinking[entry.id]);
                             const collapsed = isThinking && !isExpanded;
-                            const bodyHtml = entry.kind === "thinking_text" && entry.pendingPlaceholder && !String(entry.content || "").trim()
-                                ? null
-                                : ((entry.kind === "assistant_text" || entry.kind === "system_notice" || entry.kind === "tool_result" || entry.kind === "thinking_text")
-                                    ? renderMarkdown(entry.content)
-                                    : null);
+                            // While streaming, skip markdown parsing entirely – React updates
+                            // plain text nodes incrementally without replacing the DOM, which
+                            // eliminates the per-token flicker caused by dangerouslySetInnerHTML.
+                            const isRenderableKind = entry.kind === "assistant_text" || entry.kind === "system_notice" || entry.kind === "tool_result" || entry.kind === "thinking_text";
+                            const isPendingThinking = entry.kind === "thinking_text" && entry.pendingPlaceholder && !String(entry.content || "").trim();
+                            const bodyHtml = (!isPendingThinking && isRenderableKind && !entry.streaming)
+                                ? renderMarkdown(entry.content)
+                                : null;
 
                             return (
                             <React.Fragment key={entry.id}>
@@ -83,6 +102,17 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                     ) : null}
 
                                     <div className={`message-body${entry.streaming ? " is-streaming" : ""}${collapsed ? " collapsed" : ""}`}>
+                                        {/* elapsed time pinned to bottom-right of the message bubble */}
+                                        {(() => {
+                                            const label = entry.elapsedLabel
+                                                || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null);
+                                            return label ? (
+                                                <div className="completed-elapsed" aria-label={`Completed in ${label}`}>
+                                                    <i className="fas fa-check-circle" aria-hidden="true" />
+                                                    <span>{label}</span>
+                                                </div>
+                                            ) : null;
+                                        })()}
                                         {entry.kind === "thinking_text" && entry.pendingPlaceholder && !String(entry.content || "").trim() ? (
                                             <div className="thinking-pending">
                                                 <span className="thinking-pending-label">Waiting for first reasoning token</span>
@@ -96,29 +126,42 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                             <div className="compression-inline" aria-live="polite">
                                                 <span className="compression-line" aria-hidden="true" />
                                                 <span className="compression-copy">
-                                                    {String(entry.content || "").toLowerCase().includes("compacted") ? (
+                                                    {isCompressionComplete ? (
                                                         <i className="fas fa-check compression-check" />
                                                     ) : (
                                                         <span className="compression-spinner"><i className="fas fa-spinner" /></span>
                                                     )}
-                                                    <span>{entry.content || "Automatically compacting context"}</span>
+                                                    <span>{entry.content || (isCompressionComplete ? "Context compacted" : "Compressing conversation context")}</span>
                                                 </span>
                                                 <span className="compression-line" aria-hidden="true" />
                                             </div>
+                                        ) : entry.isError ? (
+                                            <pre className="error-body">{entry.content}</pre>
                                         ) : bodyHtml !== null ? (
                                             <div dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+                                        ) : entry.streaming && isRenderableKind ? (
+                                            // Streaming: plain text via React text node avoids per-token DOM replacement
+                                            <div className="streaming-plain-text">{entry.content}</div>
                                         ) : (
-                                            <div>{entry.content}</div>
+                                            <div>
+                                                {stripImageTokens(entry.content) ? <span>{stripImageTokens(entry.content)}</span> : null}
+                                                {Array.isArray(entry.images) && entry.images.length > 0 ? (
+                                                    <div className="message-image-chips">
+                                                        {entry.images.map((img) => (
+                                                            <span key={img.id} className="message-image-chip">
+                                                                {img.dataUrl ? (
+                                                                    <img src={img.dataUrl} alt={img.name || "image"} className="message-image-thumb" />
+                                                                ) : (
+                                                                    <i className="fas fa-image" />
+                                                                )}
+                                                                <span className="message-image-chip-name">{img.name || "image"}</span>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                ) : null}
+                                            </div>
                                         )}
                                     </div>
-
-                                    {entry.role === "user" ? (
-                                        <div className="message-actions">
-                                            <button type="button" className="message-toggle" onClick={() => onReplay(entry.content || "")}>
-                                                Replay
-                                            </button>
-                                        </div>
-                                    ) : null}
 
                                 </article>
 
@@ -128,8 +171,12 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                             <i className="fas fa-spinner" />
                                         </span>
                                         <span>{requestIndicator.label || "Working on your request"}</span>
+                                        {workingTimerLabel ? (
+                                            <span className="request-loading-timer">{workingTimerLabel}</span>
+                                        ) : null}
                                     </div>
                                 ) : null}
+
                             </React.Fragment>
                             );
                         })}

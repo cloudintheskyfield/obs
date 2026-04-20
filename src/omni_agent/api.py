@@ -7,6 +7,7 @@ import json
 import asyncio
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -36,6 +37,7 @@ from skill_manager import SkillManager
 from .core.vllm_client import VLLMClient
 from .agents.plan_agent import PlanAgent
 from .agents.execution_engine import ExecutionEngine
+from .services import RequestLifecycle, SessionStore
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -122,18 +124,73 @@ except Exception as e:
 skill_manager: Optional[SkillManager] = None
 vllm_client: Optional[VLLMClient] = None
 chat_sessions: Dict[str, List[Dict[str, Any]]] = {}
+pending_plans: Dict[str, Dict[str, Any]] = {}
 session_locations: Dict[str, Dict[str, Any]] = {}
-llm_trace_dir = Path(config.log.file_path).parent / "llm_traces" if config.log.file_path else Path(config.work_dir).parent / "logs" / "llm_traces"
-session_store_dir = Path(config.log.file_path).parent / "chat_sessions" if config.log.file_path else Path(config.work_dir).parent / "logs" / "chat_sessions"
-context_cache_dir = Path(config.log.file_path).parent / "context_cache" if config.log.file_path else Path(config.work_dir).parent / "logs" / "context_cache"
-thread_workspace_dir = Path(config.log.file_path).parent / "thread_workspaces" if config.log.file_path else Path(config.work_dir).parent / "logs" / "thread_workspaces"
-workspace_state_file = Path(config.log.file_path).parent / "workspace_state.json" if config.log.file_path else Path(config.work_dir).parent / "logs" / "workspace_state.json"
-ui_sessions_dir = Path(config.log.file_path).parent / "ui_sessions" if config.log.file_path else Path(config.work_dir).parent / "logs" / "ui_sessions"
-llm_trace_dir.mkdir(parents=True, exist_ok=True)
-session_store_dir.mkdir(parents=True, exist_ok=True)
-context_cache_dir.mkdir(parents=True, exist_ok=True)
-thread_workspace_dir.mkdir(parents=True, exist_ok=True)
-ui_sessions_dir.mkdir(parents=True, exist_ok=True)
+
+# Skills real-time event bus
+_skills_event_queues: List[asyncio.Queue] = []
+
+def _skills_dir_mtime(root: Path) -> float:
+    """Return the maximum mtime across SKILL.md and Python source files only (ignores __pycache__)."""
+    try:
+        return max(
+            (
+                p.stat().st_mtime
+                for p in root.rglob("*")
+                if p.is_file()
+                and "__pycache__" not in p.parts
+                and p.suffix not in (".pyc", ".pyo")
+            ),
+            default=0.0,
+        )
+    except Exception:
+        return 0.0
+
+async def _broadcast_skills_update() -> None:
+    """Push updated catalog to all connected SSE listeners."""
+    if not skill_manager:
+        return
+    catalog = skill_manager.get_skill_catalog()
+    payload = json.dumps({"type": "catalog", "skills": catalog})
+    dead = []
+    for q in _skills_event_queues:
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            dead.append(q)
+    for q in dead:
+        try:
+            _skills_event_queues.remove(q)
+        except ValueError:
+            pass
+
+async def _watch_skills_dir() -> None:
+    """Background task: watch skills directory and push SSE events on change."""
+    while skill_manager is None:
+        await asyncio.sleep(1)
+
+    skills_root: Optional[Path] = getattr(
+        getattr(skill_manager, "skill_loader", None), "skills_root", None
+    )
+    if skills_root is None or not skills_root.exists():
+        logger.warning("Skills watcher: could not resolve skills_root, giving up.")
+        return
+
+    last_mtime = _skills_dir_mtime(skills_root)
+    logger.info(f"Skills watcher started on {skills_root}")
+    while True:
+        await asyncio.sleep(1)
+        try:
+            mtime = _skills_dir_mtime(skills_root)
+            if mtime != last_mtime:
+                last_mtime = mtime
+                skill_manager.reload_skills()
+                await _broadcast_skills_update()
+                logger.info("Skills directory changed – catalog reloaded and broadcast.")
+        except Exception as exc:
+            logger.warning(f"Skills watcher error: {exc}")
+session_store = SessionStore.from_config(config)
+request_lifecycle = RequestLifecycle()
 
 HOST_HOME = os.getenv("HOST_HOME")
 HOST_HOME_MOUNT = os.getenv("HOST_HOME_MOUNT", "/host-home")
@@ -143,6 +200,7 @@ AVAILABLE_MODELS = [
     for model in os.getenv("AVAILABLE_MODELS", config.vllm.model).split(",")
     if model.strip()
 ]
+WEATHER_REQUEST_PATTERN = re.compile(r"(天气|温度|气温|weather|forecast)", re.IGNORECASE)
 
 
 def _get_runtime_temporal_context() -> Dict[str, Any]:
@@ -186,118 +244,51 @@ def _format_runtime_context(context: Dict[str, Any], location: Optional[Dict[str
 
 
 def _sanitize_session_id(session_id: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_.-]", "_", session_id)[:120]
+    return session_store.sanitize_session_id(session_id)
 
 
 def _llm_trace_file(session_id: str) -> Path:
-    return llm_trace_dir / f"{_sanitize_session_id(session_id)}.jsonl"
+    return session_store.llm_trace_file(session_id)
 
 
 def _chat_session_file(session_id: str) -> Path:
-    return session_store_dir / f"{_sanitize_session_id(session_id)}.json"
+    return session_store.chat_session_file(session_id)
 
 
 def _context_cache_file(session_id: str) -> Path:
-    return context_cache_dir / f"{_sanitize_session_id(session_id)}.json"
+    return session_store.context_cache_file(session_id)
 
 
 def _persist_llm_trace(session_id: str, payload: Dict[str, Any]) -> None:
-    record = {
-        "session_id": session_id,
-        "timestamp": payload.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds"),
-        "phase": payload.get("phase"),
-        "direction": payload.get("direction"),
-        "payload": payload.get("payload"),
-        "type": "llm_log",
-    }
-    trace_file = _llm_trace_file(session_id)
-    with trace_file.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    session_store.persist_llm_trace(session_id, payload)
 
 
 def _load_llm_traces(session_id: str) -> List[Dict[str, Any]]:
-    trace_file = _llm_trace_file(session_id)
-    if not trace_file.exists():
-        return []
-    records: List[Dict[str, Any]] = []
-    with trace_file.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return records
+    return session_store.load_llm_traces(session_id)
 
 
 def _load_chat_session(session_id: str) -> Optional[List[Dict[str, Any]]]:
-    session_file = _chat_session_file(session_id)
-    if not session_file.exists():
-        return None
-    try:
-        payload = json.loads(session_file.read_text(encoding="utf-8"))
-        messages = payload.get("messages")
-        if isinstance(messages, list):
-            return messages
-    except Exception as exc:
-        logger.warning(f"Failed to load chat session {session_id}: {exc}")
-    return None
+    return session_store.load_chat_session(session_id)
 
 
 def _persist_chat_session(session_id: str) -> None:
-    messages = chat_sessions.get(session_id, [])
-    session_file = _chat_session_file(session_id)
-    payload = {
-        "session_id": session_id,
-        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "messages": messages,
-    }
-    session_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    session_store.persist_chat_session(session_id, chat_sessions.get(session_id, []))
 
 
 def _load_context_cache(session_id: str) -> Optional[Dict[str, Any]]:
-    cache_file = _context_cache_file(session_id)
-    if not cache_file.exists():
-        return None
-    try:
-        payload = json.loads(cache_file.read_text(encoding="utf-8"))
-        cache = payload.get("cache")
-        if isinstance(cache, dict):
-            return cache
-    except Exception as exc:
-        logger.warning(f"Failed to load context cache {session_id}: {exc}")
-    return None
+    return session_store.load_context_cache(session_id)
 
 
 def _persist_context_cache(session_id: str, streaming_agent: Any) -> None:
     if streaming_agent is None:
         return
     cache = getattr(streaming_agent, "session_context_cache", {}).get(session_id)
-    if cache is None:
-        return
-    cache_file = _context_cache_file(session_id)
-    payload = {
-        "session_id": session_id,
-        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "cache": cache,
-    }
-    cache_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    session_store.persist_context_cache(session_id, cache)
 
 
 def _ensure_session_state_loaded(session_id: str, streaming_agent: Optional[Any] = None) -> None:
-    if session_id not in chat_sessions:
-        chat_sessions[session_id] = _load_chat_session(session_id) or []
-
-    if streaming_agent is None:
-        return
-
-    cache_store = getattr(streaming_agent, "session_context_cache", None)
-    if not isinstance(cache_store, dict):
-        return
-    if session_id not in cache_store:
-        cache_store[session_id] = _load_context_cache(session_id) or {}
+    cache_store = getattr(streaming_agent, "session_context_cache", None) if streaming_agent is not None else None
+    session_store.ensure_session_state_loaded(session_id, chat_sessions, cache_store if isinstance(cache_store, dict) else None)
 
 
 def _resolve_workspace_path(path_str: str) -> Path:
@@ -367,15 +358,13 @@ def _persist_workspace_state(path_str: str) -> None:
         "runtime_path": runtime_path,
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    workspace_state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    session_store.persist_workspace_state(payload)
 
 
 def _load_workspace_state() -> Optional[str]:
-    if not workspace_state_file.exists():
-        return None
     try:
-        payload = json.loads(workspace_state_file.read_text(encoding="utf-8"))
-        path_str = payload.get("runtime_path") or payload.get("path")
+        payload = session_store.load_workspace_state()
+        path_str = (payload or {}).get("runtime_path") or (payload or {}).get("path")
         if path_str:
             return str(_resolve_workspace_path(path_str))
     except Exception as exc:
@@ -388,9 +377,28 @@ def _current_workspace() -> str:
 
 
 def _thread_workspace_for_session(session_id: str) -> str:
-    path = thread_workspace_dir / _sanitize_session_id(session_id)
-    path.mkdir(parents=True, exist_ok=True)
-    return str(path.resolve())
+    return session_store.thread_runtime_dir(session_id)
+
+
+def _architecture_runtime_snapshot() -> Dict[str, Any]:
+    available_tools = skill_manager.get_anthropic_tools() if skill_manager is not None else []
+    return {
+        "status": "ok" if vllm_client is not None else "degraded",
+        "model": config.vllm.model,
+        "available_models": AVAILABLE_MODELS,
+        "workspace_path": _current_workspace(),
+        "runtime_workspace_path": _current_workspace_runtime(),
+        "skills_count": len(getattr(skill_manager, "skills", {}) or {}),
+        "tools_count": len(available_tools),
+        "tool_names": [tool.get("name") for tool in available_tools if tool.get("name")],
+        "thread_count": len(chat_sessions),
+        "request_harness": {
+            "api": "FastAPI /chat/stream",
+            "router": "StreamingAgent.chat_stream()",
+            "persistence": "SessionStore",
+            "phase_service": "RequestLifecycle",
+        },
+    }
 
 async def _resolve_location_from_ip(request: Request) -> Optional[Dict[str, Any]]:
     """Resolve approximate location from IP.
@@ -503,7 +511,12 @@ async def _execute_tool_call(tool_name: str, tool_input: Dict[str, Any], session
         if result.success:
             return result.content or "执行成功"
         else:
-            return f"工具执行失败: {result.error}"
+            parts = []
+            if result.error:
+                parts.append(f"Error: {result.error}")
+            if result.content:
+                parts.append(result.content)
+            return "\n".join(parts) if parts else "工具执行失败"
     except Exception as e:
         logger.error(f"Tool execution error: {e}")
         return f"工具执行异常: {str(e)}"
@@ -556,6 +569,8 @@ async def startup_event():
             skill_manager.set_workspace(persisted_workspace)
         except Exception as exc:
             logger.warning(f"Failed to restore persisted workspace {persisted_workspace}: {exc}")
+
+    asyncio.create_task(_watch_skills_dir())
     
     # 初始化VLLM客户端
     vllm_client = VLLMClient(config.vllm)
@@ -569,7 +584,13 @@ async def startup_event():
     app.state.execution_engine = execution_engine
     
     from .agents.streaming_agent import StreamingAgent
-    streaming_agent = StreamingAgent(vllm_client, skill_manager, execution_engine, plan_agent)
+    streaming_agent = StreamingAgent(
+        vllm_client,
+        skill_manager,
+        execution_engine,
+        plan_agent,
+        request_lifecycle=request_lifecycle,
+    )
     app.state.streaming_agent = streaming_agent
     
     logger.info("Omni Agent API 启动完成")
@@ -579,6 +600,8 @@ async def startup_event():
     app.state.vllm_client = vllm_client
     app.state.plan_agent = plan_agent
     app.state.execution_engine = execution_engine
+    app.state.session_store = session_store
+    app.state.request_lifecycle = request_lifecycle
     print("Skill manager initialized successfully")
     print(f"VLLM client initialized: {config.vllm.base_url}")
 
@@ -619,13 +642,13 @@ async def root():
 @app.get("/health")
 async def health():
     """健康检查 - 静默模式"""
-    skills_count = len(skill_manager.get_anthropic_tools()) if skill_manager else 0
+    skills_count = len(skill_manager.skills) if skill_manager else 0
     return {"status": "ok", "skills_count": skills_count}
 
 @app.get("/runtime")
 async def runtime_status():
     """Provide frontend-friendly runtime metadata for Claude Code style status panels."""
-    skills_count = len(skill_manager.get_anthropic_tools()) if skill_manager else 0
+    skills_count = len(skill_manager.skills) if skill_manager else 0
     return JSONResponse({
         "status": "ok" if vllm_client is not None else "degraded",
         "runtime": {
@@ -647,6 +670,14 @@ async def runtime_status():
         }
     })
 
+
+@app.get("/architecture")
+async def architecture_manifest():
+    return JSONResponse({
+        "architecture": request_lifecycle.architecture_signature(),
+        "runtime": _architecture_runtime_snapshot(),
+    })
+
 @app.get("/skills")
 async def skills():
     """获取技能列表"""
@@ -662,30 +693,295 @@ async def skill_catalog():
     return JSONResponse({"skills": skill_manager.get_skill_catalog()})
 
 
+@app.post("/skills/reload")
+async def reload_skills():
+    """Hot-reload all skills from disk without restarting the server."""
+    if skill_manager is None:
+        return JSONResponse({"success": False, "error": "skill_manager not initialized"}, status_code=503)
+    try:
+        info = skill_manager.reload_skills()
+        return JSONResponse({
+            "success": True,
+            "reload": info,
+            "skills": skill_manager.get_skill_catalog(),
+        })
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
+
+class SkillInstallRequest(BaseModel):
+    name: str
+    skill_md: str
+    python_code: str = ""
+
+
+@app.post("/skills/install")
+async def install_skill(payload: SkillInstallRequest):
+    """Install a new skill from SKILL.md content, then hot-reload."""
+    if skill_manager is None:
+        return JSONResponse({"success": False, "error": "skill_manager not initialized"}, status_code=503)
+    try:
+        result = skill_manager.install_skill(
+            name=payload.name,
+            skill_md=payload.skill_md,
+            python_code=payload.python_code,
+        )
+        await _broadcast_skills_update()
+        return JSONResponse({
+            "success": True,
+            **result,
+            "skills": skill_manager.get_skill_catalog(),
+        })
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
+
+class SkillInstallFromUrlRequest(BaseModel):
+    url: str
+    name: str = ""
+    python_code: str = ""
+
+
+def _rewrite_localhost_url(url: str) -> str:
+    """Rewrite 127.0.0.1 / localhost to host.docker.internal so Docker containers can reach the host."""
+    import re as _re
+    url = _re.sub(r"127\.0\.0\.1", "host.docker.internal", url)
+    url = _re.sub(r"(?<![.\w])localhost(?![.\w])", "host.docker.internal", url)
+    return url
+
+
+def _parse_skill_name_from_md(content: str) -> str:
+    """Extract `name:` from YAML frontmatter, fall back to empty string."""
+    import re as _re
+    m = _re.search(r"^---\s*\n.*?^name:\s*(.+?)\s*$.*?---", content, _re.MULTILINE | _re.DOTALL)
+    if m:
+        return m.group(1).strip().strip('"').strip("'")
+    return ""
+
+
+@app.post("/skills/install-from-url")
+async def install_skill_from_url(payload: SkillInstallFromUrlRequest):
+    """Fetch a SKILL.md from a URL (rewrites 127.0.0.1→host.docker.internal) and install it."""
+    if skill_manager is None:
+        return JSONResponse({"success": False, "error": "skill_manager not initialized"}, status_code=503)
+
+    rewritten = _rewrite_localhost_url(payload.url)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(rewritten)
+            resp.raise_for_status()
+            skill_md = resp.text
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": f"Failed to fetch {rewritten}: {exc}"}, status_code=400)
+
+    name = payload.name.strip() or _parse_skill_name_from_md(skill_md)
+    if not name:
+        # Derive from URL path
+        name = rewritten.rstrip("/").rsplit("/", 1)[-1].replace(".md", "").replace(".txt", "") or "unnamed-skill"
+
+    # Rewrite any 127.0.0.1/localhost references inside the SKILL.md body so the agent
+    # uses host.docker.internal when running commands from within the container.
+    import re as _re
+    skill_md = _re.sub(r"127\.0\.0\.1", "host.docker.internal", skill_md)
+    skill_md = _re.sub(r"(?<![.\w])localhost(?![.\w])", "host.docker.internal", skill_md)
+
+    try:
+        result = skill_manager.install_skill(name=name, skill_md=skill_md, python_code=payload.python_code)
+        await _broadcast_skills_update()
+        return JSONResponse({
+            "success": True,
+            "fetched_url": payload.url,
+            "rewritten_url": rewritten,
+            **result,
+            "skills": skill_manager.get_skill_catalog(),
+        })
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
+
+@app.get("/skills/store/search")
+async def search_skill_store(q: str = "", include_github: bool = False):
+    """Search the built-in skill registry (and optionally GitHub) for installable skills."""
+    import unicodedata
+
+    # Load registry
+    registry_path = Path(__file__).parent / "skill_registry.json"
+    try:
+        with open(registry_path, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": f"Registry unavailable: {exc}"}, status_code=500)
+
+    query = q.strip().lower()
+
+    def _score(skill: dict) -> int:
+        if not query:
+            return 1
+        name = skill.get("name", "").lower()
+        display = skill.get("display_name", "").lower()
+        desc = skill.get("description", "").lower()
+        tags = " ".join(skill.get("tags") or []).lower()
+        text = f"{name} {display} {desc} {tags}"
+        score = 0
+        if query in name:
+            score += 10
+        if query in display:
+            score += 8
+        for word in query.split():
+            if word in text:
+                score += 3
+        # Also score individual CJK characters
+        for char in query:
+            if unicodedata.category(char).startswith("Lo") and char in text:
+                score += 2
+        return score
+
+    results = []
+    for skill in registry.get("skills", []):
+        s = _score(skill)
+        if not query or s > 0:
+            entry = {
+                "name": skill["name"],
+                "display_name": skill.get("display_name", skill["name"]),
+                "description": skill.get("description", ""),
+                "tags": skill.get("tags", []),
+                "category": skill.get("category", ""),
+                "source": "registry",
+                "score": s,
+            }
+            # Include skill_md if present (for direct install)
+            if skill.get("skill_md"):
+                entry["skill_md"] = skill["skill_md"]
+            if skill.get("skill_md_url"):
+                entry["skill_md_url"] = skill["skill_md_url"]
+            results.append(entry)
+
+    results.sort(key=lambda x: -x["score"])
+    if query:
+        results = [r for r in results if r["score"] > 0]
+
+    # Optional GitHub search fallback
+    github_results = []
+    if include_github and query:
+        try:
+            gh_query = f"{q}+topic:obs-code-skill"
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(
+                    f"https://api.github.com/search/repositories?q={gh_query}&sort=stars&per_page=5",
+                    headers={"Accept": "application/vnd.github+json"},
+                )
+                if resp.status_code == 200:
+                    items = resp.json().get("items", [])
+                    for item in items:
+                        owner = item["owner"]["login"]
+                        repo = item["name"]
+                        github_results.append({
+                            "name": repo,
+                            "display_name": item.get("description") or repo,
+                            "description": item.get("description", ""),
+                            "tags": item.get("topics", []),
+                            "category": "github",
+                            "source": "github",
+                            "score": item.get("stargazers_count", 0),
+                            "skill_md_url": f"https://raw.githubusercontent.com/{owner}/{repo}/main/SKILL.md",
+                        })
+        except Exception:
+            pass  # GitHub search is best-effort
+
+    # Get currently installed skill names to mark already-installed ones
+    installed = set()
+    if skill_manager is not None:
+        catalog = skill_manager.get_skill_catalog()
+        catalog_skills = catalog.get("skills", []) if isinstance(catalog, dict) else catalog
+        installed = {s["name"] for s in catalog_skills}
+
+    for r in results + github_results:
+        r["installed"] = r["name"] in installed
+
+    return JSONResponse({
+        "success": True,
+        "query": q,
+        "results": results,
+        "github_results": github_results,
+        "total": len(results) + len(github_results),
+    })
+
+
+@app.delete("/skills/{skill_name}")
+async def delete_skill(skill_name: str):
+    """Remove a skill directory and hot-reload. Protected skills cannot be deleted."""
+    if skill_manager is None:
+        return JSONResponse({"success": False, "error": "skill_manager not initialized"}, status_code=503)
+    skills_root = getattr(getattr(skill_manager, "skill_loader", None), "skills_root", None)
+    if skills_root is None:
+        return JSONResponse({"success": False, "error": "Cannot resolve skills root"}, status_code=500)
+    skill_dir = Path(skills_root) / skill_name
+    if not skill_dir.exists():
+        return JSONResponse({"success": False, "error": f"Skill '{skill_name}' not found"}, status_code=404)
+    # Refuse to delete protected skills
+    meta = skill_manager._read_skill_meta(skill_dir)
+    if skill_manager._is_protected(skill_dir, meta):
+        return JSONResponse(
+            {"success": False, "error": f"Skill '{skill_name}' is protected and cannot be deleted."},
+            status_code=403,
+        )
+    import shutil
+    try:
+        shutil.rmtree(skill_dir)
+        skill_manager.reload_skills()
+        await _broadcast_skills_update()
+        return JSONResponse({"success": True, "deleted": skill_name, "skills": skill_manager.get_skill_catalog()})
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
+
+@app.get("/skills/events")
+async def skills_events(request: Request):
+    """SSE endpoint: push real-time skill catalog updates to the browser."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    _skills_event_queues.append(queue)
+
+    async def generate():
+        try:
+            # Send current catalog immediately on connect
+            if skill_manager:
+                catalog = skill_manager.get_skill_catalog()
+                yield f"data: {json.dumps({'type': 'catalog', 'skills': catalog})}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=25)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield "data: {\"type\":\"heartbeat\"}\n\n"
+        finally:
+            try:
+                _skills_event_queues.remove(queue)
+            except ValueError:
+                pass
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+
+
 def _ui_session_file(session_id: str) -> Path:
-    safe_id = re.sub(r"[^\w\-]", "_", session_id)[:80]
-    return ui_sessions_dir / f"{safe_id}.json"
+    return session_store.ui_session_file(session_id)
 
 
 @app.get("/ui-sessions")
 async def list_ui_sessions():
-    sessions = []
-    for f in sorted(ui_sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            sessions.append(data)
-        except Exception:
-            continue
-    return JSONResponse({"sessions": sessions})
+    return JSONResponse({"sessions": session_store.list_ui_sessions()})
 
 
 @app.get("/ui-sessions/{session_id}")
 async def get_ui_session(session_id: str):
-    session_file = _ui_session_file(session_id)
-    if not session_file.exists():
+    data = session_store.load_ui_session(session_id)
+    if data is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     try:
-        data = json.loads(session_file.read_text(encoding="utf-8"))
         return JSONResponse(data)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -695,8 +991,7 @@ async def get_ui_session(session_id: str):
 async def save_ui_session(session_id: str, request: Request):
     try:
         body = await request.json()
-        session_file = _ui_session_file(session_id)
-        session_file.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        session_store.save_ui_session(session_id, body)
         return JSONResponse({"ok": True})
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -704,9 +999,7 @@ async def save_ui_session(session_id: str, request: Request):
 
 @app.delete("/ui-sessions/{session_id}")
 async def delete_ui_session(session_id: str):
-    session_file = _ui_session_file(session_id)
-    if session_file.exists():
-        session_file.unlink()
+    session_store.delete_ui_session(session_id)
     return JSONResponse({"ok": True})
 
 
@@ -776,6 +1069,58 @@ async def browse_workspace(path: Optional[str] = Query(default=None)):
         "parent": _runtime_to_host_path(str(parent)) if parent else None,
         "entries": entries[:200],
     })
+
+
+def _pick_workspace_directory(initial_path: Optional[str]) -> Optional[str]:
+    root = None
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise RuntimeError("Native folder picker is unavailable in the current runtime environment") from exc
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()
+        selected = filedialog.askdirectory(
+            initialdir=initial_path or _current_workspace(),
+            mustexist=True,
+            parent=root,
+            title="Select Workspace Folder",
+        )
+        return selected or None
+    finally:
+        if root is not None:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
+
+@app.post("/workspace/pick")
+async def pick_workspace_directory():
+    try:
+        initial_path = _current_workspace()
+        if threading.current_thread() is threading.main_thread():
+            selected = _pick_workspace_directory(initial_path)
+        else:
+            selected = await asyncio.to_thread(_pick_workspace_directory, initial_path)
+        if not selected:
+            return JSONResponse({"success": False, "cancelled": True})
+
+        runtime_path = str(_resolve_workspace_path(selected))
+        return JSONResponse({
+            "success": True,
+            "workspace": {
+                "path": _runtime_to_host_path(runtime_path),
+                "runtime_path": runtime_path,
+                "name": Path(selected).name or selected,
+            }
+        })
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
 
 
 @app.get("/logs/{session_id}")
@@ -878,8 +1223,12 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
         try:
             _ensure_session_state_loaded(session_id, streaming_agent)
             location = session_locations.get(session_id)
-            if location is None:
-                location = await _resolve_location_from_ip(request)
+            if location is None and WEATHER_REQUEST_PATTERN.search(message or ""):
+                try:
+                    location = await asyncio.wait_for(_resolve_location_from_ip(request), timeout=2.5)
+                except Exception as location_exc:
+                    logger.debug(f"On-demand weather location resolve failed for session {session_id}: {location_exc}")
+                    location = None
                 if location:
                     session_locations[session_id] = location
 
@@ -924,6 +1273,16 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                         payload = json.loads(chunk[6:].strip())
                         if payload.get("type") == "llm_log":
                             _persist_llm_trace(session_id, payload)
+                        elif payload.get("type") == "plan" and payload.get("plan_id"):
+                            pending_plans[payload["plan_id"]] = {
+                                "plan_id": payload["plan_id"],
+                                "user_message": message,
+                                "session_id": session_id,
+                                "chat_history": list(chat_sessions.get(session_id, [])),
+                                "plan": payload.get("plan"),
+                                "task_graph": payload.get("task_graph"),
+                                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                            }
                     except Exception:
                         pass
                 yield chunk
@@ -931,8 +1290,11 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()
-            print(f"Chat stream error: {error_detail}")
-            yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+            logger.error(f"Chat stream error: {error_detail}")
+            # Include error type and truncated traceback so the frontend can display
+            # a meaningful diagnostic message instead of a generic "failed" notice.
+            last_line = error_detail.strip().rsplit("\n", 1)[-1].strip() if error_detail else str(e)
+            yield f"data: {json.dumps({'error': str(e), 'error_type': type(e).__name__, 'error_detail': last_line, 'done': True})}\n\n"
         finally:
             try:
                 _persist_chat_session(session_id)
@@ -1161,6 +1523,59 @@ async def execute_with_expert(request_data: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Expert execution error: {e}")
         return JSONResponse({"success": False, "error": str(e)})
+
+@app.get("/plan/pending")
+async def list_pending_plans():
+    """List plans awaiting human approval."""
+    return JSONResponse({
+        "pending_plans": [
+            {
+                "plan_id": v["plan_id"],
+                "session_id": v["session_id"],
+                "user_message": v["user_message"],
+                "created_at": v["created_at"],
+                "steps_count": len((v.get("plan") or {}).get("steps") or []),
+            }
+            for v in pending_plans.values()
+        ]
+    })
+
+
+@app.post("/plan/approve/{plan_id}")
+async def approve_plan(plan_id: str):
+    """Approve a pending plan and stream its execution."""
+    plan_data = pending_plans.pop(plan_id, None)
+    if plan_data is None:
+        return JSONResponse({"error": "Plan not found or already executed"}, status_code=404)
+
+    execution_engine = getattr(app.state, "execution_engine", None)
+    if execution_engine is None:
+        return JSONResponse({"error": "Execution engine not initialized"}, status_code=503)
+
+    session_id = plan_data["session_id"]
+
+    async def generate():
+        try:
+            async for event in execution_engine.execute_user_request(
+                user_message=plan_data["user_message"],
+                session_id=session_id,
+                chat_history=plan_data.get("chat_history") or [],
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc), 'done': True}, ensure_ascii=False)}\n\n"
+        finally:
+            yield f"data: {json.dumps({'done': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.delete("/plan/{plan_id}")
+async def reject_plan(plan_id: str):
+    """Reject (discard) a pending plan."""
+    pending_plans.pop(plan_id, None)
+    return JSONResponse({"ok": True})
+
 
 # 导出app实例
 __all__ = ["app"]

@@ -25,7 +25,7 @@ class AppStateStore {
 
 class ObsAgentConsole {
     constructor() {
-        this.storageVersion = "20260408-01";
+        this.storageVersion = "20260415-01";
         this.apiBaseUrl = this.resolveDefaultApiBaseUrl();
         this.sessions = new Map();
         this.currentSessionId = null;
@@ -55,6 +55,23 @@ class ObsAgentConsole {
             return origin;
         }
         return "http://127.0.0.1:8000";
+    }
+
+    safeSetLocalStorage(key, value) {
+        try {
+            localStorage.setItem(key, value);
+            return true;
+        } catch (error) {
+            console.warn(`Failed to persist localStorage key: ${key}`, error);
+            if (error?.name === "QuotaExceededError") {
+                try {
+                    localStorage.removeItem("obs-agent-sessions");
+                } catch (cleanupError) {
+                    console.warn("Failed to clear oversized session cache", cleanupError);
+                }
+            }
+            return false;
+        }
     }
 
     init() {
@@ -2006,7 +2023,7 @@ class ObsAgentConsole {
         this.settings.permissionMode = this.store.get().permissionMode;
         this.settings.thinkingMode = this.store.get().thinkingMode;
         this.settings.toolContext = this.store.get().toolContext;
-        localStorage.setItem("obs-agent-settings", JSON.stringify(this.settings));
+        this.safeSetLocalStorage("obs-agent-settings", JSON.stringify(this.settings));
     }
 
     loadSessions() {
@@ -2014,7 +2031,7 @@ class ObsAgentConsole {
             const storedVersion = localStorage.getItem("obs-agent-storage-version");
             if (storedVersion !== this.storageVersion) {
                 localStorage.removeItem("obs-agent-sessions");
-                localStorage.setItem("obs-agent-storage-version", this.storageVersion);
+                this.safeSetLocalStorage("obs-agent-storage-version", this.storageVersion);
             }
             const raw = localStorage.getItem("obs-agent-sessions");
             if (!raw) {
@@ -2032,7 +2049,7 @@ class ObsAgentConsole {
 
     persistSessions() {
         if (!this.settings.autoSave) return;
-        localStorage.setItem("obs-agent-sessions", JSON.stringify(Array.from(this.sessions.values())));
+        this.safeSetLocalStorage("obs-agent-sessions", JSON.stringify(Array.from(this.sessions.values())));
     }
 
     toggleWelcome(visible) {

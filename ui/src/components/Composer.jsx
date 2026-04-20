@@ -1,13 +1,32 @@
 import React from "react";
 
-function renderComposerImages(images) {
+function renderComposerImages(images, onRemoveImage) {
     return (images || []).map((image, index) => (
-        <span key={image.id} className="composer-image-chip">
-            <span className="composer-image-chip-label">{image.name || `Image ${index + 1}`}</span>
+        <div key={image.id} className="composer-image-item">
+            <button
+                type="button"
+                className="composer-image-remove"
+                onClick={() => onRemoveImage?.(image.id)}
+                aria-label={`Delete ${image.name || `image ${index + 1}`}`}
+            >
+                <i className="fas fa-times" aria-hidden="true" />
+            </button>
+            <div className="message-image-chip composer-image-chip">
+                {image.dataUrl ? (
+                    <img
+                        src={image.dataUrl}
+                        alt={image.name || `Image ${index + 1}`}
+                        className="message-image-thumb composer-image-thumb"
+                    />
+                ) : (
+                    <i className="fas fa-image" aria-hidden="true" />
+                )}
+                <span className="message-image-chip-name">{image.name || `Image ${index + 1}`}</span>
+            </div>
             <span className="composer-image-preview">
                 <img src={image.dataUrl} alt={image.name || `Image ${index + 1}`} />
             </span>
-        </span>
+        </div>
     ));
 }
 
@@ -19,13 +38,14 @@ export default function Composer({
     onPermissionToggle,
     thinkingMode,
     onThinkingToggle,
-    value,
     onChange,
     onKeyDown,
     onPaste,
     onSend,
+    onStop,
     isSending,
     images,
+    onRemoveImage,
     logsOpen,
     onLogsToggle,
     skillsOpen,
@@ -33,7 +53,6 @@ export default function Composer({
     architectureOpen,
     onArchitectureToggle,
     workspacePath,
-    workspaceSummary,
     onWorkspaceOpen,
     statusItems,
     inputRef
@@ -44,9 +63,7 @@ export default function Composer({
                 <div className="composer-head">
                     <div className="composer-meta">
                         <div className="composer-workspace">
-                            <span className="composer-placeholder">Current workspace</span>
                             <strong className="workspace-inline-path">{workspacePath || "No workspace selected"}</strong>
-                            <span className="workspace-inline-breadcrumb">Parents · {workspaceSummary}</span>
                         </div>
                         <div className="composer-toggles">
                             <select id="model-select" className="model-pill-select" value={selectedModel} onChange={(event) => onModelChange(event.target.value)}>
@@ -64,16 +81,16 @@ export default function Composer({
                     </div>
                 </div>
                 {images?.length ? (
-                    <div className="composer-rich-preview" aria-hidden="true">
-                        {renderComposerImages(images)}
+                    <div className="composer-rich-preview">
+                        {renderComposerImages(images, onRemoveImage)}
                     </div>
                 ) : null}
                 <textarea
                     id="message-input"
                     ref={inputRef}
                     rows="1"
-                    value={value}
-                    onChange={(event) => onChange(event.target.value)}
+                    defaultValue=""
+                    onChange={onChange}
                     onKeyDown={onKeyDown}
                     onPaste={onPaste}
                     placeholder="Describe the task, mention files, or ask for a coordinated refactor"
@@ -98,9 +115,15 @@ export default function Composer({
                         </button>
                     </div>
                     <div className="composer-right">
-                        <button className={`send-btn${isSending ? " is-sending" : ""}`} type="button" onClick={onSend} disabled={isSending}>
-                            <i className={`fas ${isSending ? "fa-spinner fa-spin" : "fa-arrow-up"}`} />
-                        </button>
+                        {isSending ? (
+                            <button className="send-btn stop-btn" type="button" onClick={onStop} title="Stop generation">
+                                <i className="fas fa-stop" />
+                            </button>
+                        ) : (
+                            <button className="send-btn" type="button" onClick={onSend}>
+                                <i className="fas fa-arrow-up" />
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

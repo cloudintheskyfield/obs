@@ -48,7 +48,7 @@ def test_skill_loader():
             preview = instructions[:100].replace('\n', ' ')
             print(f"  {name}: {preview}...")
     
-    return len(skills) > 0
+    assert len(skills) > 0
 
 
 def test_skill_manager():
@@ -94,7 +94,7 @@ def test_skill_manager():
     
     asyncio.run(run_health_check())
     
-    return len(manager.skills) > 0
+    assert len(manager.skills) > 0
 
 
 def test_skill_execution():
@@ -145,7 +145,7 @@ def test_skill_execution():
     import asyncio
     asyncio.run(run_tests())
     
-    return True
+    assert True
 
 
 def main():

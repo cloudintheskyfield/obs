@@ -1,11 +1,32 @@
 """Text Editor Skill - Claude官方文本编辑技能"""
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 from loguru import logger
 
 from base_skill import BaseSkill, SkillResult
+
+
+# Extra directories always readable (read-only, no write allowed)
+_READONLY_ROOTS: List[Path] = []
+
+def _build_readonly_roots() -> List[Path]:
+    """Resolve read-only root directories at import time."""
+    roots: List[Path] = []
+    # Allow reading skills directory (so agent can inspect SKILL.md files)
+    skills_env = os.environ.get("SKILLS_DIR")
+    if skills_env:
+        p = Path(skills_env).resolve()
+        if p.exists():
+            roots.append(p)
+    # Common fallbacks
+    for candidate in [Path("/app/.claude/skills"), Path("/app/skills")]:
+        if candidate.exists():
+            roots.append(candidate)
+    return roots
+
+_READONLY_ROOTS = _build_readonly_roots()
 
 
 class TextEditorSkill(BaseSkill):
@@ -21,10 +42,13 @@ class TextEditorSkill(BaseSkill):
         self.work_dir.mkdir(exist_ok=True)
         
         self.allowed_extensions = {
-            '.txt', '.md', '.py', '.js', '.ts', '.html', '.css', '.json',
+            '.txt', '.md', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.json',
             '.yaml', '.yml', '.toml', '.ini', '.cfg', '.xml', '.csv',
             '.log', '.sh', '.bat', '.ps1', '.sql', '.dockerfile', '.go',
-            '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.rb', '.php'
+            '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.rb', '.php',
+            '.env', '.lock', '.gitignore', '.editorconfig', '.nvmrc',
+            # empty suffix covers: Dockerfile, Makefile, README, Procfile, etc.
+            '',
         }
         
         self.add_parameter(
@@ -76,33 +100,69 @@ class TextEditorSkill(BaseSkill):
             False
         )
     
-    def _is_safe_path(self, file_path: str) -> bool:
-        """检查路径是否安全"""
+    def _resolve_path(self, file_path: str) -> Path:
+        """Resolve file_path to an absolute Path.
+        Absolute paths are used as-is; relative paths are anchored to work_dir."""
+        p = Path(file_path)
+        if p.is_absolute():
+            return p.resolve()
+        return (self.work_dir / file_path).resolve()
+
+    def _is_safe_path(self, file_path: str, write: bool = False) -> bool:
+        """Check whether the path is safe to access.
+
+        Write operations are only allowed inside work_dir.
+        Read operations additionally allow paths inside _READONLY_ROOTS
+        (e.g. the skills directory so the agent can inspect SKILL.md files).
+        """
         try:
-            # 转换为绝对路径并解析
-            abs_path = (self.work_dir / file_path).resolve()
-            
-            # 检查是否在工作目录内
+            abs_path = self._resolve_path(file_path)
+
+            # Check work_dir first (full read+write)
+            in_workdir = False
             try:
                 abs_path.relative_to(self.work_dir)
+                in_workdir = True
             except ValueError:
-                logger.warning(f"Path outside work directory: {abs_path}")
+                pass
+
+            if in_workdir:
+                if abs_path.is_dir():
+                    return True
+                if abs_path.suffix.lower() not in self.allowed_extensions:
+                    logger.warning(f"File type not allowed: {abs_path.suffix}")
+                    return False
+                return True
+
+            # Write operations must be inside work_dir
+            if write:
+                logger.warning(f"Write not allowed outside work directory: {abs_path}")
                 return False
-            
-            # 检查文件扩展名
-            if abs_path.suffix.lower() not in self.allowed_extensions:
-                logger.warning(f"File type not allowed: {abs_path.suffix}")
-                return False
-            
-            return True
-            
+
+            # Read-only: allow paths inside _READONLY_ROOTS
+            for root in _READONLY_ROOTS:
+                try:
+                    abs_path.relative_to(root)
+                    # Inside a read-only root — allow if extension is OK or is a dir
+                    if abs_path.is_dir():
+                        return True
+                    if abs_path.suffix.lower() in self.allowed_extensions:
+                        return True
+                    logger.warning(f"File type not allowed in readonly root: {abs_path.suffix}")
+                    return False
+                except ValueError:
+                    continue
+
+            logger.warning(f"Path outside work directory: {abs_path}")
+            return False
+
         except Exception as e:
             logger.error(f"Error checking path safety: {e}")
             return False
-    
+
     def _get_full_path(self, file_path: str) -> Path:
         """获取完整路径"""
-        return (self.work_dir / file_path).resolve()
+        return self._resolve_path(file_path)
     
     def _format_content_with_line_numbers(self, content: str, start_line: int = 1) -> str:
         """格式化内容，添加行号"""
@@ -134,6 +194,23 @@ class TextEditorSkill(BaseSkill):
                 error=f"File not found: {file_path}"
             )
         
+        # 目录列表
+        if full_path.is_dir():
+            try:
+                entries = sorted(full_path.iterdir(), key=lambda p: (p.is_file(), p.name))
+                lines = []
+                for entry in entries:
+                    kind = "DIR " if entry.is_dir() else "FILE"
+                    lines.append(f"  {kind}  {entry.name}")
+                listing = "\n".join(lines) if lines else "  (empty directory)"
+                return SkillResult(
+                    success=True,
+                    content=f"Directory listing: {file_path}\n\n{listing}",
+                    metadata={"file_path": file_path, "command": "view", "is_dir": True}
+                )
+            except Exception as e:
+                return SkillResult(success=False, error=f"Error listing directory {file_path}: {str(e)}")
+        
         try:
             with open(full_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -161,11 +238,11 @@ class TextEditorSkill(BaseSkill):
                 
                 content_info = f"Viewing lines {start+1}-{end} of {file_path} ({total_lines} total lines)"
             else:
-                # 如果文件太长，只显示前100行
-                if total_lines > 100:
-                    display_lines = lines[:100]
+                # 如果文件太长，只显示前300行
+                if total_lines > 300:
+                    display_lines = lines[:300]
                     formatted_content = self._format_content_with_line_numbers('\n'.join(display_lines))
-                    content_info = f"Viewing first 100 lines of {file_path} ({total_lines} total lines)"
+                    content_info = f"Viewing first 300 lines of {file_path} ({total_lines} total lines) — use view_range to see more"
                 else:
                     formatted_content = self._format_content_with_line_numbers(content)
                     content_info = f"Viewing {file_path} ({total_lines} lines)"
@@ -188,7 +265,7 @@ class TextEditorSkill(BaseSkill):
     
     async def create_file(self, file_path: str, content: str) -> SkillResult:
         """创建文件"""
-        if not self._is_safe_path(file_path):
+        if not self._is_safe_path(file_path, write=True):
             return SkillResult(
                 success=False,
                 error=f"Unsafe file path: {file_path}"
@@ -237,7 +314,7 @@ class TextEditorSkill(BaseSkill):
         new_str: str
     ) -> SkillResult:
         """字符串替换"""
-        if not self._is_safe_path(file_path):
+        if not self._is_safe_path(file_path, write=True):
             return SkillResult(
                 success=False,
                 error=f"Unsafe file path: {file_path}"

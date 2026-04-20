@@ -17,6 +17,7 @@ export default function WorkspaceModal({
     onSave,
     onNativePick,
     nativePickLabel = "Choose Folder",
+    nativePickHelp = "",
 }) {
     return (
         <section className={`logs-drawer workspace-drawer${open ? "" : " hidden"}`} aria-hidden={open ? "false" : "true"}>
@@ -41,6 +42,8 @@ export default function WorkspaceModal({
                 </div>
 
                 <div className="logs-list workspace-list">
+                    {nativePickHelp ? <div className="workspace-picker-note">{nativePickHelp}</div> : null}
+
                     <div className="workspace-current">
                         <span className="workspace-current-label">Current workspace</span>
                         <strong>{currentPath || "Not set"}</strong>

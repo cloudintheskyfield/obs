@@ -31,6 +31,7 @@ class BashSkill(BaseSkill):
             'node', 'npm', 'yarn', 'pnpm',
             'cargo', 'rustc', 'go', 'java', 'javac', 
             'gcc', 'g++', 'make', 'cmake',
+            'sleep', 'wait', 'timeout', 'watch',
             'ps', 'kill', 'top', 'htop', 'free', 'uptime',
             'curl', 'wget', 'ping', 'netstat', 'ss',
             'zip', 'unzip', 'tar', 'gzip', 'gunzip',
@@ -173,27 +174,59 @@ class BashSkill(BaseSkill):
             # 解码输出
             stdout_text = stdout.decode('utf-8', errors='replace') if stdout else ""
             stderr_text = stderr.decode('utf-8', errors='replace') if stderr else ""
-            
+
+            # Filter out benign filesystem noise (e.g. stale .rnd symlink on macOS hosts)
+            BENIGN_STDERR_PATTERNS = [".rnd", "No such file or directory"]
+            filtered_stderr_lines = [
+                ln for ln in stderr_text.splitlines()
+                if not all(pat in ln for pat in BENIGN_STDERR_PATTERNS)
+            ]
+            clean_stderr = "\n".join(filtered_stderr_lines)
+
+            # If exit code 1 and stdout has real content and all stderr was benign, treat as success
+            returncode = process.returncode
+            if returncode == 1 and stdout_text.strip() and not clean_stderr.strip():
+                returncode = 0
+
             # 组合输出
             output_text = ""
             if stdout_text:
                 output_text += stdout_text
-            if stderr_text:
+            if clean_stderr:
                 if output_text:
                     output_text += "\n"
-                output_text += stderr_text
-            
-            success = process.returncode == 0
-            
+                output_text += clean_stderr
+
+            success = returncode == 0
+
+            # curl exit code 7 = connection refused; if targeting localhost/127.0.0.1
+            # from inside Docker the host service is unreachable — give the agent an
+            # actionable hint so it retries with host.docker.internal.
+            docker_hint = ""
+            if not success and returncode == 7:
+                import re as _re
+                if _re.search(r"https?://(127\.0\.0\.1|localhost)\b", command):
+                    fixed_cmd = _re.sub(
+                        r"(https?://)(?:127\.0\.0\.1|localhost)(\b)",
+                        r"\1host.docker.internal\2",
+                        command,
+                    )
+                    docker_hint = (
+                        "\n\n⚠️ Docker networking: this agent runs inside a container. "
+                        "Services on the host are NOT reachable via 127.0.0.1 or localhost. "
+                        f"Use host.docker.internal instead.\n"
+                        f"Corrected command: {fixed_cmd}"
+                    )
+
             result = SkillResult(
                 success=success,
-                content=output_text or f"Command executed {'successfully' if success else 'with errors'}",
+                content=(output_text or f"Command executed {'successfully' if success else 'with errors'}") + docker_hint,
                 metadata={
                     "command": command,
-                    "return_code": process.returncode,
+                    "return_code": returncode,
                     "execution_time": execution_time,
                     "stdout": stdout_text,
-                    "stderr": stderr_text,
+                    "stderr": clean_stderr,
                     "working_directory": str(self.work_dir)
                 }
             )
@@ -201,7 +234,7 @@ class BashSkill(BaseSkill):
             if success:
                 logger.info(f"Command executed successfully: {command}")
             else:
-                logger.warning(f"Command failed with code {process.returncode}: {command}")
+                logger.warning(f"Command failed with code {returncode}: {command}")
             
             return result
             
@@ -216,77 +249,144 @@ class BashSkill(BaseSkill):
             )
     
     async def _execute_background(self, command: str) -> SkillResult:
-        """执行后台命令"""
+        """执行后台命令，实时捕获输出供轮询"""
         process_id = self._get_process_id()
-        
+
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
                 cwd=str(self.work_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                shell=True,
                 env=os.environ.copy()
             )
-            
-            self.running_processes[process_id] = process
-            
-            result = SkillResult(
+
+            # State buffer for this process
+            state = {
+                "process": process,
+                "command": command,
+                "stdout_lines": [],
+                "stderr_lines": [],
+                "running": True,
+                "exit_code": None,
+                "started_at": asyncio.get_event_loop().time(),
+            }
+            self.running_processes[process_id] = state
+
+            async def _drain_stream(stream, target_list):
+                try:
+                    async for raw in stream:
+                        line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                        target_list.append(line)
+                except Exception:
+                    pass
+
+            async def _watch():
+                await asyncio.gather(
+                    _drain_stream(process.stdout, state["stdout_lines"]),
+                    _drain_stream(process.stderr, state["stderr_lines"]),
+                )
+                await process.wait()
+                state["running"] = False
+                state["exit_code"] = process.returncode
+
+            asyncio.create_task(_watch())
+
+            logger.info(f"Background process started: {process_id} (PID: {process.pid})")
+            return SkillResult(
                 success=True,
-                content=f"Command started in background with process ID: {process_id}",
+                content=(
+                    f"Background process started.\n"
+                    f"process_id: {process_id}\n"
+                    f"PID: {process.pid}\n"
+                    f"Use: get_output {process_id}  — to poll output\n"
+                    f"Use: stop_process {process_id} — to terminate"
+                ),
                 metadata={
                     "command": command,
                     "process_id": process_id,
                     "pid": process.pid,
                     "working_directory": str(self.work_dir),
-                    "background": True
-                }
+                    "background": True,
+                },
             )
-            
-            logger.info(f"Background process started: {process_id} (PID: {process.pid})")
-            return result
-            
+
         except Exception as e:
             return SkillResult(
                 success=False,
                 error=str(e),
-                metadata={"command": command, "background": True}
+                metadata={"command": command, "background": True},
             )
+
+    async def get_output(self, process_id: str) -> SkillResult:
+        """轮询后台进程的实时输出和状态"""
+        state = self.running_processes.get(process_id)
+        if state is None:
+            return SkillResult(
+                success=False,
+                error=f"No background process found with id: {process_id}. Use list_processes to see active processes."
+            )
+
+        stdout_text = "\n".join(state["stdout_lines"])
+        stderr_text = "\n".join(state["stderr_lines"])
+        running = state["running"]
+        exit_code = state["exit_code"]
+        elapsed = asyncio.get_event_loop().time() - state["started_at"]
+
+        if running:
+            status_line = f"Status: RUNNING  (elapsed: {elapsed:.1f}s)"
+        else:
+            status_line = f"Status: FINISHED  exit_code={exit_code}  elapsed={elapsed:.1f}s"
+
+        parts = [status_line]
+        if stdout_text:
+            parts.append(f"--- stdout ---\n{stdout_text}")
+        if stderr_text:
+            parts.append(f"--- stderr ---\n{stderr_text}")
+        if not stdout_text and not stderr_text:
+            parts.append("(no output yet)")
+
+        return SkillResult(
+            success=True,
+            content="\n".join(parts),
+            metadata={
+                "process_id": process_id,
+                "running": running,
+                "exit_code": exit_code,
+                "elapsed_s": round(elapsed, 1),
+                "stdout_lines": len(state["stdout_lines"]),
+                "stderr_lines": len(state["stderr_lines"]),
+            },
+        )
     
     async def stop_process(self, process_id: str) -> SkillResult:
         """停止后台进程"""
-        if process_id not in self.running_processes:
+        state = self.running_processes.get(process_id)
+        if state is None:
             return SkillResult(
                 success=False,
                 error=f"Process not found: {process_id}"
             )
-        
-        process = self.running_processes[process_id]
-        
+
+        process = state["process"]
         try:
-            # 尝试优雅终止
-            process.terminate()
-            
-            # 等待进程结束
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                # 强制杀死进程
-                process.kill()
-                await process.wait()
-            
-            # 从列表中移除
+            if state["running"]:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                state["running"] = False
+                state["exit_code"] = process.returncode
+
             del self.running_processes[process_id]
-            
-            result = SkillResult(
-                success=True,
-                content=f"Process {process_id} stopped successfully",
-                metadata={"process_id": process_id}
-            )
-            
             logger.info(f"Process stopped: {process_id}")
-            return result
-            
+            return SkillResult(
+                success=True,
+                content=f"Process {process_id} stopped (exit_code={state['exit_code']})",
+                metadata={"process_id": process_id, "exit_code": state["exit_code"]}
+            )
         except Exception as e:
             return SkillResult(
                 success=False,
@@ -295,76 +395,47 @@ class BashSkill(BaseSkill):
             )
     
     async def list_processes(self) -> SkillResult:
-        """列出运行中的进程"""
-        processes = []
-        
-        for process_id, process in self.running_processes.items():
-            try:
-                if process.poll() is None:
-                    processes.append({
-                        "process_id": process_id,
-                        "pid": process.pid,
-                        "status": "running"
-                    })
-                else:
-                    processes.append({
-                        "process_id": process_id,
-                        "pid": process.pid,
-                        "status": "terminated",
-                        "return_code": process.returncode
-                    })
-            except Exception as e:
-                processes.append({
-                    "process_id": process_id,
-                    "status": "error",
-                    "error": str(e)
-                })
-        
-        # 清理已终止的进程
-        terminated_ids = [
-            pid for pid, proc in self.running_processes.items() 
-            if proc.poll() is not None
-        ]
-        for pid in terminated_ids:
-            del self.running_processes[pid]
-        
-        result = SkillResult(
+        """列出后台进程状态"""
+        rows = []
+        finished_ids = []
+        for process_id, state in self.running_processes.items():
+            status = "RUNNING" if state["running"] else f"DONE(exit={state['exit_code']})"
+            elapsed = asyncio.get_event_loop().time() - state["started_at"]
+            rows.append(
+                f"  {process_id}  {status}  elapsed={elapsed:.1f}s  "
+                f"stdout_lines={len(state['stdout_lines'])}  "
+                f"cmd={state['command'][:60]}"
+            )
+            if not state["running"]:
+                finished_ids.append(process_id)
+
+        if not rows:
+            summary = "No background processes."
+        else:
+            summary = "Background processes:\n" + "\n".join(rows)
+            summary += "\n\nTip: use  get_output <process_id>  to read output."
+
+        return SkillResult(
             success=True,
-            content=f"Found {len(processes)} processes",
-            metadata={
-                "processes": processes,
-                "total_processes": len(processes)
-            }
+            content=summary,
+            metadata={"total": len(rows), "finished": len(finished_ids)},
         )
-        
-        return result
     
     async def cleanup_all_processes(self) -> SkillResult:
-        """清理所有运行中的进程"""
-        stopped_processes = []
-        errors = []
-        
+        """清理所有后台进程"""
+        stopped, errors = [], []
         for process_id in list(self.running_processes.keys()):
             try:
-                result = await self.stop_process(process_id)
-                if result.success:
-                    stopped_processes.append(process_id)
-                else:
-                    errors.append(f"{process_id}: {result.error}")
+                r = await self.stop_process(process_id)
+                (stopped if r.success else errors).append(process_id)
             except Exception as e:
-                errors.append(f"{process_id}: {str(e)}")
-        
-        result = SkillResult(
+                errors.append(f"{process_id}: {e}")
+        logger.info(f"Cleanup: {len(stopped)} stopped, {len(errors)} errors")
+        return SkillResult(
             success=len(errors) == 0,
-            content=f"Cleanup completed: {len(stopped_processes)} stopped, {len(errors)} errors",
-            metadata={
-                "stopped_processes": stopped_processes,
-                "errors": errors
-            }
+            content=f"Cleanup done: {len(stopped)} stopped, {len(errors)} errors",
+            metadata={"stopped": stopped, "errors": errors},
         )
-        
-        logger.info(f"Cleanup completed: {len(stopped_processes)} stopped, {len(errors)} errors")
-        return result
     
     async def execute(self, **kwargs) -> SkillResult:
         """执行Bash操作"""
@@ -381,14 +452,18 @@ class BashSkill(BaseSkill):
         # 处理特殊命令
         if command == "list_processes":
             return await self.list_processes()
-        
+
+        elif command.startswith("get_output "):
+            process_id = command.split(" ", 1)[1].strip()
+            return await self.get_output(process_id)
+
         elif command.startswith("stop_process "):
             process_id = command.split(" ", 1)[1].strip()
             return await self.stop_process(process_id)
-        
+
         elif command == "cleanup_all":
             return await self.cleanup_all_processes()
-        
+
         else:
             return await self.execute_command(command, timeout, background)
     

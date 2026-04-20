@@ -15,7 +15,7 @@ a = Analysis(
     pathex=['/Users/wangshuang/PycharmProjects/obs/obs/src', '/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills'],
     binaries=[],
     datas=[('/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills', '.claude/skills'), ('/Users/wangshuang/PycharmProjects/obs/obs/frontend', 'frontend'), ('/Users/wangshuang/PycharmProjects/obs/obs/skills', 'skills'), *ENV_DATAS],
-    hiddenimports=['omni_agent.api', 'skill_manager', 'skill_loader', 'base_skill'],
+    hiddenimports=['omni_agent.api', 'skill_manager', 'skill_loader', 'base_skill', 'webview', 'webview.platforms.cocoa'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -29,7 +29,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='OBS Agent',
+    name='OBS Code',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -48,11 +48,11 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='OBS Agent',
+    name='OBS Code',
 )
 app = BUNDLE(
     coll,
-    name='OBS Agent.app',
+    name='OBS Code.app',
     icon=None,
     bundle_identifier=None,
 )

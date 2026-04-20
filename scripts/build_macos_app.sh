@@ -22,8 +22,22 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   ENV_DATA_ARGS+=(--add-data "$ROOT_DIR/.env:.")
 fi
 
+if ! python - <<'PY' >/dev/null 2>&1
+import importlib.util
+raise SystemExit(0 if importlib.util.find_spec("webview") else 1)
+PY
+then
+  echo "Missing desktop dependency: pywebview. Install it with 'python -m pip install pywebview==6.2.1' first."
+  exit 1
+fi
+
 rm -rf "$BUILD_DIR" "$DIST_DIR" "$DMG_DIR"
 mkdir -p "$DMG_DIR"
+
+if [[ ! -d "$ROOT_DIR/ui/node_modules" ]]; then
+  npm --prefix "$ROOT_DIR/ui" install
+fi
+npm --prefix "$ROOT_DIR/ui" run build
 
 python -m PyInstaller \
   --noconfirm \
@@ -35,6 +49,9 @@ python -m PyInstaller \
   --hidden-import skill_manager \
   --hidden-import skill_loader \
   --hidden-import base_skill \
+  --hidden-import webview \
+  --hidden-import webview.platforms.cocoa \
+  --collect-all webview \
   --exclude-module matplotlib \
   --exclude-module IPython \
   --exclude-module jupyter_client \
