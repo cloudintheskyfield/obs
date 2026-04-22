@@ -107,6 +107,8 @@ export default function LogsDrawer({
     onRefresh,
     onClose,
     logs,
+    threadTitle,
+    threadId,
 }) {
     const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
@@ -126,12 +128,22 @@ export default function LogsDrawer({
             <div className="logs-backdrop" onClick={onClose} />
             <div className="logs-sheet">
                 <div className="logs-header">
-                    <div>
-                        <strong>LLM Logs</strong>
-                        <span className="logs-meta">
-                            Structured request / response events
-                            {totalCount > 0 && <em className="logs-count"> · {totalCount} 条</em>}
-                        </span>
+                    <div className="logs-header-copy">
+                        <div className="logs-title-row">
+                            <strong>LLM Logs</strong>
+                            <span className="logs-meta">
+                                Structured request / response events
+                                {totalCount > 0 && <em className="logs-count"> · {totalCount} 条</em>}
+                            </span>
+                        </div>
+                        {(threadTitle || threadId) && (
+                            <div className="logs-thread-scope" title={threadId || undefined}>
+                                <span className="logs-thread-badge">当前 Thread</span>
+                                {threadTitle && <strong className="logs-thread-title">{threadTitle}</strong>}
+                                {threadId && <code className="logs-thread-id">{threadId}</code>}
+                            </div>
+                        )}
+                        <div className="logs-scope-note">只显示当前 thread 对应的日志</div>
                     </div>
                     <div className="logs-filters">
                         <select

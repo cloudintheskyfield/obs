@@ -648,6 +648,29 @@ function App() {
     }, [currentSessionId]);
 
     useEffect(() => {
+        if (!currentSessionId || requestIndicator?.active || isSending || !currentSession?.transcript?.length) {
+            return;
+        }
+        const staleStreamingIds = currentSession.transcript
+            .filter((entry) => entry?.streaming)
+            .map((entry) => entry.id);
+        if (!staleStreamingIds.length) {
+            return;
+        }
+        updateSessionById(currentSessionId, (session) => {
+            session.transcript.forEach((entry) => {
+                if (!entry?.streaming) {
+                    return;
+                }
+                entry.streaming = false;
+                if (entry.kind === "thinking_text") {
+                    entry.pendingPlaceholder = false;
+                }
+            });
+        }, { touchUpdatedAt: false });
+    }, [currentSessionId, currentSession, requestIndicator?.active, isSending]);
+
+    useEffect(() => {
         const flushCurrentSession = () => {
             const sessionId = currentSessionIdRef.current;
             const session = sessionsRef.current.find((item) => item.id === sessionId);
@@ -1976,6 +1999,8 @@ function App() {
                 onRefresh={refreshLogsFromBackend}
                 onClose={() => setLogsOpen(false)}
                 logs={logEntries}
+                threadTitle={currentSession?.title || ""}
+                threadId={currentSessionId || ""}
             />
             <SkillsDrawer
                 open={skillsOpen}

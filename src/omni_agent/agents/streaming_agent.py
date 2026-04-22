@@ -2858,11 +2858,17 @@ class StreamingAgent:
                             "session_id": session_id,
                         })
                     if parsed["answer_text"]:
-                        yield self._sse({
-                            "type": "answer_delta",
-                            "delta": parsed["answer_text"],
-                            "session_id": session_id,
-                        })
+                        clean_answer = self._strip_obs_tags(parsed["answer_text"])
+                        if clean_answer:
+                            for todo_event in self._emit_todo_events(
+                                assistant_message["content"], session_id, todo_state
+                            ):
+                                yield todo_event
+                            yield self._sse({
+                                "type": "answer_delta",
+                                "delta": clean_answer,
+                                "session_id": session_id,
+                            })
                     tool_calls = self._extract_tool_calls_from_response_message(message)
                 except Exception as fallback_exc:
                     if any(item.get("role") == "tool" for item in messages):

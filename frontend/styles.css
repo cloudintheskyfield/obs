@@ -1453,8 +1453,61 @@ select {
     flex-wrap: wrap;
 }
 
+.logs-header-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: min(520px, 100%);
+}
+
+.logs-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
 .logs-meta {
-    margin-left: 10px;
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.logs-thread-scope {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.logs-thread-badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(217, 201, 171, 0.16);
+    background: rgba(217, 201, 171, 0.08);
+    color: rgba(243, 239, 231, 0.82);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.logs-thread-title {
+    max-width: min(360px, 100%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    color: var(--text);
+}
+
+.logs-thread-id {
+    padding: 3px 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.logs-scope-note {
     color: var(--text-dim);
     font-size: 12px;
 }
