@@ -27,10 +27,10 @@ RECENT_TURNS_VERBATIM = 10         # target verbatim turns for compaction (see L
 # Hard caps on what we send to MiniMax in one request (avoid 400 / overload from giant prompts).
 LLM_MAX_RECENT_DIALOG_TURNS = max(2, min(30, int(os.getenv("OBS_LLM_MAX_RECENT_TURNS", "10"))))
 MAX_CHARS_PER_PROMPT_TURN = max(2_000, min(60_000, int(os.getenv("OBS_LLM_MAX_CHARS_PER_TURN", "10000"))))
-HISTORICAL_SUMMARY_MAX_CHARS = max(8_000, min(120_000, int(os.getenv("OBS_LLM_MAX_HISTORICAL_CHARS", "24000"))))
-TOOL_MESSAGE_SOFT_CHAR_LIMIT = max(4_000, min(200_000, int(os.getenv("OBS_LLM_TOOL_MESSAGE_SOFT_CHARS", "12000"))))
+HISTORICAL_SUMMARY_MAX_CHARS = max(8_000, min(120_000, int(os.getenv("OBS_LLM_MAX_HISTORICAL_CHARS", "12000"))))
+TOOL_MESSAGE_SOFT_CHAR_LIMIT = max(4_000, min(200_000, int(os.getenv("OBS_LLM_TOOL_MESSAGE_SOFT_CHARS", "8000"))))
 # Whole "[Recent conversation turns]" block ceiling (after per-turn truncation).
-RECENT_TRANSCRIPT_BLOCK_MAX = max(20_000, min(200_000, int(os.getenv("OBS_LLM_MAX_RECENT_BLOCK_CHARS", "90000"))))
+RECENT_TRANSCRIPT_BLOCK_MAX = max(20_000, min(200_000, int(os.getenv("OBS_LLM_MAX_RECENT_BLOCK_CHARS", "24000"))))
 COMPACTABLE_TOOL_NAMES = frozenset({
     "bash", "str_replace_editor", "web_search", "advanced_web_search",
     "computer", "code_sandbox", "weather",
@@ -155,17 +155,23 @@ class StreamingAgent:
             if not isinstance(part, dict):
                 continue
             part_type = part.get("type")
-            if part_type == "text":
-                text_value = str(part.get("text") or "")
-                if text_value:
-                    content.append({"type": "text", "text": text_value})
-            elif part_type == "image":
+            if part_type == "image":
                 data_url = part.get("data_url") or part.get("url")
                 if data_url:
                     content.append({
                         "type": "image_url",
                         "image_url": {"url": data_url},
                     })
+
+        if not leading_text:
+            for part in message_parts:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") != "text":
+                    continue
+                text_value = str(part.get("text") or "")
+                if text_value:
+                    content.append({"type": "text", "text": text_value})
         return content or prompt_text
 
     def _has_image_parts(self, message_parts: Optional[List[Dict[str, Any]]]) -> bool:
@@ -512,6 +518,100 @@ class StreamingAgent:
             return content
         return "工具已经执行，但模型没有返回可显示的最终回答。"
 
+    def _build_tool_recovery_digest(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        max_items: int = 6,
+        max_chars_per_item: int = 320,
+    ) -> str:
+        items: List[str] = []
+        for entry in messages:
+            if entry.get("role") != "tool":
+                continue
+            tool_name = entry.get("name") or "tool"
+            content = self._sanitize_visible_text((entry.get("content") or "")).strip()
+            if not content:
+                continue
+            if len(content) > max_chars_per_item:
+                content = content[:max_chars_per_item] + "\n[...truncated]"
+            items.append(f"[{tool_name}]\n{content}")
+        if not items:
+            return ""
+        return "\n\n".join(items[-max_items:])
+
+    def _latest_user_request_text(
+        self,
+        conversation_history: List[Dict[str, Any]],
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        for entry in reversed(conversation_history):
+            if entry.get("role") != "user":
+                continue
+            content = self._sanitize_visible_text(self._message_content_to_text(entry.get("content"))).strip()
+            if content:
+                return content
+        for entry in reversed(messages or []):
+            if entry.get("role") != "user":
+                continue
+            content = self._sanitize_visible_text(self._message_content_to_text(entry.get("content"))).strip()
+            if content:
+                return content
+        return ""
+
+    def _build_compact_final_synthesis_messages(
+        self,
+        *,
+        conversation_history: List[Dict[str, Any]],
+        messages: List[Dict[str, Any]],
+        instruction: str,
+    ) -> List[Dict[str, str]]:
+        latest_user_request = self._latest_user_request_text(conversation_history, messages)
+        tool_digest = self._build_tool_recovery_digest(
+            messages,
+            max_items=8,
+            max_chars_per_item=260,
+        )
+
+        user_sections: List[str] = []
+        if latest_user_request:
+            user_sections.append(
+                "[Original user request]\n"
+                f"{self._truncate_prompt_field(latest_user_request, 1800)}"
+            )
+        if tool_digest:
+            user_sections.append(f"[Completed tool outputs]\n{tool_digest}")
+        user_sections.append(f"[Synthesis instruction]\n{instruction}")
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are OBS Agent. Produce the final user-facing answer from the provided "
+                    "request and completed tool outputs only. Do not call tools, do not emit XML, "
+                    "and do not repeat internal planning."
+                ),
+            },
+            {
+                "role": "user",
+                "content": "\n\n".join(section for section in user_sections if section.strip()),
+            },
+        ]
+
+    def _build_recovered_tool_answer(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        cause: Optional[str] = None,
+    ) -> str:
+        fallback = self._build_tool_fallback_answer(messages).strip()
+        cause_text = self._sanitize_visible_text(cause or "").strip()
+        cause_line = cause_text.splitlines()[0].strip() if cause_text else ""
+        prefix = "我已经尽量保住这次执行里拿到的结果了。模型在整理最终回答时出现异常，先把当前能确认的信息返回给你："
+        if cause_line and len(cause_line) <= 220:
+            return f"{prefix}\n\n{fallback}\n\n异常摘要：{cause_line}"
+        return f"{prefix}\n\n{fallback}"
+
     def _should_include_runtime_context(self, user_message: str) -> bool:
         text = (user_message or "").strip()
         if not text or SIMPLE_GREETING_PATTERN.match(text):
@@ -577,6 +677,17 @@ class StreamingAgent:
             self._estimate_text_tokens(self._message_content_to_text(item.get("content")))
             for item in messages
         )
+
+    def _estimate_message_payload_stats(self, messages: List[Dict[str, Any]]) -> Dict[str, int]:
+        approx_chars = sum(
+            len(self._message_content_to_text(item.get("content")) or "")
+            for item in messages
+        )
+        return {
+            "message_count": len(messages),
+            "approx_text_chars": approx_chars,
+            "approx_text_tokens": self._estimate_context_tokens(messages),
+        }
 
     def _estimate_context_percent(
         self,
@@ -1430,21 +1541,21 @@ class StreamingAgent:
         instruction: str,
         model: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
-        final_messages = [
-            *messages,
-            {
-                "role": "user",
-                "content": instruction,
-            },
-        ]
+        final_messages = self._build_compact_final_synthesis_messages(
+            conversation_history=conversation_history,
+            messages=messages,
+            instruction=instruction,
+        )
         yield self._sse_log(session_id, "final_synthesis", "request", {
             "messages": final_messages,
             "temperature": 0.4,
             "max_tokens": 2000,
             "stream": False,
             "model": model,
+            "payload_stats": self._estimate_message_payload_stats(final_messages),
         })
         raw_content = ""
+        recovery_error: Optional[Exception] = None
         synthesis_attempts = 3
         for attempt in range(1, synthesis_attempts + 1):
             try:
@@ -1472,8 +1583,55 @@ class StreamingAgent:
                     })
                 if raw_content.strip() and not self._contains_raw_tool_markup(raw_content):
                     break
-            except Exception:
+            except Exception as exc:
+                recovery_error = exc
                 logger.exception(f"Final answer synthesis failed on attempt {attempt}")
+
+        if (not raw_content.strip() or self._contains_raw_tool_markup(raw_content)) and any(item.get("role") == "tool" for item in messages):
+            yield self._sse({
+                "type": "phase",
+                "content": "Final synthesis failed. Retrying with compact recovery prompt…",
+                "transient": True,
+                "session_id": session_id,
+            })
+            recovery_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are OBS Agent. Produce a final user-facing answer from recovered tool outputs only. "
+                        "Do not call tools, do not emit XML or markup, and do not describe internal planning."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"{instruction}\n\n"
+                        "[Recovered tool outputs]\n"
+                        f"{self._build_tool_recovery_digest(messages) or self._build_tool_fallback_answer(messages)}\n\n"
+                        "Return a concise, helpful final answer in natural language."
+                    ),
+                },
+            ]
+            for attempt in range(1, 3):
+                try:
+                    response = await self.vllm_client.chat_completion(
+                        messages=recovery_messages,
+                        temperature=0.2,
+                        max_tokens=1200,
+                        stream=False,
+                        model=model,
+                    )
+                    if "choices" in response and response["choices"]:
+                        raw_content = response["choices"][0].get("message", {}).get("content", "") or ""
+                        yield self._sse_log(session_id, "final_synthesis_recovery", "response", {
+                            "attempt": attempt,
+                            "message": response["choices"][0].get("message", {}),
+                        })
+                    if raw_content.strip() and not self._contains_raw_tool_markup(raw_content):
+                        break
+                except Exception as exc:
+                    recovery_error = exc
+                    logger.exception(f"Recovery synthesis failed on attempt {attempt}")
 
         final_parts = self._split_thinking_and_answer(raw_content)
         if final_parts["thinking_text"].strip():
@@ -1483,7 +1641,15 @@ class StreamingAgent:
                 "session_id": session_id,
             })
 
-        final_answer = final_parts["answer_text"].strip() or self._build_readonly_summary_fallback(messages)
+        final_answer = final_parts["answer_text"].strip()
+        if not final_answer:
+            if any(item.get("role") == "tool" for item in messages):
+                final_answer = self._build_recovered_tool_answer(
+                    messages,
+                    cause=str(recovery_error or raw_content or ""),
+                )
+            else:
+                final_answer = self._build_readonly_summary_fallback(messages)
         if final_answer:
             yield self._sse({
                 "type": "answer_delta",
@@ -2577,6 +2743,7 @@ class StreamingAgent:
                     "max_tokens": 4000,
                     "stream": True,
                     "model": selected_model,
+                    "payload_stats": self._estimate_message_payload_stats(messages),
                 })
                 stream_generator = await self.vllm_client.chat_completion(
                     messages=messages,
@@ -2667,35 +2834,61 @@ class StreamingAgent:
                     "error": str(exc),
                     "model": selected_model,
                 })
-                response = await self.vllm_client.chat_completion(
-                    messages=messages,
-                    tools=tools if tools else None,
-                    temperature=0.7,
-                    max_tokens=4000,
-                    stream=False,
-                    model=selected_model,
-                )
-                if "choices" not in response or not response["choices"]:
+                try:
+                    response = await self.vllm_client.chat_completion(
+                        messages=messages,
+                        tools=tools if tools else None,
+                        temperature=0.7,
+                        max_tokens=4000,
+                        stream=False,
+                        model=selected_model,
+                    )
+                    if "choices" not in response or not response["choices"]:
+                        raise
+                    message = response["choices"][0].get("message", {}) or {}
+                    yield self._sse_log(session_id, "tool_planning", "response", {
+                        "message": message,
+                    })
+                    assistant_message["content"] = message.get("content", "") or ""
+                    parsed = self._split_thinking_and_answer(assistant_message["content"])
+                    if parsed["thinking_text"]:
+                        yield self._sse({
+                            "type": "thinking_delta",
+                            "delta": parsed["thinking_text"],
+                            "session_id": session_id,
+                        })
+                    if parsed["answer_text"]:
+                        yield self._sse({
+                            "type": "answer_delta",
+                            "delta": parsed["answer_text"],
+                            "session_id": session_id,
+                        })
+                    tool_calls = self._extract_tool_calls_from_response_message(message)
+                except Exception as fallback_exc:
+                    if any(item.get("role") == "tool" for item in messages):
+                        logger.exception("Model fallback failed after tools completed; recovering from tool outputs")
+                        recovery_answer = self._build_recovered_tool_answer(messages, cause=str(fallback_exc))
+                        yield self._sse({
+                            "type": "phase",
+                            "content": "Model response failed after tool execution. Recovering from completed tool results…",
+                            "transient": True,
+                            "session_id": session_id,
+                        })
+                        conversation_history.append({
+                            "role": "assistant",
+                            "content": recovery_answer,
+                        })
+                        chat_sessions[session_id] = conversation_history
+                        yield self._emit_context_state(session_id, conversation_history, working_messages=messages, model_name=selected_model)
+                        yield self._sse({
+                            "type": "answer_delta",
+                            "delta": recovery_answer,
+                            "session_id": session_id,
+                        })
+                        yield self._sse({"done": True, "session_id": session_id})
+                        completed = True
+                        break
                     raise
-                message = response["choices"][0].get("message", {}) or {}
-                yield self._sse_log(session_id, "tool_planning", "response", {
-                    "message": message,
-                })
-                assistant_message["content"] = message.get("content", "") or ""
-                parsed = self._split_thinking_and_answer(assistant_message["content"])
-                if parsed["thinking_text"]:
-                    yield self._sse({
-                        "type": "thinking_delta",
-                        "delta": parsed["thinking_text"],
-                        "session_id": session_id,
-                    })
-                if parsed["answer_text"]:
-                    yield self._sse({
-                        "type": "answer_delta",
-                        "delta": parsed["answer_text"],
-                        "session_id": session_id,
-                    })
-                tool_calls = self._extract_tool_calls_from_response_message(message)
 
             if not tool_calls:
                 tool_calls = self._extract_tool_calls_from_response_message(assistant_message)

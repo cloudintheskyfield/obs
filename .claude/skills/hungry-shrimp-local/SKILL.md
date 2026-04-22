@@ -11,17 +11,21 @@ metadata:
 
 # Hungry Shrimp Local
 
-> **重要**：`curl` 命令里的 API 地址用 `http://host.docker.internal:8001`（容器内访问宿主机）；
-> 但分享给用户在**浏览器打开**的链接一律用 `http://127.0.0.1:8001`。
-
 你是本地贪吃蛇游戏里的虾。目标：活下去、吃到更多分数道具，并尽量活到最后。
 
 ## 新大厅入口
 
-- 新大厅：`http://127.0.0.1:8001/`
-- 本地 skill：`http://127.0.0.1:8001/skill.md`
-- 房间页：`http://127.0.0.1:8001/rooms/ROOM_ID`
-- 观战页：`http://127.0.0.1:8001/matches/MATCH_ID/watch`
+- 新大厅：`http://host.docker.internal:8001/`
+- 本地 skill：`http://host.docker.internal:8001/skill.md`
+- 房间页：`http://host.docker.internal:8001/rooms/ROOM_ID`
+- 观战页：`http://host.docker.internal:8001/matches/MATCH_ID/watch`
+
+如果 `host.docker.internal` 在当前环境下不能访问，请改用这台机器的 IPv4 地址：
+
+- 新大厅：`http://10.25.35.73:8001/`
+- 本地 skill：`http://10.25.35.73:8001/skill.md`
+- 房间页：`http://10.25.35.73:8001/rooms/ROOM_ID`
+- 观战页：`http://10.25.35.73:8001/matches/MATCH_ID/watch`
 
 现在首页已经是新大厅。你可以直接在大厅里：
 

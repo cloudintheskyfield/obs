@@ -19,15 +19,24 @@ const MODE_META = {
 export default function RuntimePills({
     mode, setMode,
     contextPercent, contextTokens, contextMaxTokens,
+    threadContextPercent, threadContextTokens, threadTurnCount,
     githubUrl, onExport,
 }) {
-    const pct = Math.min(100, Math.max(0, Number(contextPercent) || 0));
-    const barColor = pct > 85
+    const workingPct = Math.min(100, Math.max(0, Number(contextPercent) || 0));
+    const threadPct = Math.min(100, Math.max(0, Number(threadContextPercent) || 0));
+    const threadBarColor = threadPct > 85
         ? "rgba(220, 80, 80, 0.75)"
-        : pct > 65
+        : threadPct > 65
         ? "rgba(210, 160, 60, 0.70)"
         : "rgba(217, 201, 171, 0.50)";
-    const pctLabel = pct < 0.1 ? "<0.1%" : `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+    const workingBarColor = workingPct > 85
+        ? "rgba(255, 143, 143, 0.92)"
+        : workingPct > 65
+        ? "rgba(242, 212, 120, 0.95)"
+        : "rgba(243, 239, 231, 0.95)";
+    const threadPctLabel = threadPct < 0.1 ? "<0.1%" : `${threadPct.toFixed(threadPct >= 10 ? 0 : 1)}%`;
+    const workingPctLabel = workingPct < 0.1 ? "<0.1%" : `${workingPct.toFixed(workingPct >= 10 ? 0 : 1)}%`;
+    const roundsLabel = threadTurnCount === 1 ? "1 round" : `${threadTurnCount || 0} rounds`;
 
     return (
         <header className="unified-bar">
@@ -50,18 +59,23 @@ export default function RuntimePills({
             {/* ── Centre: context meter ── */}
             <div
                 className="context-meter"
-                title={`Context: ${formatTokenCount(contextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens`}
+                title={`Current thread: ${formatTokenCount(threadContextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens. Working set sent to the model this turn: ${formatTokenCount(contextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens.`}
             >
                 <div className="context-meter-labels">
                     <span className="context-meter-name">Context</span>
                     <span className="context-meter-value">
-                        {contextTokens > 0 ? `${formatTokenCount(contextTokens)} / ` : ""}
+                        {formatTokenCount(threadContextTokens)} / 
                         {formatTokenCount(contextMaxTokens)}
-                        <em>{pctLabel}</em>
+                        <em>{threadPctLabel}</em>
                     </span>
                 </div>
                 <div className="context-meter-track">
-                    <div className="context-meter-fill" style={{ width: `${pct}%`, background: barColor }} />
+                    <div className="context-meter-fill context-meter-fill-thread" style={{ width: `${threadPct}%`, background: threadBarColor }} />
+                    <div className="context-meter-fill context-meter-fill-working" style={{ width: `${workingPct}%`, background: workingBarColor }} />
+                </div>
+                <div className="context-meter-meta">
+                    <span>Current thread · {roundsLabel}</span>
+                    <span>Working set · {formatTokenCount(contextTokens)} · {workingPctLabel}</span>
                 </div>
             </div>
 

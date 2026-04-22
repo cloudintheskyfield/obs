@@ -6,7 +6,7 @@ import RuntimePills from "./components/RuntimePills.jsx";
 import SkillsDrawer from "./components/SkillsDrawer.jsx";
 import TranscriptView from "./components/TranscriptView.jsx";
 import WorkspaceModal from "./components/WorkspaceModal.jsx";
-import { formatWorkspaceBreadcrumb, shortenModel } from "./lib/formatting.js";
+import { formatWorkspaceBreadcrumb, normalizeDisplayText, shortenModel } from "./lib/formatting.js";
 
 const STORAGE_VERSION = "20260415-01";
 const SETTINGS_KEY = "obs-agent-settings";
@@ -19,6 +19,7 @@ const LOGO_SRC = "/static/obs-code-logo.svg";
 const MODEL_CONTEXT_WINDOWS = {
     "MiniMax-M2": 200000,
 };
+const VALID_PERMISSION_MODES = ["ask", "auto"];
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
@@ -30,6 +31,10 @@ function resolveDefaultApiBaseUrl() {
 
 function nowIso() {
     return new Date().toISOString();
+}
+
+function normalizePermissionMode(value) {
+    return VALID_PERMISSION_MODES.includes(value) ? value : "ask";
 }
 
 function safeSetLocalStorage(key, value) {
@@ -88,17 +93,28 @@ function createEmptySession(id) {
 }
 
 function normalizeEntry(entry) {
+    const kind = entry.kind || "assistant_text";
+    const normalizedContent = (
+        kind === "assistant_text"
+        || kind === "thinking_text"
+        || kind === "system_notice"
+        || kind === "tool_result"
+    )
+        ? normalizeDisplayText(entry.content || "")
+        : (entry.content || "");
     return {
         id: entry.id || `entry_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
         role: entry.role || "assistant",
-        content: entry.content || "",
-        kind: entry.kind || "assistant_text",
+        content: normalizedContent,
+        kind,
         taskId: entry.taskId || "main",
         toolName: entry.toolName || null,
         phase: entry.phase || null,
         compressionState: entry.compressionState || null,
         success: entry.success,
+        isError: Boolean(entry.isError),
         pendingPlaceholder: Boolean(entry.pendingPlaceholder),
+        elapsedLabel: typeof entry.elapsedLabel === "string" ? entry.elapsedLabel : null,
         timestamp: entry.timestamp || nowIso(),
         streaming: Boolean(entry.streaming),
         images: compactTranscriptImages(entry.images),
@@ -369,11 +385,11 @@ function App() {
         currentSessionIdRef.current = currentSessionId;
     }, [currentSessionId]);
 
-    // When the user switches away from the generating session, show a "working" badge
-    // on that session in the sidebar.
+    // Keep the sidebar activity badge in sync for the currently generating thread,
+    // whether or not the user is looking at that thread right now.
     useEffect(() => {
         const genId = sendingSessionIdRef.current;
-        if (isSending && genId && currentSessionId !== genId) {
+        if (isSending && genId) {
             setSessionBadges((prev) => {
                 if (prev[genId] && prev[genId] !== "fading") return prev;
                 return { ...prev, [genId]: "working" };
@@ -400,7 +416,7 @@ function App() {
                     setThinkingMode(stored.thinkingMode);
                 }
                 if (stored.permissionMode) {
-                    setPermissionMode(stored.permissionMode);
+                    setPermissionMode(normalizePermissionMode(stored.permissionMode));
                 }
                 if (stored.toolContext) {
                     setToolContext(stored.toolContext);
@@ -498,6 +514,14 @@ function App() {
     const recallableUserInputs = (currentSession?.transcript || [])
         .filter((entry) => entry?.role === "user" && typeof entry.content === "string" && entry.content.trim())
         .map((entry) => entry.content);
+    const threadContextMaxTokens = typeof currentSession?.serverContextMaxTokens === "number"
+        ? currentSession.serverContextMaxTokens
+        : getModelContextWindow(selectedModel);
+    const threadContextTokens = estimateContextTokensFromTranscript(currentSession);
+    const threadContextPercent = threadContextMaxTokens > 0
+        ? Math.min(98, (threadContextTokens / threadContextMaxTokens) * 100)
+        : 0;
+    const threadTurnCount = (currentSession?.transcript || []).filter((entry) => entry?.role === "user").length;
 
     useEffect(() => {
         if (!currentSession) return; // avoid flash from null-session heuristic on initial mount
@@ -624,6 +648,24 @@ function App() {
     }, [currentSessionId]);
 
     useEffect(() => {
+        const flushCurrentSession = () => {
+            const sessionId = currentSessionIdRef.current;
+            const session = sessionsRef.current.find((item) => item.id === sessionId);
+            if (!sessionId || !session) {
+                return;
+            }
+            persistUiSessionSnapshot(sessionId, upgradeSession(session), { keepalive: true });
+        };
+
+        window.addEventListener("beforeunload", flushCurrentSession);
+        window.addEventListener("pagehide", flushCurrentSession);
+        return () => {
+            window.removeEventListener("beforeunload", flushCurrentSession);
+            window.removeEventListener("pagehide", flushCurrentSession);
+        };
+    }, []);
+
+    useEffect(() => {
         if (logsOpen) {
             refreshLogsFromBackend();
         }
@@ -633,7 +675,32 @@ function App() {
         setSessions((previous) => updater(previous.map((session) => upgradeSession(session))));
     }
 
-    function updateSessionById(sessionId, transform, { touchUpdatedAt = true } = {}) {
+    function buildSlimSessionSnapshot(session) {
+        return {
+            ...session,
+            transcript: (session.transcript || []).map((entry) => {
+                if (!entry.images || !entry.images.length) return entry;
+                return { ...entry, images: entry.images.map(({ dataUrl: _d, ...rest }) => rest) };
+            }),
+            logs: (session.logs || []).map(({ payload: _p, ...rest }) => rest),
+        };
+    }
+
+    function persistUiSessionSnapshot(sessionId, session, { keepalive = false } = {}) {
+        const apiUrl = settingsRef.current.apiUrl;
+        if (!apiUrl || !sessionId || !session) {
+            return;
+        }
+        const slim = buildSlimSessionSnapshot(session);
+        fetch(`${apiUrl}/ui-sessions/${sessionId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(slim),
+            keepalive,
+        }).catch(() => {});
+    }
+
+    function updateSessionById(sessionId, transform, { touchUpdatedAt = true, persistKeepalive = false } = {}) {
         updateSessions((previous) => previous.map((session) => {
             if (session.id !== sessionId) {
                 return session;
@@ -648,22 +715,7 @@ function App() {
             if (touchUpdatedAt) {
                 clone.updatedAt = nowIso();
             }
-            const apiUrl = settingsRef.current.apiUrl;
-            if (apiUrl) {
-                const slim = {
-                    ...clone,
-                    transcript: (clone.transcript || []).map((entry) => {
-                        if (!entry.images || !entry.images.length) return entry;
-                        return { ...entry, images: entry.images.map(({ dataUrl: _d, ...rest }) => rest) };
-                    }),
-                    logs: (clone.logs || []).map(({ payload: _p, ...rest }) => rest),
-                };
-                fetch(`${apiUrl}/ui-sessions/${sessionId}`, {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(slim),
-                }).catch(() => {});
-            }
+            persistUiSessionSnapshot(sessionId, clone, { keepalive: persistKeepalive });
             return clone;
         }));
     }
@@ -676,12 +728,12 @@ function App() {
         return normalized;
     }
 
-    function patchTranscriptEntry(sessionId, entryId, patch) {
+    function patchTranscriptEntry(sessionId, entryId, patch, options = {}) {
         updateSessionById(sessionId, (session) => {
             const target = session.transcript.find((entry) => entry.id === entryId);
             if (!target) return;
             Object.assign(target, patch);
-        });
+        }, options);
     }
 
     function removeTranscriptEntry(sessionId, entryId) {
@@ -1125,7 +1177,7 @@ function App() {
     }
 
     function cyclePermissionMode() {
-        setPermissionMode((current) => current === "ask" ? "plan" : "ask");
+        setPermissionMode((current) => normalizePermissionMode(current) === "ask" ? "auto" : "ask");
     }
 
     function cycleModel() {
@@ -1291,9 +1343,11 @@ function App() {
 
         const sessionId = currentSessionId;
         const requestMode = isSimpleChat(content) ? "agent" : mode;
+        const effectivePermissionMode = normalizePermissionMode(permissionMode);
         const { toolContext: selectedToolContext, context } = buildContextPayload("workspace", workspacePath || runtime?.work_dir || "");
         sendingSessionIdRef.current = sessionId;
         setIsSending(true);
+        setSessionBadges((prev) => ({ ...prev, [sessionId]: "working" }));
         setCompletedLabel(null);
         sendStartTimeRef.current = Date.now();
         setRequestIndicator({
@@ -1339,8 +1393,8 @@ function App() {
                     tool_name: "chat",
                     message: content,
                     session_id: sessionId,
-                    permission_mode: permissionMode,
-                    permission_confirmed: permissionMode !== "ask",
+                    permission_mode: effectivePermissionMode,
+                    permission_confirmed: effectivePermissionMode !== "ask",
                     thinking_mode: thinkingMode,
                     mode: requestMode,
                     model: selectedModel,
@@ -1352,8 +1406,8 @@ function App() {
                     parameters: {
                         message: content,
                         session_id: sessionId,
-                        permission_mode: permissionMode,
-                        permission_confirmed: permissionMode !== "ask",
+                        permission_mode: effectivePermissionMode,
+                        permission_confirmed: effectivePermissionMode !== "ask",
                         thinking_mode: thinkingMode,
                         mode: requestMode,
                         model: selectedModel,
@@ -1380,7 +1434,9 @@ function App() {
                     if (!thinkingMode || !line) {
                         return;
                     }
-                    const nextThinking = `${thinkingEntry?.content || ""}${thinkingEntry?.content ? "\n" : ""}${line}`;
+                    const nextThinking = normalizeDisplayText(
+                        `${thinkingEntry?.content || ""}${thinkingEntry?.content ? "\n" : ""}${line}`
+                    );
                     if (!thinkingEntry) {
                         thinkingEntry = appendTranscriptEntry(sessionId, {
                             role: "assistant",
@@ -1510,7 +1566,9 @@ function App() {
                     const separator = thinkingEntry?.content && payload.delta && !String(thinkingEntry.content).endsWith("\n") && !String(payload.delta).startsWith("\n")
                         ? "\n"
                         : "";
-                    const nextThinking = `${thinkingEntry?.content || ""}${separator}${payload.delta || ""}`;
+                    const nextThinking = normalizeDisplayText(
+                        `${thinkingEntry?.content || ""}${separator}${payload.delta || ""}`
+                    );
                     if (!thinkingEntry) {
                         thinkingEntry = appendTranscriptEntry(sessionId, {
                             role: "assistant",
@@ -1532,7 +1590,7 @@ function App() {
 
                 if (payload.type === "answer_delta" || payload.content) {
                     setRequestIndicator(null);
-                    answerBuffer += payload.delta || payload.content || "";
+                    answerBuffer = normalizeDisplayText(`${answerBuffer}${payload.delta || payload.content || ""}`);
                     if (!answerBuffer.trim()) {
                         return;
                     }
@@ -1631,28 +1689,28 @@ function App() {
                 });
             }
             // Don't clear todo on abort/error — keep visible so user can see what was completed
-            if (error.name === "AbortError") {
-                if (assistantEntry) {
-                    patchTranscriptEntry(sessionId, assistantEntry.id, { streaming: false });
-                } else if (answerBuffer.trim()) {
-                    appendTranscriptEntry(sessionId, {
+                if (error.name === "AbortError") {
+                    if (assistantEntry) {
+                        patchTranscriptEntry(sessionId, assistantEntry.id, { streaming: false });
+                    } else if (answerBuffer.trim()) {
+                        assistantEntry = appendTranscriptEntry(sessionId, {
+                            role: "assistant",
+                            content: answerBuffer.trim(),
+                            kind: "assistant_text",
+                            taskId: "main",
+                            streaming: false
+                        });
+                    }
+                } else {
+                    assistantEntry = appendTranscriptEntry(sessionId, {
                         role: "assistant",
-                        content: answerBuffer.trim(),
+                        content: `请求失败: ${error.message}`,
                         kind: "assistant_text",
+                        isError: true,
                         taskId: "main",
                         streaming: false
                     });
                 }
-            } else {
-                appendTranscriptEntry(sessionId, {
-                    role: "assistant",
-                    content: `请求失败: ${error.message}`,
-                    kind: "assistant_text",
-                    isError: true,
-                    taskId: "main",
-                    streaming: false
-                });
-            }
         } finally {
             if (sendStartTimeRef.current) {
                 const elapsedMs = Date.now() - sendStartTimeRef.current;
@@ -1668,24 +1726,29 @@ function App() {
                 // Persist elapsed time into the assistant entry so historical
                 // messages retain their timing after new messages are sent.
                 if (assistantEntry?.id) {
-                    patchTranscriptEntry(sessionId, assistantEntry.id, { elapsedLabel: label });
+                    patchTranscriptEntry(sessionId, assistantEntry.id, { elapsedLabel: label }, { persistKeepalive: true });
                 }
                 sendStartTimeRef.current = null;
             }
             // Trigger the "just moved to top" animation on the session item
             setJustSentSessionId(sessionId);
             setTimeout(() => setJustSentSessionId(null), 1600);
-            // If the user is watching a different session, mark this one as "done"
-            if (currentSessionIdRef.current !== sessionId) {
-                setSessionBadges((prev) => ({ ...prev, [sessionId]: "done" }));
-            } else {
-                // User is already looking at it — no badge needed
-                setSessionBadges((prev) => {
-                    if (!prev[sessionId]) return prev;
-                    const next = { ...prev };
-                    delete next[sessionId];
-                    return next;
-                });
+            setSessionBadges((prev) => ({ ...prev, [sessionId]: "done" }));
+            if (currentSessionIdRef.current === sessionId) {
+                setTimeout(() => {
+                    setSessionBadges((prev) => {
+                        if (!prev[sessionId]) return prev;
+                        return { ...prev, [sessionId]: "fading" };
+                    });
+                    setTimeout(() => {
+                        setSessionBadges((prev) => {
+                            if (!prev[sessionId]) return prev;
+                            const next = { ...prev };
+                            delete next[sessionId];
+                            return next;
+                        });
+                    }, 500);
+                }, 1200);
             }
             sendingSessionIdRef.current = null;
             setRequestIndicator(null);
@@ -1818,6 +1881,9 @@ function App() {
                     contextPercent={contextPercent}
                     contextTokens={contextTokens}
                     contextMaxTokens={contextMaxTokens}
+                    threadContextPercent={threadContextPercent}
+                    threadContextTokens={threadContextTokens}
+                    threadTurnCount={threadTurnCount}
                     githubUrl={GITHUB_REPO_URL}
                     onExport={exportCurrentSession}
                 />

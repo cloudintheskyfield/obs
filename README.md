@@ -6,42 +6,44 @@
 
 把一个会聊天的 Agent，升级成一个真正能干活的工作台。
 
-OBS Code 不是单纯的对话框，而是一套面向真实任务的本地 AI 控制台：它能在你指定的工作区里读写文件、执行终端命令、调用 Python、搜索实时信息、控制浏览器，还会把上下文压缩、工具调用、日志和会话状态都落到本地，适合拿来做日常开发助手、研究助手、自动化助手，甚至直接作为你自己的 Claude-style 本地工作台。
+OBS Code 是一套面向真实任务的本地 AI 控制台。它不是单纯的聊天框，而是把会话、工具调用、工作区、日志、上下文压缩、架构可视化和桌面壳整合到同一套界面里，让 Agent 能在真实项目目录中读文件、改代码、跑命令、调用搜索和浏览器能力，并把运行过程完整落盘。
 
-## 为什么它会让人上头
+## 当前版本能做什么
 
-- 一个界面里同时拥有聊天、技能选择、日志面板、工作区切换、上下文压缩和本地持久化。
-- 按技能暴露工具，不把所有 schema 一股脑塞给模型，尽量减少上下文膨胀。
-- 对话不是“只会说”，而是能在当前工作区里真的执行文件、终端、Python 和浏览器相关操作。
-- 每轮 LLM 输入输出、会话历史、上下文摘要都会落到本地，方便追踪和排查。
-- 支持 Docker 开发、Web 控制台和 macOS 原生桌面打包。
+- 在指定工作区内执行真实任务：读写文件、运行终端命令、调用 Python / 沙箱、搜索实时信息、控制浏览器。
+- 在同一套 UI 里切换 `Agent / Plan / Battle / Review` 四种模式。
+- 用 `Skills` 面板约束模型能力，只开放当前需要的工具。
+- 用 `Logs` 查看完整 LLM request / response、工具执行和运行阶段。
+- 用 `Architecture` 查看当前运行时对应的真实代码链路和数据流。
+- 自动保存会话、UI 状态、线程工作区、上下文压缩结果和 LLM trace。
+- 既支持浏览器版，也支持复用同一套前后端的 macOS / Windows 桌面版打包产物。
 
-## 你能拿它做什么
+## 核心体验
 
-- 让 Agent 在指定项目目录下读代码、改代码、跑命令、生成脚本。
-- 把搜索、天气、新闻这类实时信息接成 skill，像插件一样开关。
-- 用浏览器/Computer Use 能力自动打开页面、截图、点击、输入。
-- 用 Python 或代码沙箱生成图表、处理数据、做实验。
-- 保存长会话并自动压缩上下文，不必每次重头解释项目背景。
+- `Workspace`
+  为每个线程绑定当前项目目录，Agent 的文件与命令执行都围绕这个目录展开。
+- `Skills`
+  按需勾选工具，把 schema 暴露控制在最小范围内，减少上下文膨胀。
+- `Thinking`
+  查看工具执行轨迹、中间过程和压缩提示，并支持折叠历史过程。
+- `Context`
+  同时展示当前 thread 的累计上下文和本轮真正送入模型的 working set。
+- `Logs`
+  落地完整会话与推理日志，方便排查“模型慢”“工具失败”“上下文跑偏”等问题。
+- `Architecture`
+  用流程图/数据流方式展示当前请求从 UI 到 FastAPI、Agent Loop、Skill 执行再到 SSE 输出的完整链路。
 
-## 核心能力
+## 运行界面
 
-- `Workspace` 工作区切换：为每个会话指定当前项目根目录。
-- `Skills` 技能筛选：只让模型使用你允许的能力。
-- `Logs` 本地日志：持久化完整 LLM request / response，支持时间筛选。
-- `Thinking` 折叠块：可查看中间推理与工具过程。
-- `Context compaction`：长对话自动在发送前压缩成模型可继续使用的摘要。
-- `Image paste`：聊天框支持粘贴图片、顺序占位和悬停预览。
+当前版本的控制台已经是完整工作台形态：左侧线程栏，中间主会话区，上方模式切换与上下文计量，底部统一输入区，以及 `Workspace / Logs / Skills / Architecture` 四个抽屉入口。
 
-## 运行效果
+![OBS Code Runtime Screenshot](screenshots/chat-ui-20260410.png)
 
-当前界面已经是完整可交互的 Claude-style 控制台，包括会话侧栏、Thinking 折叠块、工作区抽屉、日志抽屉和技能筛选：
-
-![OBS Code Console Screenshot](screenshots/chat-ui-20260410.png)
+> 说明：仓库里当前可直接引用的运行截图仍使用 `screenshots/chat-ui-20260410.png`。如果你把最新截图文件放进 `screenshots/`，README 可以继续切到那张图。
 
 ## 快速开始
 
-### 1. 本地开发
+### 1. 本地 Web 控制台
 
 ```bash
 cd /Users/wangshuang/PycharmProjects/obs/obs
@@ -50,16 +52,16 @@ docker-compose up -d omni-agent
 
 启动后访问：
 
-- Web 控制台: `http://127.0.0.1:8000`
-- OpenAPI: `http://127.0.0.1:8000/docs`
+- Web 控制台：`http://127.0.0.1:8000`
+- OpenAPI：`http://127.0.0.1:8000/docs`
 
-### 2. Docker 整体启动
+### 2. 启动完整依赖
 
 ```bash
 docker-compose up -d
 ```
 
-### 3. macOS 原生桌面版
+### 3. macOS 桌面版
 
 调试运行：
 
@@ -82,9 +84,46 @@ chmod +x scripts/build_macos_app.sh
 - `dist/OBS Code.app`
 - `dist/OBS-Code-<timestamp>.dmg`
 
-## 上手体验
+### 4. Windows 桌面版
 
-打开控制台后，你可以直接这样用：
+调试运行：
+
+```powershell
+cd C:\Users\wangshuang\PycharmProjects\obs\obs
+.\scripts\run_windows_desktop.ps1
+```
+
+也可以直接双击：
+
+- `scripts\run_windows_desktop.cmd`
+
+构建 Windows 桌面应用目录与压缩包：
+
+```powershell
+cd C:\Users\wangshuang\PycharmProjects\obs\obs
+.\scripts\build_windows_app.ps1
+```
+
+> Windows `.exe` 需要在 Windows 机器上执行打包脚本生成，仓库里提供的是完整打包脚本与图标链路。
+
+Windows 打包前建议先准备：
+
+```powershell
+python -m pip install pyinstaller pywebview pillow pythonnet
+```
+
+也可以直接双击：
+
+- `scripts\build_windows_app.cmd`
+
+生成物位置：
+
+- `dist\OBS Code\`
+- `dist\OBS-Code-<timestamp>-windows.zip`
+
+## 上手示例
+
+你可以直接在控制台里输入：
 
 - `列出当前目录文件`
 - `读取 README.md 并总结这个项目`
@@ -93,12 +132,64 @@ chmod +x scripts/build_macos_app.sh
 - `今日热点新闻`
 - `使用 python 画一个折线图`
 
-如果你希望模型只在某个能力范围内工作，可以先打开 `Skills` 抽屉，只保留：
+如果你希望模型只在有限能力内工作，可以先打开 `Skills` 抽屉，只保留：
 
 - `Terminal`
 - `File`
 - `Python`
 - `Web Search`
+
+## 模式说明
+
+### Agent
+
+默认模式。模型可以直接选择并执行当前已开放的工具，适合“帮我做事”。
+
+### Plan
+
+只生成执行计划，不实际运行工具，适合先拆任务、再决定是否执行。
+
+### Battle
+
+并行生成多路回答并进行比较，适合需要对比不同策略或不同工具参与程度的场景。
+
+### Review
+
+更偏结构化审查和检查流程，适合代码审核、方案审阅和结果复核。
+
+## 当前项目结构
+
+```text
+obs/
+├── src/omni_agent/
+│   ├── api.py                    # FastAPI + SSE 入口
+│   ├── agents/
+│   │   ├── streaming_agent.py    # 主 Agent Loop / 模式路由 / 快路径 / 压缩逻辑
+│   │   ├── execution_engine.py   # review / 执行引擎
+│   │   └── web_agent.py          # 浏览器/网页相关能力
+│   ├── services/
+│   │   ├── session_store.py      # 会话、trace、UI 状态、本地持久化
+│   │   └── request_lifecycle.py  # 请求生命周期整理
+│   └── desktop_app.py            # 复用同一套 Web UI 的原生桌面壳（macOS / Windows）
+├── ui/src/
+│   ├── App.jsx
+│   └── components/
+│       ├── RuntimePills.jsx
+│       ├── TranscriptView.jsx
+│       ├── LogsDrawer.jsx
+│       ├── SkillsDrawer.jsx
+│       └── ArchitectureDrawer.jsx
+├── screenshots/                  # README 与文档截图
+├── scripts/
+│   ├── run_macos_desktop.sh
+│   ├── build_macos_app.sh
+│   ├── run_windows_desktop.ps1
+│   ├── run_windows_desktop.cmd
+│   ├── build_windows_app.ps1
+│   ├── build_windows_app.cmd
+│   └── generate_desktop_icons.py
+└── tests/
+```
 
 ## 数据和持久化
 
@@ -107,403 +198,106 @@ chmod +x scripts/build_macos_app.sh
 - 会话历史：`logs/chat_sessions`
 - 上下文压缩缓存：`logs/context_cache`
 - LLM 输入输出日志：`logs/llm_traces`
+- UI 会话快照：`logs/ui_sessions`
 - 线程工作目录：`logs/thread_workspaces`
 - 当前工作区状态：`logs/workspace_state.json`
 
-## 已验证的真实能力
+## 上下文策略
 
-当前版本已经做过真实多轮回归测试，覆盖：
+当前版本的上下文管理遵循这套策略：
 
-- `terminal`：列目录、执行命令
-- `file-operations`：读取 README、查看文件
-- `weather`：北京实时天气
-- `web-search`：今日热点新闻
-- `code-sandbox`：Python 计算与执行
-- `computer-use`：打开网页并识别页面标题
-- `workspace`：切换工作区后在新目录执行命令
+- 当前 thread 的总量会持续累计并显示在顶部 `Context` 区。
+- 每轮真正送入模型的是独立的 `working set`。
+- 最近 `10` 轮对话保留原文。
+- 更早历史只在超过阈值时进入压缩摘要。
+- 压缩过程会在 UI 中给出独立提示，并保留压缩后的缓存。
+
+这套设计的目标是兼顾三件事：
+
+- 长会话下的可持续使用
+- 工具调用时的上下文稳定性
+- 模型响应速度与推理质量的平衡
+
+## 已经落地的真实能力
+
+- `terminal`：列目录、执行命令、读项目文件
+- `file-operations`：查看和修改文本文件
+- `weather`：查询实时天气
+- `web-search`：热点新闻、实时搜索、信息汇总
+- `code-sandbox`：隔离执行代码
+- `computer-use`：打开页面、截图、识别界面
+- `workspace`：切换工作区并在新目录继续任务
 - `context compaction`：长会话自动压缩并继续回答
-- `image paste`：粘贴图片后可做本地视觉兜底分析
+- `image paste`：粘贴图片后保留预览和上下文
+- `battle`：直接回答与工具辅助回答的真实对战
+- `architecture`：根据当前运行态渲染真实流程图与数据流图
+- `desktop`：macOS / Windows 桌面壳加载同一套 FastAPI + Web UI
+
+## 架构总览
+
+OBS Code 的核心设计是把“模型推理”和“本地执行”拆开，再用一条稳定的 Harness 把它们串起来：
+
+```text
+Web UI / macOS Desktop / Windows Desktop
+    ↓
+FastAPI /chat/stream
+    ↓
+SessionStore 恢复会话、UI 状态、工作区、context cache
+    ↓
+StreamingAgent.chat_stream()
+    ├── agent   -> 原生工具调用循环
+    ├── plan    -> 只生成计划
+    ├── battle  -> 多路结果对比
+    └── review  -> 审查/执行引擎
+    ↓
+SkillManager / Tool Runtime
+    ↓
+SSE 推流到前端 Transcript / Logs / Thinking
+    ↓
+SessionStore 持久化 traces / sessions / compacted context
+```
+
+如果你想看更细的运行链路，可以直接在应用里打开 `Architecture` 抽屉。
+
+## 测试与验证
+
+常用验证命令：
+
+```bash
+cd /Users/wangshuang/PycharmProjects/obs/obs
+pytest -q tests
+npm --prefix ui run build
+```
+
+如果需要构建桌面版：
+
+```bash
+cd /Users/wangshuang/PycharmProjects/obs/obs
+bash scripts/build_macos_app.sh
+```
+
+Windows 打包：
+
+```powershell
+cd C:\Users\wangshuang\PycharmProjects\obs\obs
+.\scripts\build_windows_app.ps1
+```
 
 ## Learn Claude Code
 
-本项目仍保留了 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的结构与教学内容，可作为 Agent Harness / Skills 设计学习材料：
+本项目仍保留了 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的结构和教学内容，可作为 Agent Harness / Skills 设计学习材料：
 
-- `agents/`: 多阶段课程代码
-- `docs/zh/`: 中文教程
-- `skills/`: 技能说明和工具样例
+- `agents/`：多阶段课程代码
+- `docs/zh/`：中文教程
+- `skills/`：技能说明和工具样例
 
-## 🏗️ 架构设计
+## 说明
 
-> 参考 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) Harness Engineering 核心设计。
-> Agency comes from the model. The harness makes agency real.
+这份 README 现在更偏“当前版本使用说明”和“真实能力总览”。如果你要继续补充：
 
-### 功能流程总览
+- 最新运行截图
+- 更细的 Architecture 图示
+- 桌面版安装说明
+- 对外发布文案
 
-```
-用户输入 (Web UI / macOS Desktop)
-    ↓ HTTP / SSE streaming
-FastAPI API 层
-    ↓
-StreamingAgent — 核心 Agent Loop
-    while True:
-        response = vllm_client.chat(messages, tools)
-        if stop_reason != "tool_use": break
-        results = dispatch_tools(response.tool_calls)
-        messages.append(tool_results)
-        yield SSE chunks → 前端实时渲染
-
-    Mode Router:
-    ├── agent  → 原生工具调用循环（默认）
-    ├── plan   → PlanAgent → TaskGraph DAG → Human确认
-    ├── review → ExecutionEngine 结构化执行转录
-    └── battle → 直接回答 vs 工具辅助回答 → LLM裁判
-    ↓
-SkillManager (工具分发)      PlanAgent + ExecutionEngine
-bash / str_replace_editor    ↓ LLM生成ExecutionPlan
-web_search / computer        ↓ NetworkX DAG依赖分析
-code_sandbox / weather       ↓ 分层并行: asyncio.gather
-                             ↓ 自愈重试 (最多5次 + LLM修复)
-    ↓
-3-Level Skill System
-    Level 1: SKILL.md YAML元数据 (始终加载)
-    Level 2: SKILL.md 正文指令  (触发时注入 system prompt)
-    Level 3: Python 实现代码    (按需执行)
-    ↓
-Context Compaction (3层压缩)
-    Sliding Window → Checkpoint → LLM Summary
-    ↓
-Session Persistence
-    logs/chat_sessions/  logs/llm_traces/  logs/context_cache/
-```
-
-### learn-claude-code → OBS Code 机制映射
-
-| Harness 机制 | learn-claude-code | OBS Code 实现 |
-|---|---|---|
-| Agent Loop | s01: `while + stop_reason` | `StreamingAgent` 核心循环 + SSE 推流 |
-| Tool Use | s02: dispatch map | `SkillManager.dispatch()` |
-| Plan-first | s03: TodoWrite | `PlanAgent.create_plan()` → `ExecutionPlan` |
-| Subagents | s04: 独立 messages[] | `ExpertAgentOrchestrator` 六大专家独立上下文 |
-| Skills | s05: on-demand SKILL.md | 3-Level Skill System |
-| Context Compact | s06: 3层压缩 | `session_context_cache` + `logs/context_cache/` |
-| Task Graph | s07: 文件化DAG | `TaskGraph` (NetworkX) + 拓扑分层 |
-| Background Tasks | s08: daemon threads | `asyncio.gather()` 并行执行层 |
-| Agent Teams | s09: JSONL 信箱 | `ExpertAgentOrchestrator` + 任务路由 |
-| Team Protocols | s10: Request-Response FSM | `plan` / `review` 执行协议 |
-| Autonomous | s11: 自主认领 | `ExecutionEngine` 自愈重试 + LLM修复 |
-| Worktree | s12: 独立目录 | Workspace切换 + Code Sandbox Docker隔离 |
-
-### Expert Agent 系统
-
-```
-用户任务 → ExpertAgentOrchestrator.select_expert(关键词路由)
-    ├── ProductManagerAgent   → web_search
-    ├── ArchitectAgent        → web_search, str_replace_editor
-    ├── BackendDeveloperAgent → str_replace_editor, bash, web_search
-    ├── FrontendDeveloperAgent→ str_replace_editor, web_search
-    ├── QAReviewerAgent       → bash, str_replace_editor, web_search
-    └── TravelPlannerAgent    → web_search, str_replace_editor
-    ↓
-独立 agent loop → 结果聚合 → 返回主 StreamingAgent
-```
-
-### Skills 三级架构
-
-```
-.claude/skills/
-├── computer-use/
-│   ├── SKILL.md      # Level 1: YAML元数据  Level 2: 操作指令
-│   └── computer_use.py  # Level 3: Python实现
-├── file-operations/
-│   ├── SKILL.md
-│   └── text_editor.py
-├── terminal/
-│   ├── SKILL.md
-│   └── bash.py
-├── code-sandbox/     # Docker隔离执行 (--network none, --memory 256m)
-├── web-search/
-└── weather/
-```
-
-详细架构文档见 [`.zencoder/docs/architecture.md`](.zencoder/docs/architecture.md)
-
-## 🔧 技能详解
-
-### 1. 计算机视觉技能 (computer-use)
-
-**功能**: 屏幕截图、鼠标键盘操作、网页浏览
-
-**可用操作**:
-- `screenshot` - 截取屏幕
-- `left_click` - 左键点击
-- `right_click` - 右键点击  
-- `type` - 文字输入
-- `key` - 特殊按键
-
-**示例**:
-```python
-# 截图查看当前状态
-result = await execute_skill("computer", action="screenshot")
-
-# 点击指定坐标
-result = await execute_skill("computer", 
-    action="left_click", 
-    coordinate=[100, 200]
-)
-```
-
-### 2. 文件操作技能 (file-operations)
-
-**功能**: 文本文件的查看、创建、编辑、管理
-
-**支持格式**: `.py`, `.js`, `.html`, `.json`, `.md`, `.txt` 等
-
-**可用命令**:
-- `view` - 查看文件内容
-- `create` - 创建新文件
-- `str_replace` - 字符串替换
-- `insert` - 插入文本
-- `undo_edit` - 撤销编辑
-
-**示例**:
-```python
-# 查看文件
-result = await execute_skill("str_replace_editor",
-    command="view",
-    path="src/main.py"
-)
-
-# 创建文件
-result = await execute_skill("str_replace_editor",
-    command="create", 
-    path="test.py",
-    file_text="print('Hello World')"
-)
-```
-
-### 3. 终端执行技能 (terminal)
-
-**功能**: 安全的命令行操作，支持多种开发工具
-
-**允许的命令类型**:
-- 文件操作: `ls`, `cat`, `mkdir`, `cp`, `mv`
-- 开发工具: `python`, `node`, `git`, `npm`, `pip`
-- 系统工具: `curl`, `wget`, `ps`, `top`
-
-**安全机制**:
-- 命令白名单验证
-- 危险操作拦截
-- 超时保护
-- 工作目录隔离
-
-**示例**:
-```python
-# 执行Python脚本
-result = await execute_skill("bash",
-    command="python script.py",
-    timeout=30
-)
-
-# Git操作
-result = await execute_skill("bash",
-    command="git status"
-)
-```
-
-## 🛠️ 开发指南
-
-### 添加新技能
-
-1. **创建技能目录**:
-```bash
-mkdir .claude/skills/my-skill
-```
-
-2. **编写SKILL.md**:
-```yaml
----
-name: my-skill
-description: My custom skill description
----
-
-# My Skill
-
-详细说明和使用指南...
-```
-
-3. **实现Python类**:
-```python
-class MySkill(BaseSkill):
-    def __init__(self):
-        super().__init__(
-            name="my-skill",
-            description="My skill description"
-        )
-    
-    async def execute(self, **kwargs):
-        # 实现逻辑
-        return SkillResult(success=True, content="结果")
-```
-
-### 配置环境变量
-
-创建 `.env` 文件：
-```bash
-# VLLM多模态模型配置
-VLLM_BASE_URL=http://223.109.239.14:10002/v1/chat/completions
-VLLM_API_KEY=your_api_key
-VLLM_MODEL=multimodal_model
-
-# 工作目录
-WORK_DIR=./workspace
-
-# 功能开关
-ENABLE_COMPUTER_USE=true
-ENABLE_TEXT_EDITOR=true  
-ENABLE_BASH=true
-
-# 日志配置
-LOG_LEVEL=INFO
-LOG_FILE=./logs/omni_agent.log
-```
-
-## 🐳 Docker部署
-
-### 开发模式 (极速重载)
-```bash
-# 0.05秒内检测代码变更并重启
-docker-compose -f docker-compose.dev.yml up -d
-```
-
-### 生产模式  
-```bash
-# 稳定运行，适合生产环境
-docker-compose up -d
-```
-
-### 容器管理
-```bash
-# 查看日志
-docker-compose logs -f omni-agent
-
-# 重启服务  
-docker-compose restart
-
-# 停止服务
-docker-compose down
-```
-
-## 📋 API接口
-
-### 核心端点
-
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/health` | GET | 健康检查 |
-| `/skills` | GET | 获取技能列表 |  
-| `/execute` | POST | 执行技能 |
-| `/` | GET | Web前端界面 |
-
-### 执行技能
-```bash
-curl -X POST http://localhost:8000/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool_name": "computer",
-    "parameters": {
-      "action": "screenshot"
-    }
-  }'
-```
-
-## 🔒 安全机制
-
-- **命令白名单** - 只允许安全的系统命令
-- **路径验证** - 文件操作限制在工作目录内
-- **超时保护** - 防止命令无限执行
-- **权限隔离** - 容器化运行环境
-- **输入验证** - 严格的参数检查
-
-## 🐛 故障排除
-
-### 常见问题
-
-**1. 服务启动失败**
-```bash
-# 检查端口占用
-netstat -an | findstr 8000
-
-# 查看详细日志
-docker-compose logs -f omni-agent
-```
-
-**2. 技能加载失败**
-```bash
-# 检查.claude/skills目录结构
-ls -la .claude/skills/
-
-# 验证SKILL.md格式
-```
-
-**3. Docker构建失败**
-```bash
-# 使用Docker模式
-docker-compose up -d
-
-# 或配置Docker镜像加速器
-docker_setup.bat
-```
-
-**4. 前端访问问题**
-```bash
-# 确认服务运行状态
-curl http://127.0.0.1:8000/health
-
-# 检查防火墙设置
-```
-
-## 🎯 路线图
-
-按 learn-claude-code harness 完备性标准排优先级：
-
-**高优先级**
-- [ ] Human-in-the-loop — `plan` 模式生成 DAG 后前端确认再执行 (s10 pattern)
-- [ ] PostgreSQL 会话持久化 — 替换内存存储，支持重启恢复 (s07 pattern)
-- [ ] Artifacts 面板 — Monaco Editor + iframe 预览 + Mermaid DAG 实时渲染
-
-**中优先级**
-- [ ] Autonomous heartbeat — 定时扫描待完成任务，自主认领执行 (s11 pattern)
-- [ ] Worktree 隔离 — 并行 Expert Agent 任务各自独立工作目录 (s12 pattern)
-- [ ] MCP 协议 — 将技能暴露为标准 MCP tools，接入外部 Agent 生态
-
-**低优先级**
-- [ ] 多模态图像生成 (Stable Diffusion)
-- [ ] 移动端适配 / PWA
-- [ ] 多用户支持
-- [ ] 插件市场
-
-## 📄 许可证
-
-MIT License - 详见 [LICENSE](LICENSE) 文件
-
-## 🤝 贡献
-
-欢迎提交Issue和Pull Request！
-
-1. Fork 项目
-2. 创建功能分支
-3. 提交更改  
-4. 推送到分支
-5. 创建Pull Request
-
-## 📞 支持
-
-- 📧 邮箱: support@omni-agent.com
-- 💬 问题反馈: [GitHub Issues](https://github.com/your-repo/omni-agent/issues)
-- 📚 文档: [在线文档](https://docs.omni-agent.com)
-
----
-
-⭐ 如果这个项目对你有帮助，请给个Star！
-
-**Made with ❤️ by Omni Agent Team**
+可以继续在这个基础上扩展。

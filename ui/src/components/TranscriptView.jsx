@@ -2,6 +2,7 @@ import React from "react";
 import {
     entryLabel,
     getThinkingSummary,
+    normalizeDisplayText,
     renderMarkdown,
     transcriptRole
 } from "../lib/formatting.js";
@@ -59,7 +60,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                             return (
                             <React.Fragment key={entry.id}>
                                 <article
-                                    className={`message ${transcriptRole(entry)}${isCompressionNotice ? " compression-notice" : ""}`}
+                                    className={`message ${transcriptRole(entry)}${entry.isError ? " error" : ""}${isCompressionNotice ? " compression-notice" : ""}`}
                                 >
                                     {!isCompressionNotice ? (
                                         <div className="message-meta">
@@ -141,7 +142,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                             <div dangerouslySetInnerHTML={{ __html: bodyHtml }} />
                                         ) : entry.streaming && isRenderableKind ? (
                                             // Streaming: plain text via React text node avoids per-token DOM replacement
-                                            <div className="streaming-plain-text">{entry.content}</div>
+                                            <div className="streaming-plain-text">{normalizeDisplayText(entry.content)}</div>
                                         ) : (
                                             <div>
                                                 {stripImageTokens(entry.content) ? <span>{stripImageTokens(entry.content)}</span> : null}

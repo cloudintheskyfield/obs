@@ -124,6 +124,61 @@ class SilentAfterToolVLLMClient:
         }
 
 
+class RecoveryAfterToolFailureVLLMClient:
+    def __init__(self) -> None:
+        self.stream_calls = 0
+
+    async def chat_completion(self, *args, **kwargs):
+        if kwargs.get("stream"):
+            self.stream_calls += 1
+
+            async def _generator():
+                if self.stream_calls == 1:
+                    yield {
+                        "choices": [{
+                            "delta": {
+                                "tool_calls": [{
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "computer",
+                                        "arguments": json.dumps({
+                                            "action": "navigate",
+                                            "url": "http://10.25.35.73:8001/skill.md",
+                                        }, ensure_ascii=False),
+                                    },
+                                }]
+                            }
+                        }]
+                    }
+                    return
+                raise RuntimeError("Client error 400 Bad Request")
+
+            return _generator()
+
+        raise RuntimeError("Client error 400 Bad Request")
+
+
+class FailingFinalSynthesisVLLMClient:
+    async def chat_completion(self, *args, **kwargs):
+        raise RuntimeError("HTTPStatusError 400 during final synthesis")
+
+
+class RecordingFinalSynthesisVLLMClient:
+    def __init__(self) -> None:
+        self.calls: List[List[Dict[str, Any]]] = []
+
+    async def chat_completion(self, *args, **kwargs):
+        self.calls.append(kwargs.get("messages") or [])
+        return {
+            "choices": [{
+                "message": {
+                    "content": "这里是整理后的最终总结。"
+                }
+            }]
+        }
+
+
 def _decode_events(chunks: List[str]) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     for chunk in chunks:
@@ -188,6 +243,34 @@ def test_directory_listing_output_is_treated_as_success() -> None:
     answer = next(item for item in payloads if item.get("type") == "answer_delta")
     assert task_complete["success"] is True
     assert "我直接查看了本地目录" in answer["delta"]
+
+
+def test_compacted_user_prompt_does_not_duplicate_plain_text_message_parts() -> None:
+    agent = StreamingAgent(FakeVLLMClient(), FakeSkillManager())
+
+    content = agent._compose_user_message_content(
+        "[Current user request]\nhi",
+        [{"type": "text", "text": "hi"}],
+    )
+
+    assert content == [{"type": "text", "text": "[Current user request]\nhi"}]
+
+
+def test_compacted_user_prompt_keeps_images_without_repeating_text_parts() -> None:
+    agent = StreamingAgent(FakeVLLMClient(), FakeSkillManager())
+
+    content = agent._compose_user_message_content(
+        "[Current user request]\n看这张图",
+        [
+            {"type": "text", "text": "看这张图"},
+            {"type": "image", "data_url": "data:image/png;base64,abc"},
+        ],
+    )
+
+    assert content == [
+        {"type": "text", "text": "[Current user request]\n看这张图"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+    ]
 
 
 def test_compaction_only_runs_after_threshold() -> None:
@@ -377,3 +460,118 @@ def test_native_tool_stream_synthesizes_final_answer_after_silent_tool_step() ->
     answer = next(item for item in payloads if item.get("type") == "answer_delta")
     assert answer["delta"] == "我已经打开了页面，并准备继续按页面里的说明操作游戏。"
     assert chat_sessions["s6"][-1]["content"] == "我已经打开了页面，并准备继续按页面里的说明操作游戏。"
+
+
+def test_native_tool_stream_recovers_after_model_failure_with_tool_result_summary() -> None:
+    agent = StreamingAgent(
+        RecoveryAfterToolFailureVLLMClient(),
+        FakeSkillManager({"computer": FakeComputerSkill()}),
+    )
+
+    async def _collect():
+        chat_sessions = {"s8": [{"role": "user", "content": "打开这个页面然后继续"}]}
+        events = []
+        async for chunk in agent._native_tool_stream(
+            session_id="s8",
+            chat_sessions=chat_sessions,
+            permission_mode="ask",
+            permission_confirmed=False,
+            context="",
+            tool_context="workspace",
+            enabled_skills=["computer-use"],
+            request_context={},
+        ):
+            events.append(chunk)
+        return chat_sessions, events
+
+    import asyncio
+
+    chat_sessions, payload_chunks = asyncio.run(_collect())
+    payloads = _decode_events(payload_chunks)
+    answer = next(item for item in payloads if item.get("type") == "answer_delta")
+    assert "我已经尽量保住这次执行里拿到的结果了" in answer["delta"]
+    assert "Navigated to URL" in answer["delta"]
+    assert chat_sessions["s8"][-1]["content"] == answer["delta"]
+    assert not any(item.get("error") for item in payloads)
+
+
+def test_final_synthesis_uses_recovery_answer_when_model_keeps_failing() -> None:
+    agent = StreamingAgent(
+        FailingFinalSynthesisVLLMClient(),
+        FakeSkillManager({"advanced_web_search": FakeSearchSkill()}),
+    )
+
+    async def _collect():
+        chat_sessions = {"s9": []}
+        conversation_history = [{"role": "user", "content": "今天热点新闻"}]
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "今天热点新闻"},
+            {"role": "tool", "name": "advanced_web_search", "content": "新华社头条：今日有三条重要新闻。"},
+        ]
+        events = []
+        async for chunk in agent._stream_final_answer_without_tools(
+            session_id="s9",
+            chat_sessions=chat_sessions,
+            conversation_history=conversation_history,
+            messages=messages,
+            instruction="请基于工具结果给出最终总结。",
+            model="MiniMax-M2",
+        ):
+            events.append(chunk)
+        return chat_sessions, events
+
+    import asyncio
+
+    chat_sessions, payload_chunks = asyncio.run(_collect())
+    payloads = _decode_events(payload_chunks)
+    answer = next(item for item in payloads if item.get("type") == "answer_delta")
+    assert "我已经尽量保住这次执行里拿到的结果了" in answer["delta"]
+    assert "新华社头条" in answer["delta"]
+    assert chat_sessions["s9"][-1]["content"] == answer["delta"]
+
+
+def test_final_synthesis_uses_compact_prompt_instead_of_full_history() -> None:
+    client = RecordingFinalSynthesisVLLMClient()
+    agent = StreamingAgent(
+        client,
+        FakeSkillManager({"advanced_web_search": FakeSearchSkill()}),
+    )
+
+    async def _collect():
+        chat_sessions = {"s10": []}
+        conversation_history = [
+            {"role": "user", "content": "之前的超长上下文"},
+            {"role": "assistant", "content": "之前的超长回答"},
+            {"role": "user", "content": "今天热点新闻"},
+        ]
+        messages = [
+            {"role": "system", "content": "very long system prompt " * 200},
+            {"role": "user", "content": "[Current user request]\n今天热点新闻\n\n大量压缩上下文 " * 100},
+            {"role": "tool", "name": "advanced_web_search", "content": "新华社头条：今日有三条重要新闻。\n" + ("详情 " * 200)},
+        ]
+        events = []
+        async for chunk in agent._stream_final_answer_without_tools(
+            session_id="s10",
+            chat_sessions=chat_sessions,
+            conversation_history=conversation_history,
+            messages=messages,
+            instruction="请基于工具结果给出最终总结。",
+            model="MiniMax-M2",
+        ):
+            events.append(chunk)
+        return chat_sessions, events
+
+    import asyncio
+
+    chat_sessions, payload_chunks = asyncio.run(_collect())
+    payloads = _decode_events(payload_chunks)
+    answer = next(item for item in payloads if item.get("type") == "answer_delta")
+    assert answer["delta"] == "这里是整理后的最终总结。"
+    assert chat_sessions["s10"][-1]["content"] == answer["delta"]
+    assert len(client.calls) == 1
+    assert len(client.calls[0]) == 2
+    assert client.calls[0][0]["role"] == "system"
+    assert "[Original user request]\n今天热点新闻" in client.calls[0][1]["content"]
+    assert "[Completed tool outputs]\n[advanced_web_search]" in client.calls[0][1]["content"]
+    assert "very long system prompt" not in client.calls[0][1]["content"]

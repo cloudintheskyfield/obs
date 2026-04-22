@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('/Users/wangshuang/PycharmProjects/obs/obs/.env', '.'), ('/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills', '.claude/skills'), ('/Users/wangshuang/PycharmProjects/obs/obs/frontend', 'frontend'), ('/Users/wangshuang/PycharmProjects/obs/obs/skills', 'skills')]
 binaries = []
-hiddenimports = ['omni_agent.api', 'skill_manager', 'skill_loader', 'base_skill', 'webview', 'webview.platforms.cocoa']
+hiddenimports = ['omni_agent.api', 'skill_manager', 'skill_loader', 'base_skill', 'webview', 'objc', 'AppKit', 'Foundation', 'WebKit', 'PyObjCTools', 'PyObjCTools.AppHelper', 'webview.platforms.cocoa']
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
@@ -38,6 +38,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['/Users/wangshuang/PycharmProjects/obs/obs/build/obs-code-logo.icns'],
 )
 coll = COLLECT(
     exe,
@@ -51,6 +52,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='OBS Code.app',
-    icon=None,
+    icon='/Users/wangshuang/PycharmProjects/obs/obs/build/obs-code-logo.icns',
     bundle_identifier=None,
 )

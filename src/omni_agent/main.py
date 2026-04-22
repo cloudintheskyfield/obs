@@ -235,7 +235,7 @@ def serve(
 
 @app.command()
 def desktop():
-    """启动原生桌面版 OBS Agent（macOS 优先）。"""
+    """启动原生桌面版 OBS Agent（macOS / Windows）。"""
     run_desktop_app()
 
 

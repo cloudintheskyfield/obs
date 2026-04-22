@@ -27,6 +27,23 @@ export function formatWorkspaceBreadcrumb(path, maxParts = 5) {
     return `... / ${parentSegments.slice(-maxParts).join(" / ")}`;
 }
 
+export function normalizeDisplayText(text, { preserveCodeFences = true } = {}) {
+    let raw = String(text || "").replace(/\r\n/g, "\n");
+    if (!raw) {
+        return "";
+    }
+    raw = raw
+        .replace(/^\s*\n+/, "")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n[ \t]+/g, "\n")
+        .trimEnd();
+
+    if (!preserveCodeFences || !raw.includes("```")) {
+        raw = raw.replace(/\n(?:[ \t]*\n){2,}/g, "\n\n");
+    }
+    return raw;
+}
+
 let _katex = null;
 async function _loadKatex() {
     if (_katex) return _katex;
@@ -79,7 +96,7 @@ function _protectMath(source) {
 }
 
 export function renderMarkdown(text) {
-    const raw = String(text || "").replace(/\r\n/g, "\n").trim();
+    const raw = normalizeDisplayText(text).trim();
     if (!raw) return "";
 
     const { processed: source, restore } = _protectMath(raw);
