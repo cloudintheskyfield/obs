@@ -13,7 +13,9 @@ const SETTINGS_KEY = "obs-agent-settings";
 const SESSIONS_KEY = "obs-agent-sessions";
 const VERSION_KEY = "obs-agent-storage-version";
 const DEFAULT_SELECTED_SKILLS = ["code-sandbox", "file-operations", "terminal", "web-search", "weather"];
+const CREATE_MODE_SKILLS = ["code-sandbox", "file-operations", "terminal"];
 const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
+const PREVIEW_URL_PATTERN = /((?:https?:\/\/|localhost(?::\d+)?|127(?:\.\d{1,3}){3}(?::\d+)?|0\.0\.0\.0(?::\d+)?)(?:\/[^\s<>"')\]]*)?)/gi;
 const GITHUB_REPO_URL = "https://github.com/cloudintheskyfield/obs";
 const LOGO_SRC = "/static/obs-code-logo.svg";
 const MODEL_CONTEXT_WINDOWS = {
@@ -35,6 +37,34 @@ function nowIso() {
 
 function normalizePermissionMode(value) {
     return VALID_PERMISSION_MODES.includes(value) ? value : "ask";
+}
+
+function normalizeTodo(todo) {
+    if (!todo || !Array.isArray(todo.items)) {
+        return null;
+    }
+    const items = todo.items
+        .map((item) => {
+            if (typeof item === "string") {
+                return { text: item.trim(), done: false };
+            }
+            const text = String(item?.text || "").trim();
+            if (!text) {
+                return null;
+            }
+            return {
+                text,
+                done: Boolean(item?.done),
+            };
+        })
+        .filter(Boolean);
+    if (!items.length) {
+        return null;
+    }
+    return {
+        items,
+        completed: Boolean(todo.completed) || items.every((item) => item.done),
+    };
 }
 
 function safeSetLocalStorage(key, value) {
@@ -85,7 +115,6 @@ function createEmptySession(id) {
         serverContextMaxTokens: null,
         tasks: {},
         workspacePath: "",
-        activeTodo: null,
         selectedModel: "",   // "" means "use the global default"
         createdAt: nowIso(),
         updatedAt: nowIso()
@@ -115,6 +144,7 @@ function normalizeEntry(entry) {
         isError: Boolean(entry.isError),
         pendingPlaceholder: Boolean(entry.pendingPlaceholder),
         elapsedLabel: typeof entry.elapsedLabel === "string" ? entry.elapsedLabel : null,
+        todo: normalizeTodo(entry.todo),
         timestamp: entry.timestamp || nowIso(),
         streaming: Boolean(entry.streaming),
         images: compactTranscriptImages(entry.images),
@@ -160,7 +190,6 @@ function upgradeSession(session) {
         serverContextMaxTokens: typeof session.serverContextMaxTokens === "number" ? session.serverContextMaxTokens : null,
         title: session.title || "New thread",
         workspacePath: typeof session.workspacePath === "string" ? session.workspacePath : "",
-        activeTodo: session.activeTodo || null,
         selectedModel: typeof session.selectedModel === "string" ? session.selectedModel : "",
         createdAt: session.createdAt || nowIso(),
         updatedAt: session.updatedAt || nowIso()
@@ -310,6 +339,44 @@ function hasSendableInput(rawValue, images) {
     return Boolean(visibleText || (images || []).length);
 }
 
+function normalizePreviewUrl(rawUrl) {
+    const trimmed = String(rawUrl || "").trim().replace(/[),.;]+$/, "");
+    if (!trimmed) {
+        return "";
+    }
+    const hasProtocol = /^https?:\/\//i.test(trimmed);
+    const candidate = hasProtocol ? trimmed : `http://${trimmed}`;
+    try {
+        const parsed = new URL(candidate);
+        if (["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) {
+            parsed.hostname = window.location.hostname || parsed.hostname;
+        }
+        return parsed.toString();
+    } catch {
+        return "";
+    }
+}
+
+function detectPreviewUrls(session) {
+    const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+    const seen = new Set();
+    const urls = [];
+    for (let index = transcript.length - 1; index >= 0; index -= 1) {
+        const entry = transcript[index];
+        const text = String(entry?.content || "");
+        let match;
+        PREVIEW_URL_PATTERN.lastIndex = 0;
+        while ((match = PREVIEW_URL_PATTERN.exec(text)) !== null) {
+            const normalized = normalizePreviewUrl(match[1]);
+            if (normalized && !seen.has(normalized)) {
+                seen.add(normalized);
+                urls.push(normalized);
+            }
+        }
+    }
+    return urls;
+}
+
 function App() {
     const [settings, setSettings] = useState({
         apiUrl: resolveDefaultApiBaseUrl(),
@@ -362,8 +429,16 @@ function App() {
     const [expandedThinking, setExpandedThinking] = useState({});
     const [skillCatalog, setSkillCatalog] = useState([]);
     const [selectedSkills, setSelectedSkills] = useState(DEFAULT_SELECTED_SKILLS);
-
-    const [activeTodo, setActiveTodo] = useState(null); // { items: [{text,done}], visible: true }
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState("");
+    const [previewNonce, setPreviewNonce] = useState(0);
+    const [workspaceChanges, setWorkspaceChanges] = useState({
+        isGit: false,
+        changedFiles: 0,
+        insertions: 0,
+        deletions: 0,
+        files: [],
+    });
 
     const messageInputRef = useRef(null);
     const chatMessagesRef = useRef(null);
@@ -491,13 +566,6 @@ function App() {
     }, [selectedModel, currentSessionId]);
 
     useEffect(() => {
-        if (!currentSessionId) return;
-        updateSessionById(currentSessionId, (sess) => {
-            sess.activeTodo = activeTodo;
-        }, { touchUpdatedAt: false });
-    }, [activeTodo, currentSessionId]);
-
-    useEffect(() => {
         safeSetLocalStorage(SETTINGS_KEY, JSON.stringify(settings));
     }, [settings]);
 
@@ -511,6 +579,9 @@ function App() {
     }, [sessions, currentSessionId]);
 
     const currentSession = sessions.find((session) => session.id === currentSessionId) || null;
+    const activeWorkspacePath = workspacePath || runtime?.work_dir || "";
+    const detectedPreviewUrls = detectPreviewUrls(currentSession);
+    const activePreviewUrl = previewUrl || detectedPreviewUrls[0] || "";
     const recallableUserInputs = (currentSession?.transcript || [])
         .filter((entry) => entry?.role === "user" && typeof entry.content === "string" && entry.content.trim())
         .map((entry) => entry.content);
@@ -522,6 +593,12 @@ function App() {
         ? Math.min(98, (threadContextTokens / threadContextMaxTokens) * 100)
         : 0;
     const threadTurnCount = (currentSession?.transcript || []).filter((entry) => entry?.role === "user").length;
+    const fileChangeSummary = {
+        visible: workspaceChanges.isGit && workspaceChanges.changedFiles > 0,
+        changedFiles: workspaceChanges.changedFiles || 0,
+        insertions: workspaceChanges.insertions || 0,
+        deletions: workspaceChanges.deletions || 0,
+    };
 
     useEffect(() => {
         if (!currentSession) return; // avoid flash from null-session heuristic on initial mount
@@ -642,10 +719,58 @@ function App() {
                 if (sess.selectedModel) {
                     setSelectedModel(sess.selectedModel);
                 }
-                setActiveTodo(sess.activeTodo || null);
             }
         }
     }, [currentSessionId]);
+
+    useEffect(() => {
+        if (!detectedPreviewUrls.length) {
+            return;
+        }
+        setPreviewUrl((current) => current || detectedPreviewUrls[0]);
+    }, [currentSessionId, detectedPreviewUrls]);
+
+    useEffect(() => {
+        if (!activeWorkspacePath) {
+            setWorkspaceChanges({
+                isGit: false,
+                changedFiles: 0,
+                insertions: 0,
+                deletions: 0,
+                files: [],
+            });
+            return;
+        }
+
+        let cancelled = false;
+        const refreshChanges = async () => {
+            try {
+                const params = new URLSearchParams({ path: activeWorkspacePath });
+                const response = await fetch(`${settingsRef.current.apiUrl}/workspace/changes?${params.toString()}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const payload = await response.json();
+                if (cancelled) return;
+                setWorkspaceChanges({
+                    isGit: Boolean(payload.is_git),
+                    changedFiles: payload.changed_files || 0,
+                    insertions: payload.insertions || 0,
+                    deletions: payload.deletions || 0,
+                    files: payload.files || [],
+                });
+            } catch (error) {
+                if (!cancelled) {
+                    console.debug("Failed to load workspace changes", error);
+                }
+            }
+        };
+
+        refreshChanges();
+        return () => {
+            cancelled = true;
+        };
+    }, [activeWorkspacePath, currentSession?.updatedAt, isSending]);
 
     useEffect(() => {
         if (!currentSessionId || requestIndicator?.active || isSending || !currentSession?.transcript?.length) {
@@ -804,7 +929,6 @@ function App() {
         setMode("agent");
         setToolContext("workspace");
         setExpandedThinking({});
-        setActiveTodo(null);
     }
 
     function clearCurrentSession() {
@@ -1366,6 +1490,9 @@ function App() {
 
         const sessionId = currentSessionId;
         const requestMode = isSimpleChat(content) ? "agent" : mode;
+        const effectiveSelectedSkills = requestMode === "create"
+            ? Array.from(new Set([...selectedSkills, ...CREATE_MODE_SKILLS]))
+            : selectedSkills;
         const effectivePermissionMode = normalizePermissionMode(permissionMode);
         const { toolContext: selectedToolContext, context } = buildContextPayload("workspace", workspacePath || runtime?.work_dir || "");
         sendingSessionIdRef.current = sessionId;
@@ -1378,8 +1505,13 @@ function App() {
             startedAt: Date.now(),
             label: requestMode === "battle"
                 ? "Running battle contenders"
+                : requestMode === "create"
+                    ? "Scaffolding runnable app"
                 : (thinkingMode ? "Preparing request" : "Working on your request"),
         });
+        if (requestMode === "create") {
+            setPreviewOpen(true);
+        }
         setContextPercent(computeContextPercent(currentSession, toolContext));
 
         appendTranscriptEntry(sessionId, {
@@ -1401,6 +1533,7 @@ function App() {
 
         let assistantEntry = null;
         let thinkingEntry = null;
+        let pendingTodo = null;
         let answerBuffer = "";
         let toolCallsReceived = 0;
 
@@ -1423,7 +1556,7 @@ function App() {
                     model: selectedModel,
                     tool_context: selectedToolContext,
                     workspace_path: workspacePath || runtime?.work_dir || "",
-                    enabled_skills: selectedSkills,
+                    enabled_skills: effectiveSelectedSkills,
                     message_parts: messageParts,
                     context,
                     parameters: {
@@ -1436,7 +1569,7 @@ function App() {
                         model: selectedModel,
                         tool_context: selectedToolContext,
                         workspace_path: workspacePath || runtime?.work_dir || "",
-                        enabled_skills: selectedSkills,
+                        enabled_skills: effectiveSelectedSkills,
                         message_parts: messageParts,
                         context
                     }
@@ -1452,6 +1585,24 @@ function App() {
                     return;
                 }
                 const payload = JSON.parse(rawLine.slice(6));
+
+                const syncTodoAttachment = () => {
+                    if (!pendingTodo) {
+                        return;
+                    }
+                    const nextTodo = normalizeTodo(pendingTodo);
+                    if (!nextTodo) {
+                        return;
+                    }
+                    const targetEntry = assistantEntry || thinkingEntry;
+                    if (!targetEntry?.id) {
+                        return;
+                    }
+                    patchTranscriptEntry(sessionId, targetEntry.id, { todo: nextTodo });
+                    if (assistantEntry?.id && thinkingEntry?.id && thinkingEntry.id !== assistantEntry.id) {
+                        patchTranscriptEntry(sessionId, thinkingEntry.id, { todo: null });
+                    }
+                };
 
                 const appendThinkingTrace = (line) => {
                     if (!thinkingMode || !line) {
@@ -1476,6 +1627,7 @@ function App() {
                             pendingPlaceholder: false
                         });
                     }
+                    syncTodoAttachment();
                 };
 
                 if (payload.type === "task_start") {
@@ -1566,18 +1718,26 @@ function App() {
                 }
 
                 if (payload.type === "todo_list") {
-                    const items = (payload.items || []).map(text => ({ text, done: false }));
-                    setActiveTodo({ items, visible: true });
+                    pendingTodo = normalizeTodo({
+                        items: (payload.items || []).map((text) => ({ text, done: false })),
+                        completed: false,
+                    });
+                    syncTodoAttachment();
                     return;
                 }
 
                 if (payload.type === "todo_done") {
                     const idx = payload.index;
-                    setActiveTodo(prev => {
-                        if (!prev) return prev;
-                        const items = prev.items.map((it, i) => i === idx ? { ...it, done: true } : it);
-                        return { ...prev, items };
+                    if (!pendingTodo) {
+                        return;
+                    }
+                    pendingTodo = normalizeTodo({
+                        ...pendingTodo,
+                        items: pendingTodo.items.map((item, index) => (
+                            index === idx ? { ...item, done: true } : item
+                        )),
                     });
+                    syncTodoAttachment();
                     return;
                 }
 
@@ -1608,6 +1768,7 @@ function App() {
                             pendingPlaceholder: false
                         });
                     }
+                    syncTodoAttachment();
                     return;
                 }
 
@@ -1623,7 +1784,8 @@ function App() {
                             content: answerBuffer,
                             kind: "assistant_text",
                             taskId: "main",
-                            streaming: true
+                            streaming: true,
+                            todo: pendingTodo,
                         });
                     } else {
                         patchTranscriptEntry(sessionId, assistantEntry.id, {
@@ -1631,6 +1793,7 @@ function App() {
                             streaming: true
                         });
                     }
+                    syncTodoAttachment();
                 }
 
                 if (payload.error) {
@@ -1648,7 +1811,6 @@ function App() {
 
                 if (payload.done) {
                     setRequestIndicator(null);
-                    // Keep todo visible after completion — user dismisses manually
                     if (assistantEntry) {
                         patchTranscriptEntry(sessionId, assistantEntry.id, { streaming: false });
                     } else if (answerBuffer.trim()) {
@@ -1657,7 +1819,8 @@ function App() {
                             content: answerBuffer.trim(),
                             kind: "assistant_text",
                             taskId: "main",
-                            streaming: false
+                            streaming: false,
+                            todo: pendingTodo,
                         });
                     } else {
                         // Build a diagnostic: what events DID arrive before done?
@@ -1667,6 +1830,7 @@ function App() {
                             : "（服务端未发送任何文字内容）";
                         throw new Error(`模型没有返回可显示的正文 ${hint}`);
                     }
+                    syncTodoAttachment();
 
                     if (thinkingEntry) {
                         patchTranscriptEntry(sessionId, thinkingEntry.id, {
@@ -1711,7 +1875,6 @@ function App() {
                     pendingPlaceholder: false
                 });
             }
-            // Don't clear todo on abort/error — keep visible so user can see what was completed
                 if (error.name === "AbortError") {
                     if (assistantEntry) {
                         patchTranscriptEntry(sessionId, assistantEntry.id, { streaming: false });
@@ -1721,7 +1884,8 @@ function App() {
                             content: answerBuffer.trim(),
                             kind: "assistant_text",
                             taskId: "main",
-                            streaming: false
+                            streaming: false,
+                            todo: pendingTodo,
                         });
                     }
                 } else {
@@ -1731,8 +1895,12 @@ function App() {
                         kind: "assistant_text",
                         isError: true,
                         taskId: "main",
-                        streaming: false
+                        streaming: false,
+                        todo: pendingTodo,
                     });
+                }
+                if (assistantEntry?.id && pendingTodo) {
+                    patchTranscriptEntry(sessionId, assistantEntry.id, { todo: normalizeTodo(pendingTodo) });
                 }
         } finally {
             if (sendStartTimeRef.current) {
@@ -1784,6 +1952,18 @@ function App() {
         abortControllerRef.current?.abort();
     }
 
+    function togglePreview() {
+        setPreviewOpen((current) => !current);
+    }
+
+    function refreshPreviewPane() {
+        setPreviewNonce((current) => current + 1);
+    }
+
+    function focusFilesChanged() {
+        setPreviewOpen(true);
+    }
+
     function handleComposerKeyDown(event) {
         const input = messageInputRef.current;
         const selectionStart = input?.selectionStart ?? 0;
@@ -1816,7 +1996,6 @@ function App() {
         .sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt));
 
     const logEntries = filteredLogs().slice().reverse();
-    const activeWorkspacePath = workspacePath || runtime?.work_dir || "";
     const nativeWorkspaceLabel = "Pick Folder";
     const nativeWorkspaceHelp = explainWorkspacePickerBoundary();
     const workingTimerLabel = requestIndicator?.active && requestIndicator?.startedAt
@@ -1824,8 +2003,8 @@ function App() {
         : "";
 
     return (
-        <div className="app-shell">
-            <aside className="sidebar">
+        <div className={`app-shell${previewOpen ? " preview-active" : ""}`}>
+            <aside className={`sidebar${previewOpen ? " preview-compact" : ""}`}>
                 <div className="brand-panel">
                     <div className="brand-lockup">
                         <img className="brand-mark" src={LOGO_SRC} alt="OBS Code logo" />
@@ -1897,7 +2076,7 @@ function App() {
                 </div>
             </aside>
 
-            <main className="workspace">
+            <main className={`workspace${previewOpen ? " workspace-split" : ""}`}>
                 <RuntimePills
                     mode={mode}
                     setMode={setMode}
@@ -1909,83 +2088,140 @@ function App() {
                     threadTurnCount={threadTurnCount}
                     githubUrl={GITHUB_REPO_URL}
                     onExport={exportCurrentSession}
+                    previewOpen={previewOpen}
+                    onTogglePreview={togglePreview}
+                    fileChangeSummary={fileChangeSummary}
+                    onFocusFiles={focusFilesChanged}
                 />
 
-                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                    <TranscriptView
-                        transcript={currentSession?.transcript || []}
-                        chatMessagesRef={chatMessagesRef}
-                        expandedThinking={expandedThinking}
-                        onToggleThinking={toggleThinkingEntry}
-                        requestIndicator={requestIndicator}
-                        workingTimerLabel={workingTimerLabel}
-                        completedLabel={completedLabel}
-                    />
-                </div>
-
-                {activeTodo && (
-                    <div className="todo-strip">
-                        <div className="todo-strip-header">
-                            <i className="fas fa-list-check todo-strip-icon" aria-hidden="true" />
-                            <span className="todo-strip-title">任务列表</span>
-                            <span className="todo-strip-progress">
-                                {activeTodo.items.filter(i => i.done).length} / {activeTodo.items.length}
-                            </span>
-                            <button
-                                type="button"
-                                className="todo-strip-close"
-                                onClick={() => setActiveTodo(null)}
-                                aria-label="关闭任务列表"
-                            >
-                                <i className="fas fa-times" aria-hidden="true" />
-                            </button>
+                <div className={`workspace-content-shell${previewOpen ? " split" : ""}`}>
+                    <section className="workspace-main-pane">
+                        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                            <TranscriptView
+                                transcript={currentSession?.transcript || []}
+                                chatMessagesRef={chatMessagesRef}
+                                expandedThinking={expandedThinking}
+                                onToggleThinking={toggleThinkingEntry}
+                                requestIndicator={requestIndicator}
+                                workingTimerLabel={workingTimerLabel}
+                                completedLabel={completedLabel}
+                            />
                         </div>
-                        <ol className="todo-strip-list">
-                            {activeTodo.items.map((item, i) => (
-                                <li key={i} className={`todo-strip-item${item.done ? " done" : ""}`}>
-                                    <span className="todo-checkbox" aria-hidden="true">
-                                        {item.done && <i className="fas fa-check" />}
-                                    </span>
-                                    <span className="todo-item-text">{item.text}</span>
-                                </li>
-                            ))}
-                        </ol>
-                    </div>
-                )}
 
-                <Composer
-                    selectedModel={selectedModel}
-                    availableModels={availableModels}
-                    onModelChange={setSelectedModel}
-                    permissionMode={permissionMode}
-                    onPermissionToggle={cyclePermissionMode}
-                    thinkingMode={thinkingMode}
-                    onThinkingToggle={() => setThinkingMode((current) => !current)}
-                    onChange={handleMessageInputChange}
-                    onKeyDown={handleComposerKeyDown}
-                    onPaste={handleComposerPaste}
-                    onSend={sendMessage}
-                    onStop={stopGeneration}
-                    isSending={isSending && sendingSessionIdRef.current === currentSessionId}
-                    images={composerImages}
-                    onRemoveImage={handleRemoveComposerImage}
-                    logsOpen={logsOpen}
-                    onLogsToggle={() => setLogsOpen((current) => !current)}
-                    skillsOpen={skillsOpen}
-                    onSkillsToggle={() => setSkillsOpen((current) => !current)}
-                    architectureOpen={architectureOpen}
-                    onArchitectureToggle={() => setArchitectureOpen((current) => !current)}
-                    workspacePath={activeWorkspacePath}
-                    onWorkspaceOpen={openWorkspaceModal}
-                    statusItems={[
-                        `mode:${mode}`,
-                        `permission:${permissionMode}`,
-                        `workspace:${activeWorkspacePath || "--"}`,
-                        `messages:${currentSession?.transcript?.length || 0}`,
-                        `model:${shortenModel(runtime?.model)}`
-                    ]}
-                    inputRef={messageInputRef}
-                />
+                        <Composer
+                            selectedModel={selectedModel}
+                            availableModels={availableModels}
+                            onModelChange={setSelectedModel}
+                            permissionMode={permissionMode}
+                            onPermissionToggle={cyclePermissionMode}
+                            thinkingMode={thinkingMode}
+                            onThinkingToggle={() => setThinkingMode((current) => !current)}
+                            onChange={handleMessageInputChange}
+                            onKeyDown={handleComposerKeyDown}
+                            onPaste={handleComposerPaste}
+                            onSend={sendMessage}
+                            onStop={stopGeneration}
+                            isSending={isSending && sendingSessionIdRef.current === currentSessionId}
+                            images={composerImages}
+                            onRemoveImage={handleRemoveComposerImage}
+                            logsOpen={logsOpen}
+                            onLogsToggle={() => setLogsOpen((current) => !current)}
+                            skillsOpen={skillsOpen}
+                            onSkillsToggle={() => setSkillsOpen((current) => !current)}
+                            architectureOpen={architectureOpen}
+                            onArchitectureToggle={() => setArchitectureOpen((current) => !current)}
+                            workspacePath={activeWorkspacePath}
+                            onWorkspaceOpen={openWorkspaceModal}
+                            statusItems={[
+                                `mode:${mode}`,
+                                `permission:${permissionMode}`,
+                                `workspace:${activeWorkspacePath || "--"}`,
+                                `messages:${currentSession?.transcript?.length || 0}`,
+                                `model:${shortenModel(runtime?.model)}`
+                            ]}
+                            inputRef={messageInputRef}
+                        />
+                    </section>
+
+                    {previewOpen ? (
+                        <aside className="preview-pane">
+                            <div className="preview-pane-shell">
+                                <div className="preview-pane-header">
+                                    <div className="preview-pane-copy">
+                                        <span className="preview-pane-kicker">Live Preview</span>
+                                        <strong>{activePreviewUrl ? "Detected app surface" : "Preview waiting for a runnable URL"}</strong>
+                                    </div>
+                                    <div className="preview-pane-actions">
+                                        {activePreviewUrl ? (
+                                            <>
+                                                <button type="button" className="icon-button" title="Refresh preview" onClick={refreshPreviewPane}>
+                                                    <i className="fas fa-rotate-right" />
+                                                </button>
+                                                <a className="icon-button" href={activePreviewUrl} target="_blank" rel="noreferrer noopener" title="Open preview in a new tab">
+                                                    <i className="fas fa-arrow-up-right-from-square" />
+                                                </a>
+                                            </>
+                                        ) : null}
+                                    </div>
+                                </div>
+
+                                {activePreviewUrl ? (
+                                    <div className="preview-frame-wrap">
+                                        <iframe
+                                            key={`${activePreviewUrl}:${previewNonce}`}
+                                            className="preview-frame"
+                                            src={activePreviewUrl}
+                                            title="App preview"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="preview-empty">
+                                        <i className="fas fa-window-restore" aria-hidden="true" />
+                                        <p>Create 模式生成并启动应用后，只要回答或日志里出现可访问 URL，这里就会自动在右半侧打开预览。</p>
+                                    </div>
+                                )}
+
+                                <div className="files-changed-panel">
+                                    <div className="files-changed-panel-head">
+                                        <div>
+                                            <span className="preview-pane-kicker">Files Changed</span>
+                                            <strong>
+                                                {workspaceChanges.isGit
+                                                    ? `${workspaceChanges.changedFiles} files changed`
+                                                    : "Current workspace is not a git repo"}
+                                            </strong>
+                                        </div>
+                                        {workspaceChanges.isGit ? (
+                                            <span className="files-changed-summary">
+                                                <em>+{workspaceChanges.insertions}</em>
+                                                <strong>-{workspaceChanges.deletions}</strong>
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                    {workspaceChanges.isGit && workspaceChanges.files.length > 0 ? (
+                                        <div className="files-changed-list">
+                                            {workspaceChanges.files.slice(0, 12).map((file) => (
+                                                <div key={file.path} className="files-changed-row">
+                                                    <span className="files-changed-status">{file.status.trim() || "M"}</span>
+                                                    <span className="files-changed-path">{file.path}</span>
+                                                    <span className="files-changed-delta">
+                                                        {file.insertions || file.deletions
+                                                            ? `+${file.insertions} -${file.deletions}`
+                                                            : "untracked"}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="preview-empty preview-empty-small">
+                                            <p>当前 workspace 里还没有检测到 git 文件变更。</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </aside>
+                    ) : null}
+                </div>
             </main>
 
             <LogsDrawer

@@ -25,5 +25,7 @@ def test_architecture_signature_contains_reference_layers_and_routes() -> None:
     assert signature["reference_style"] == "Claude Code inspired request harness"
     assert any(layer["id"] == "session_store" for layer in signature["layers"])
     assert any(route["mode"] == "agent" for route in signature["mode_routes"])
+    assert any(route["mode"] == "create" for route in signature["mode_routes"])
     assert "skill_index" in signature["prompt_sections"]
     assert any(item["key"] == "prep_model" for item in signature["phase_catalog"])
+    assert any(item["key"] == "create" for item in signature["phase_catalog"])

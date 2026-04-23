@@ -188,6 +188,38 @@ def _decode_events(chunks: List[str]) -> List[Dict[str, Any]]:
     return events
 
 
+def test_final_synthesis_keeps_recent_session_context() -> None:
+    agent = StreamingAgent(FakeVLLMClient(), FakeSkillManager())
+    conversation_history = [
+        {"role": "user", "content": "http://10.25.10.60:3010/skill.md 注册到这个游戏大厅，作为 obs code"},
+        {
+            "role": "assistant",
+            "content": "已注册到 Agent Games World。API Key: games-world-abc，Agent ID: agent_123。",
+        },
+        {"role": "user", "content": "注册的游戏中显示没有你"},
+        {
+            "role": "user",
+            "content": "把当前 http://10.25.35.64:8000 地址作为可访问服务加进去，与贪吃蛇和五子棋平级",
+        },
+    ]
+    messages = [
+        {"role": "tool", "name": "bash", "content": "services: snake, gomoku"},
+    ]
+
+    final_messages = agent._build_compact_final_synthesis_messages(
+        conversation_history=conversation_history,
+        messages=messages,
+        instruction="请基于工具结果直接给出最终回答。",
+    )
+
+    final_prompt = final_messages[-1]["content"]
+    assert "[Relevant recent conversation context]" in final_prompt
+    assert "games-world-abc" in final_prompt
+    assert "agent_123" in final_prompt
+    assert "http://10.25.35.64:8000" in final_prompt
+    assert "services: snake, gomoku" in final_prompt
+
+
 def test_tool_inventory_request_bypasses_compaction_and_model() -> None:
     agent = StreamingAgent(FakeVLLMClient(), FakeSkillManager())
 

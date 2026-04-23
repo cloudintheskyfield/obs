@@ -1,0 +1,255 @@
+{
+  "basic_workflow": {
+    "tasks": [
+      {
+        "task_id": "task_1",
+        "action": "skill",
+        "skill": "web_search",
+        "params": {
+          "query": "React组件开发最佳实践"
+        },
+        "description": "搜索React组件开发资料",
+        "dependencies": []
+      },
+      {
+        "task_id": "task_2",
+        "action": "skill",
+        "skill": "str_replace_editor",
+        "params": {
+          "command": "create",
+          "path": "component.jsx",
+          "file_text": "// React组件代码"
+        },
+        "description": "创建React组件文件",
+        "dependencies": []
+      },
+      {
+        "task_id": "task_3",
+        "action": "skill",
+        "skill": "bash",
+        "params": {
+          "command": "npm test"
+        },
+        "description": "运行测试",
+        "dependencies": [
+          "task_2"
+        ]
+      },
+      {
+        "task_id": "task_4",
+        "action": "response",
+        "skill": null,
+        "params": {},
+        "description": "生成最终响应",
+        "dependencies": [
+          "task_3"
+        ]
+      }
+    ],
+    "execution_layers": [
+      [
+        "task_1",
+        "task_2"
+      ],
+      [
+        "task_3"
+      ],
+      [
+        "task_4"
+      ]
+    ],
+    "visualization": "任务依赖图:\n\n层 1 (并行执行):\n  - task_1: 搜索React组件开发资料\n  - task_2: 创建React组件文件\n\n层 2 (并行执行):\n  - task_3: 运行测试 [依赖: task_2]\n\n层 3 (并行执行):\n  - task_4: 生成最终响应 [依赖: task_3]"
+  },
+  "expert_workflow": {
+    "tasks": [
+      {
+        "task_id": "REQ_ANALYSIS",
+        "role": "Product Manager",
+        "description": "分析用户需求，编写用户故事",
+        "dependencies": []
+      },
+      {
+        "task_id": "TECH_DESIGN",
+        "role": "Architect",
+        "description": "技术选型和系统架构设计",
+        "dependencies": [
+          "REQ_ANALYSIS"
+        ]
+      },
+      {
+        "task_id": "DB_SCHEMA",
+        "role": "Backend Developer",
+        "description": "设计数据库Schema",
+        "dependencies": [
+          "TECH_DESIGN"
+        ]
+      },
+      {
+        "task_id": "API_DEV",
+        "role": "Backend Developer",
+        "description": "开发RESTful API接口",
+        "dependencies": [
+          "DB_SCHEMA"
+        ]
+      },
+      {
+        "task_id": "UI_COMPONENTS",
+        "role": "Frontend Developer",
+        "description": "开发React组件",
+        "dependencies": [
+          "TECH_DESIGN"
+        ]
+      },
+      {
+        "task_id": "INTEGRATION",
+        "role": "Frontend Developer",
+        "description": "前后端集成",
+        "dependencies": [
+          "API_DEV",
+          "UI_COMPONENTS"
+        ]
+      },
+      {
+        "task_id": "TESTING",
+        "role": "QA Reviewer",
+        "description": "功能测试和代码审查",
+        "dependencies": [
+          "INTEGRATION"
+        ]
+      }
+    ],
+    "execution_layers": [
+      [
+        "REQ_ANALYSIS"
+      ],
+      [
+        "TECH_DESIGN"
+      ],
+      [
+        "DB_SCHEMA",
+        "UI_COMPONENTS"
+      ],
+      [
+        "API_DEV"
+      ],
+      [
+        "INTEGRATION"
+      ],
+      [
+        "TESTING"
+      ]
+    ],
+    "visualization": "任务依赖图:\n\n层 1 (并行执行):\n  - REQ_ANALYSIS: 分析用户需求，编写用户故事\n\n层 2 (并行执行):\n  - TECH_DESIGN: 技术选型和系统架构设计 [依赖: REQ_ANALYSIS]\n\n层 3 (并行执行):\n  - DB_SCHEMA: 设计数据库Schema [依赖: TECH_DESIGN]\n  - UI_COMPONENTS: 开发React组件 [依赖: TECH_DESIGN]\n\n层 4 (并行执行):\n  - API_DEV: 开发RESTful API接口 [依赖: DB_SCHEMA]\n\n层 5 (并行执行):\n  - INTEGRATION: 前后端集成 [依赖: API_DEV, UI_COMPONENTS]\n\n层 6 (并行执行):\n  - TESTING: 功能测试和代码审查 [依赖: INTEGRATION]"
+  },
+  "test_scenarios": [
+    {
+      "name": "简单线性工作流",
+      "tasks": [
+        {
+          "task_id": "task_1",
+          "action": "skill",
+          "skill": "web_search",
+          "params": {
+            "query": "React组件开发最佳实践"
+          },
+          "description": "搜索React组件开发资料",
+          "dependencies": []
+        },
+        {
+          "task_id": "task_2",
+          "action": "skill",
+          "skill": "str_replace_editor",
+          "params": {
+            "command": "create",
+            "path": "component.jsx",
+            "file_text": "// React组件代码"
+          },
+          "description": "创建React组件文件",
+          "dependencies": []
+        },
+        {
+          "task_id": "task_3",
+          "action": "skill",
+          "skill": "bash",
+          "params": {
+            "command": "npm test"
+          },
+          "description": "运行测试",
+          "dependencies": [
+            "task_2"
+          ]
+        },
+        {
+          "task_id": "task_4",
+          "action": "response",
+          "skill": null,
+          "params": {},
+          "description": "生成最终响应",
+          "dependencies": [
+            "task_3"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "复杂并行工作流",
+      "tasks": [
+        {
+          "task_id": "REQ_ANALYSIS",
+          "role": "Product Manager",
+          "description": "分析用户需求，编写用户故事",
+          "dependencies": []
+        },
+        {
+          "task_id": "TECH_DESIGN",
+          "role": "Architect",
+          "description": "技术选型和系统架构设计",
+          "dependencies": [
+            "REQ_ANALYSIS"
+          ]
+        },
+        {
+          "task_id": "DB_SCHEMA",
+          "role": "Backend Developer",
+          "description": "设计数据库Schema",
+          "dependencies": [
+            "TECH_DESIGN"
+          ]
+        },
+        {
+          "task_id": "API_DEV",
+          "role": "Backend Developer",
+          "description": "开发RESTful API接口",
+          "dependencies": [
+            "DB_SCHEMA"
+          ]
+        },
+        {
+          "task_id": "UI_COMPONENTS",
+          "role": "Frontend Developer",
+          "description": "开发React组件",
+          "dependencies": [
+            "TECH_DESIGN"
+          ]
+        },
+        {
+          "task_id": "INTEGRATION",
+          "role": "Frontend Developer",
+          "description": "前后端集成",
+          "dependencies": [
+            "API_DEV",
+            "UI_COMPONENTS"
+          ]
+        },
+        {
+          "task_id": "TESTING",
+          "role": "QA Reviewer",
+          "description": "功能测试和代码审查",
+          "dependencies": [
+            "INTEGRATION"
+          ]
+        }
+      ]
+    }
+  ]
+}

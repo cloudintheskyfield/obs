@@ -13,6 +13,34 @@ function stripImageTokens(text) {
     return (text || "").replace(IMAGE_TOKEN_RE, "").trim();
 }
 
+function renderTodoStrip(todo) {
+    if (!todo?.items?.length) {
+        return null;
+    }
+    const completedCount = todo.items.filter((item) => item.done).length;
+    return (
+        <div className={`todo-strip embedded${todo.completed ? " completed" : ""}`}>
+            <div className="todo-strip-header">
+                <i className="fas fa-list-check todo-strip-icon" aria-hidden="true" />
+                <span className="todo-strip-title">任务列表</span>
+                <span className="todo-strip-progress">
+                    {completedCount} / {todo.items.length}
+                </span>
+            </div>
+            <ol className="todo-strip-list">
+                {todo.items.map((item, index) => (
+                    <li key={`${item.text}_${index}`} className={`todo-strip-item${item.done ? " done" : ""}`}>
+                        <span className="todo-checkbox" aria-hidden="true">
+                            {item.done && <i className="fas fa-check" />}
+                        </span>
+                        <span className="todo-item-text">{item.text}</span>
+                    </li>
+                ))}
+            </ol>
+        </div>
+    );
+}
+
 export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, requestIndicator, workingTimerLabel, completedLabel }) {
     const lastUserIndex = (() => {
         for (let index = transcript.length - 1; index >= 0; index -= 1) {
@@ -163,6 +191,8 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                             </div>
                                         )}
                                     </div>
+
+                                    {renderTodoStrip(entry.todo)}
 
                                 </article>
 

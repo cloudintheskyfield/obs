@@ -11,6 +11,7 @@ function formatTokenCount(tokens) {
 
 const MODE_META = {
     agent:  { label: "Agent",  icon: "fa-robot",                   tip: "全自动工具调用，直接执行任务" },
+    create: { label: "Create", icon: "fa-wand-magic-sparkles",     tip: "一句话生成可运行的前后端应用" },
     plan:   { label: "Plan",   icon: "fa-list-check",              tip: "只生成执行计划，不实际运行工具" },
     battle: { label: "Battle", icon: "fa-code-compare",            tip: "多模型并行对比，择优输出" },
     review: { label: "Review", icon: "fa-magnifying-glass-chart",  tip: "通过审查引擎处理，适合代码审核" },
@@ -21,6 +22,8 @@ export default function RuntimePills({
     contextPercent, contextTokens, contextMaxTokens,
     threadContextPercent, threadContextTokens, threadTurnCount,
     githubUrl, onExport,
+    previewOpen, onTogglePreview,
+    fileChangeSummary, onFocusFiles,
 }) {
     const workingPct = Math.min(100, Math.max(0, Number(contextPercent) || 0));
     const threadPct = Math.min(100, Math.max(0, Number(threadContextPercent) || 0));
@@ -91,6 +94,30 @@ export default function RuntimePills({
                         <i className="fas fa-download" />
                     </button>
                 )}
+                {fileChangeSummary?.visible ? (
+                    <button
+                        className="icon-button files-changed-trigger"
+                        type="button"
+                        title={`${fileChangeSummary.changedFiles} files changed`}
+                        onClick={onFocusFiles}
+                    >
+                        <span className="files-changed-trigger-text">
+                            {fileChangeSummary.changedFiles} files changed
+                        </span>
+                        <span className="files-changed-trigger-stats">
+                            <em>+{fileChangeSummary.insertions}</em>
+                            <strong>-{fileChangeSummary.deletions}</strong>
+                        </span>
+                    </button>
+                ) : null}
+                <button
+                    className={`icon-button${previewOpen ? " active" : ""}`}
+                    type="button"
+                    title={previewOpen ? "恢复全屏编辑" : "打开右侧预览"}
+                    onClick={onTogglePreview}
+                >
+                    <i className={`fas ${previewOpen ? "fa-pen-ruler" : "fa-up-right-and-down-left-from-center"}`} />
+                </button>
             </div>
         </header>
     );

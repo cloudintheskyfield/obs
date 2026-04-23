@@ -97,6 +97,7 @@ class StreamingAgent:
     Streaming agent plus mode-aware execution routing.
 
     - `agent` mode: native tool-calling loop
+    - `create` mode: same native loop, but biased toward scaffolding a runnable app from a short prompt
     - `plan` mode: create task graph only, no tool execution
     - `review` mode: route through execution engine for structured task transcript
     - `battle` mode: run a direct model answer and a tool-assisted answer, then judge the winner
@@ -567,6 +568,13 @@ class StreamingAgent:
         instruction: str,
     ) -> List[Dict[str, str]]:
         latest_user_request = self._latest_user_request_text(conversation_history, messages)
+        prior_turns = self._conversation_to_turns(conversation_history[:-1])
+        recent_context = ""
+        if prior_turns:
+            recent_context = self._truncate_prompt_field(
+                self._serialize_turns(prior_turns[-6:]),
+                8000,
+            )
         tool_digest = self._build_tool_recovery_digest(
             messages,
             max_items=8,
@@ -579,6 +587,11 @@ class StreamingAgent:
                 "[Original user request]\n"
                 f"{self._truncate_prompt_field(latest_user_request, 1800)}"
             )
+        if recent_context:
+            user_sections.append(
+                "[Relevant recent conversation context]\n"
+                f"{recent_context}"
+            )
         if tool_digest:
             user_sections.append(f"[Completed tool outputs]\n{tool_digest}")
         user_sections.append(f"[Synthesis instruction]\n{instruction}")
@@ -588,7 +601,9 @@ class StreamingAgent:
                 "role": "system",
                 "content": (
                     "You are OBS Agent. Produce the final user-facing answer from the provided "
-                    "request and completed tool outputs only. Do not call tools, do not emit XML, "
+                    "request, recent conversation context, and completed tool outputs only. "
+                    "Preserve concrete session facts such as IDs, URLs, credentials, prior decisions, "
+                    "and user corrections when they are relevant. Do not call tools, do not emit XML, "
                     "and do not repeat internal planning."
                 ),
             },
@@ -2339,6 +2354,9 @@ class StreamingAgent:
             enriched_user_message = self._apply_context_to_user_message(user_message, context, tool_context)
             effective_mode = mode
 
+            if effective_mode == "create":
+                yield self._phase("create")
+
             if effective_mode == "plan":
                 async for chunk in self._plan_only_stream(
                     user_message=enriched_user_message,
@@ -2550,6 +2568,7 @@ class StreamingAgent:
         request_context: Dict[str, Any],
     ) -> AsyncGenerator[str, None]:
         selected_model = (request_context or {}).get("model") or None
+        active_mode = (request_context or {}).get("mode") or "agent"
         conversation_history = chat_sessions[session_id].copy()
         rewritten_history = self._rewrite_followup_reference_request(conversation_history)
         rewritten_history = self._rewrite_followup_location_query(rewritten_history)
@@ -2638,6 +2657,15 @@ class StreamingAgent:
                 "If a needed tool is not enabled, do not fabricate tool calls, XML tags, or internal invocation markup. "
                 "Instead, clearly explain that the required skill is not currently selected."
             )
+        if active_mode == "create":
+            system_prompts.append(
+                "You are in CREATE mode. Treat short product ideas like a request to build a real runnable application, "
+                "similar in spirit to same.new. Prefer producing a complete, cohesive deliverable in the current workspace: "
+                "frontend, backend, dependency manifests, runnable scripts, and concise usage instructions. "
+                "Use tools proactively, create files instead of only describing them, and leave the project in a state where "
+                "the user can run or preview it immediately. If the workspace already contains files, adapt carefully and avoid "
+                "overwriting unrelated work unless clearly necessary. End with what was created, how to run it, and any preview URL you started."
+            )
         tool_names = [tool.get("name", "") for tool in tools if tool.get("name")]
         skill_index_prompt = self._build_skill_index_prompt(tool_names, enabled_skills or []) if tools else None
         relevant_skill_instructions = self._build_relevant_skill_instructions(tool_names) if tools else None
@@ -2667,6 +2695,14 @@ class StreamingAgent:
             relevant_skill_instructions=relevant_skill_instructions,
             tool_guidance=tool_guidance,
         )
+        if active_mode == "create":
+            user_prompt = (
+                f"{user_prompt}\n\n"
+                "[Create mode contract]\n"
+                "Interpret the active user request as permission to scaffold or extend a runnable application. "
+                "Make concrete implementation decisions, create the necessary frontend/backend files, wire the app together, "
+                "and prefer finishing with a launchable result over asking broad clarification questions."
+            )
         if inline_image_context:
             user_prompt = (
                 f"{user_prompt}\n\n"

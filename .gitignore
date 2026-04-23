@@ -31,3 +31,6 @@ ui/node_modules/
 .task_outputs/
 .tasks/
 .teams/
+
+# build artifacts
+dist/

@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflow Visualization Demo</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- React Flow Dependencies -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/reactflow@11.10.1/dist/umd/index.js"></script>
+    <!-- Dagre for auto layout -->
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <style>
+        body {
+            padding: 20px;
+            background: #f0f9ff;
+        }
+        
+        .demo-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(8, 145, 209, 0.15);
+            overflow: hidden;
+        }
+        
+        .demo-header {
+            padding: 20px;
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            color: white;
+            text-align: center;
+        }
+        
+        .demo-controls {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .demo-btn {
+            padding: 8px 16px;
+            border: 1px solid var(--primary-color);
+            border-radius: 8px;
+            background: rgba(8, 145, 209, 0.1);
+            color: var(--primary-color);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 14px;
+        }
+        
+        .demo-btn:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .workflow-demo {
+            height: 600px;
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <div class="demo-header">
+            <h1><i class="fas fa-project-diagram"></i> Workflow Visualization Demo</h1>
+            <p>展示DAG任务依赖图和实时状态更新</p>
+        </div>
+        
+        <div class="demo-controls">
+            <button class="demo-btn" onclick="loadSimpleWorkflow()">
+                <i class="fas fa-play"></i> 简单工作流
+            </button>
+            <button class="demo-btn" onclick="loadComplexWorkflow()">
+                <i class="fas fa-sitemap"></i> 复杂工作流
+            </button>
+            <button class="demo-btn" onclick="loadWebDevWorkflow()">
+                <i class="fas fa-code"></i> Web开发流程
+            </button>
+            <button class="demo-btn" onclick="simulateExecution()">
+                <i class="fas fa-play-circle"></i> 模拟执行
+            </button>
+            <button class="demo-btn" onclick="resetWorkflow()">
+                <i class="fas fa-redo"></i> 重置
+            </button>
+        </div>
+        
+        <div class="workflow-demo">
+            <!-- Workflow 可视化面板 -->
+            <div class="workflow-panel" id="workflow-panel">
+                <div class="workflow-header">
+                    <h3><i class="fas fa-project-diagram"></i> 执行状态</h3>
+                    <div class="workflow-controls">
+                        <button id="workflow-auto-layout" class="workflow-btn" title="自动布局">
+                            <i class="fas fa-sitemap"></i>
+                        </button>
+                        <button id="workflow-fit-view" class="workflow-btn" title="适应视图">
+                            <i class="fas fa-expand-arrows-alt"></i>
+                        </button>
+                        <button id="workflow-toggle" class="workflow-btn" title="收起面板">
+                            <i class="fas fa-chevron-up"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="workflow-content">
+                    <div id="workflow-graph" class="workflow-graph"></div>
+                    
+                    <!-- 节点详情面板 -->
+                    <div class="node-details-panel" id="node-details-panel" style="display: none;">
+                        <div class="node-details-header">
+                            <h4 id="node-details-title">节点详情</h4>
+                            <button id="close-node-details" class="close-btn">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="node-details-content">
+                            <div class="node-details-section">
+                                <label>状态:</label>
+                                <span id="node-details-status" class="status-badge">未知</span>
+                            </div>
+                            <div class="node-details-section">
+                                <label>角色:</label>
+                                <span id="node-details-role">-</span>
+                            </div>
+                            <div class="node-details-section">
+                                <label>描述:</label>
+                                <div id="node-details-description">-</div>
+                            </div>
+                            <div class="node-details-section">
+                                <label>依赖:</label>
+                                <div id="node-details-dependencies">无</div>
+                            </div>
+                            <div class="node-details-section" id="node-execution-details" style="display: none;">
+                                <label>执行详情:</label>
+                                <div id="node-execution-content"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 创建工作流可视化实例
+        let workflowViz;
+        
+        // 等待库加载完成
+        function initWorkflow() {
+            if (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined' && window.ReactFlow) {
+                // 从主应用中复制WorkflowVisualization类定义
+                eval(`
+                    // ===== WORKFLOW VISUALIZATION COMPONENT =====
+                    class WorkflowVisualization {
+                        constructor() {
+                            this.container = document.getElementById('workflow-graph');
+                            this.panel = document.getElementById('workflow-panel');
+                            this.nodeDetailsPanel = document.getElementById('node-details-panel');
+                            this.reactFlowInstance = null;
+                            this.nodes = [];
+                            this.edges = [];
+                            this.taskStates = new Map();
+                            
+                            this.init();
+                        }
+                        
+                        init() {
+                            if (!this.container) return;
+                            
+                            this.bindEvents();
+                            this.initReactFlow();
+                        }
+                        
+                        bindEvents() {
+                            const autoLayoutBtn = document.getElementById('workflow-auto-layout');
+                            const fitViewBtn = document.getElementById('workflow-fit-view');
+                            const toggleBtn = document.getElementById('workflow-toggle');
+                            const closeDetailsBtn = document.getElementById('close-node-details');
+                            
+                            if (autoLayoutBtn) {
+                                autoLayoutBtn.addEventListener('click', () => this.autoLayout());
+                            }
+                            
+                            if (fitViewBtn) {
+                                fitViewBtn.addEventListener('click', () => this.fitView());
+                            }
+                            
+                            if (toggleBtn) {
+                                toggleBtn.addEventListener('click', () => this.togglePanel());
+                            }
+                            
+                            if (closeDetailsBtn) {
+                                closeDetailsBtn.addEventListener('click', () => this.hideNodeDetails());
+                            }
+                        }
+                        
+                        initReactFlow() {
+                            if (!window.ReactFlow) return;
+                            
+                            const WorkflowComponent = React.createElement(window.ReactFlow.default, {
+                                nodes: this.nodes,
+                                edges: this.edges,
+                                onNodesChange: (changes) => this.onNodesChange(changes),
+                                onEdgesChange: (changes) => this.onEdgesChange(changes),
+                                onNodeClick: (event, node) => this.onNodeClick(event, node),
+                                onInit: (instance) => { this.reactFlowInstance = instance; },
+                                fitView: true,
+                                attributionPosition: 'bottom-left'
+                            });
+                            
+                            const root = ReactDOM.createRoot(this.container);
+                            root.render(WorkflowComponent);
+                        }
+                        
+                        onNodesChange(changes) {
+                            this.nodes = window.ReactFlow.applyNodeChanges(changes, this.nodes);
+                            this.updateReactFlow();
+                        }
+                        
+                        onEdgesChange(changes) {
+                            this.edges = window.ReactFlow.applyEdgeChanges(changes, this.edges);
+                            this.updateReactFlow();
+                        }
+                        
+                        onNodeClick(event, node) {
+                            this.showNodeDetails(node);
+                        }
+                        
+                        updateReactFlow() {
+                            if (this.reactFlowInstance) {
+                                this.reactFlowInstance.setNodes(this.nodes);
+                                this.reactFlowInstance.setEdges(this.edges);
+                            }
+                        }
+                        
+                        show() {
+                            if (this.panel) {
+                                this.panel.style.display = 'block';
+                            }
+                        }
+                        
+                        togglePanel() {
+                            if (this.panel) {
+                                if (this.panel.classList.contains('collapsed')) {
+                                    this.panel.classList.remove('collapsed');
+                                    document.getElementById('workflow-toggle').innerHTML = '<i class="fas fa-chevron-up"></i>';
+                                } else {
+                                    this.panel.classList.add('collapsed');
+                                    document.getElementById('workflow-toggle').innerHTML = '<i class="fas fa-chevron-down"></i>';
+                                }
+                            }
+                        }
+                        
+                        updateFromDAG(dagData) {
+                            if (!dagData || !dagData.tasks) return;
+                            
+                            this.nodes = [];
+                            this.edges = [];
+                            
+                            dagData.tasks.forEach((task, index) => {
+                                const node = this.createNodeFromTask(task, index);
+                                this.nodes.push(node);
+                            });
+                            
+                            dagData.tasks.forEach((task) => {
+                                if (task.dependencies) {
+                                    task.dependencies.forEach(depId => {
+                                        const edge = {
+                                            id: \`\${depId}-\${task.task_id}\`,
+                                            source: depId,
+                                            target: task.task_id,
+                                            type: 'smoothstep',
+                                            animated: false,
+                                            className: 'pending'
+                                        };
+                                        this.edges.push(edge);
+                                    });
+                                }
+                            });
+                            
+                            this.autoLayout();
+                            this.show();
+                        }
+                        
+                        createNodeFromTask(task, index) {
+                            const status = this.taskStates.get(task.task_id) || 'pending';
+                            
+                            const roleIcons = {
+                                'Product Manager': 'fa-user-tie',
+                                'Architect': 'fa-drafting-compass',
+                                'Backend Developer': 'fa-server',
+                                'Frontend Developer': 'fa-paint-brush',
+                                'QA Reviewer': 'fa-search',
+                                'Travel Planner': 'fa-map-marked-alt',
+                                'default': 'fa-cog'
+                            };
+                            
+                            const icon = roleIcons[task.role] || roleIcons.default;
+                            
+                            return {
+                                id: task.task_id,
+                                type: 'default',
+                                position: { x: index * 200, y: 100 },
+                                data: {
+                                    label: React.createElement('div', {
+                                        className: \`workflow-node \${status}\`
+                                    }, [
+                                        React.createElement('i', {
+                                            key: 'icon',
+                                            className: \`fas \${icon} workflow-node-icon\`
+                                        }),
+                                        React.createElement('div', {
+                                            key: 'title',
+                                            className: 'workflow-node-title'
+                                        }, task.task_id),
+                                        React.createElement('div', {
+                                            key: 'status',
+                                            className: 'workflow-node-status'
+                                        }, status)
+                                    ])
+                                },
+                                className: status,
+                                style: {
+                                    width: 140,
+                                    height: 80
+                                }
+                            };
+                        }
+                        
+                        autoLayout() {
+                            if (!window.dagre || this.nodes.length === 0) return;
+                            
+                            const dagreGraph = new dagre.graphlib.Graph();
+                            dagreGraph.setDefaultEdgeLabel(() => ({}));
+                            dagreGraph.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80 });
+                            
+                            this.nodes.forEach(node => {
+                                dagreGraph.setNode(node.id, { width: 140, height: 80 });
+                            });
+                            
+                            this.edges.forEach(edge => {
+                                dagreGraph.setEdge(edge.source, edge.target);
+                            });
+                            
+                            dagre.layout(dagreGraph);
+                            
+                            this.nodes = this.nodes.map(node => {
+                                const nodeWithPosition = dagreGraph.node(node.id);
+                                return {
+                                    ...node,
+                                    position: {
+                                        x: nodeWithPosition.x - nodeWithPosition.width / 2,
+                                        y: nodeWithPosition.y - nodeWithPosition.height / 2
+                                    }
+                                };
+                            });
+                            
+                            this.updateReactFlow();
+                            this.fitView();
+                        }
+                        
+                        fitView() {
+                            if (this.reactFlowInstance) {
+                                this.reactFlowInstance.fitView({ duration: 800 });
+                            }
+                        }
+                        
+                        updateTaskStatus(taskId, status) {
+                            this.taskStates.set(taskId, status);
+                            
+                            this.nodes = this.nodes.map(node => {
+                                if (node.id === taskId) {
+                                    return {
+                                        ...node,
+                                        className: status,
+                                        data: {
+                                            ...node.data,
+                                            label: React.createElement('div', {
+                                                className: \`workflow-node \${status}\`
+                                            }, [
+                                                node.data.label.props.children[0],
+                                                node.data.label.props.children[1],
+                                                React.createElement('div', {
+                                                    key: 'status',
+                                                    className: 'workflow-node-status'
+                                                }, status)
+                                            ])
+                                        }
+                                    };
+                                }
+                                return node;
+                            });
+                            
+                            this.edges = this.edges.map(edge => {
+                                if (edge.target === taskId) {
+                                    return {
+                                        ...edge,
+                                        className: status,
+                                        animated: status === 'running'
+                                    };
+                                }
+                                return edge;
+                            });
+                            
+                            this.updateReactFlow();
+                        }
+                        
+                        showNodeDetails(node) {
+                            if (!this.nodeDetailsPanel) return;
+                            
+                            const taskData = this.getTaskData(node.id);
+                            if (!taskData) return;
+                            
+                            const status = this.taskStates.get(node.id) || 'pending';
+                            
+                            document.getElementById('node-details-title').textContent = taskData.task_id;
+                            
+                            const statusBadge = document.getElementById('node-details-status');
+                            statusBadge.textContent = status;
+                            statusBadge.className = \`status-badge \${status}\`;
+                            
+                            document.getElementById('node-details-role').textContent = taskData.role || '-';
+                            document.getElementById('node-details-description').textContent = taskData.description || '-';
+                            
+                            const deps = taskData.dependencies && taskData.dependencies.length > 0 
+                                ? taskData.dependencies.join(', ') 
+                                : '无';
+                            document.getElementById('node-details-dependencies').textContent = deps;
+                            
+                            this.nodeDetailsPanel.style.display = 'block';
+                        }
+                        
+                        hideNodeDetails() {
+                            if (this.nodeDetailsPanel) {
+                                this.nodeDetailsPanel.style.display = 'none';
+                            }
+                        }
+                        
+                        getTaskData(taskId) {
+                            return this.storedTasks?.find(task => task.task_id === taskId);
+                        }
+                        
+                        storeTasks(tasks) {
+                            this.storedTasks = tasks;
+                        }
+                    }
+                `);
+                
+                workflowViz = new WorkflowVisualization();
+            } else {
+                setTimeout(initWorkflow, 500);
+            }
+        }
+        
+        // 示例工作流数据
+        function loadSimpleWorkflow() {
+            const simpleDAG = {
+                tasks: [
+                    {
+                        task_id: 'T1',
+                        role: 'Product Manager',
+                        description: '分析用户需求',
+                        dependencies: []
+                    },
+                    {
+                        task_id: 'T2',
+                        role: 'Architect',
+                        description: '设计系统架构',
+                        dependencies: ['T1']
+                    },
+                    {
+                        task_id: 'T3',
+                        role: 'Frontend Developer',
+                        description: '开发前端界面',
+                        dependencies: ['T2']
+                    }
+                ]
+            };
+            
+            workflowViz.storeTasks(simpleDAG.tasks);
+            workflowViz.updateFromDAG(simpleDAG);
+        }
+        
+        function loadComplexWorkflow() {
+            const complexDAG = {
+                tasks: [
+                    {
+                        task_id: 'T1',
+                        role: 'Product Manager',
+                        description: '需求分析和用户故事',
+                        dependencies: []
+                    },
+                    {
+                        task_id: 'T2',
+                        role: 'Architect',
+                        description: '系统架构设计',
+                        dependencies: ['T1']
+                    },
+                    {
+                        task_id: 'T3',
+                        role: 'Backend Developer',
+                        description: '数据库设计',
+                        dependencies: ['T2']
+                    },
+                    {
+                        task_id: 'T4',
+                        role: 'Backend Developer',
+                        description: 'API接口开发',
+                        dependencies: ['T3']
+                    },
+                    {
+                        task_id: 'T5',
+                        role: 'Frontend Developer',
+                        description: '组件开发',
+                        dependencies: ['T2']
+                    },
+                    {
+                        task_id: 'T6',
+                        role: 'Frontend Developer',
+                        description: 'API集成',
+                        dependencies: ['T4', 'T5']
+                    },
+                    {
+                        task_id: 'T7',
+                        role: 'QA Reviewer',
+                        description: '代码审查和测试',
+                        dependencies: ['T6']
+                    }
+                ]
+            };
+            
+            workflowViz.storeTasks(complexDAG.tasks);
+            workflowViz.updateFromDAG(complexDAG);
+        }
+        
+        function loadWebDevWorkflow() {
+            const webDevDAG = {
+                tasks: [
+                    {
+                        task_id: 'REQ',
+                        role: 'Product Manager',
+                        description: '收集和整理需求',
+                        dependencies: []
+                    },
+                    {
+                        task_id: 'DESIGN',
+                        role: 'Architect',
+                        description: '技术选型和架构设计',
+                        dependencies: ['REQ']
+                    },
+                    {
+                        task_id: 'DB',
+                        role: 'Backend Developer',
+                        description: '数据库Schema设计',
+                        dependencies: ['DESIGN']
+                    },
+                    {
+                        task_id: 'API',
+                        role: 'Backend Developer',
+                        description: 'RESTful API开发',
+                        dependencies: ['DB']
+                    },
+                    {
+                        task_id: 'UI',
+                        role: 'Frontend Developer',
+                        description: 'React组件开发',
+                        dependencies: ['DESIGN']
+                    },
+                    {
+                        task_id: 'INTEGRATION',
+                        role: 'Frontend Developer',
+                        description: '前后端集成',
+                        dependencies: ['API', 'UI']
+                    },
+                    {
+                        task_id: 'TEST',
+                        role: 'QA Reviewer',
+                        description: '功能测试',
+                        dependencies: ['INTEGRATION']
+                    },
+                    {
+                        task_id: 'DEPLOY',
+                        role: 'Backend Developer',
+                        description: '部署和上线',
+                        dependencies: ['TEST']
+                    }
+                ]
+            };
+            
+            workflowViz.storeTasks(webDevDAG.tasks);
+            workflowViz.updateFromDAG(webDevDAG);
+        }
+        
+        // 模拟执行
+        function simulateExecution() {
+            if (!workflowViz || !workflowViz.storedTasks) {
+                alert('请先加载一个工作流');
+                return;
+            }
+            
+            const tasks = workflowViz.storedTasks;
+            
+            // 重置所有状态
+            tasks.forEach(task => {
+                workflowViz.updateTaskStatus(task.task_id, 'pending');
+            });
+            
+            // 模拟执行序列
+            let delay = 1000;
+            
+            tasks.forEach((task, index) => {
+                // 开始执行
+                setTimeout(() => {
+                    workflowViz.updateTaskStatus(task.task_id, 'running');
+                }, delay);
+                
+                // 完成执行（随机成功/失败）
+                setTimeout(() => {
+                    const success = Math.random() > 0.2; // 80%成功率
+                    workflowViz.updateTaskStatus(task.task_id, success ? 'success' : 'failed');
+                }, delay + 1500 + Math.random() * 1000);
+                
+                delay += 2000 + Math.random() * 1000;
+            });
+        }
+        
+        function resetWorkflow() {
+            if (workflowViz && workflowViz.storedTasks) {
+                workflowViz.storedTasks.forEach(task => {
+                    workflowViz.updateTaskStatus(task.task_id, 'pending');
+                });
+            }
+        }
+        
+        // 初始化
+        initWorkflow();
+        
+        // 页面加载完成后加载默认工作流
+        setTimeout(() => {
+            loadWebDevWorkflow();
+        }, 1500);
+    </script>
+</body>
+</html>

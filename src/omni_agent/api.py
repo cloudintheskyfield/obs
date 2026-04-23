@@ -7,6 +7,7 @@ import json
 import asyncio
 import os
 import re
+import subprocess
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -1069,6 +1070,84 @@ async def browse_workspace(path: Optional[str] = Query(default=None)):
         "parent": _runtime_to_host_path(str(parent)) if parent else None,
         "entries": entries[:200],
     })
+
+
+@app.get("/workspace/changes")
+async def workspace_changes(path: Optional[str] = Query(default=None)):
+    try:
+        workspace = _resolve_workspace_path(path) if path else Path(_current_workspace_runtime()).resolve()
+    except Exception:
+        workspace = Path(_current_workspace_runtime()).resolve()
+
+    def _git(args: List[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(workspace), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    try:
+        inside = _git(["rev-parse", "--is-inside-work-tree"])
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return JSONResponse({
+                "success": True,
+                "workspace": _runtime_to_host_path(str(workspace)),
+                "is_git": False,
+                "changed_files": 0,
+                "insertions": 0,
+                "deletions": 0,
+                "files": [],
+            })
+
+        status_proc = _git(["status", "--short"])
+        diff_proc = _git(["diff", "--numstat", "HEAD"])
+        top_proc = _git(["rev-parse", "--show-toplevel"])
+
+        repo_root = Path(top_proc.stdout.strip()).resolve() if top_proc.returncode == 0 and top_proc.stdout.strip() else workspace
+        numstat_map: Dict[str, Dict[str, int]] = {}
+        for line in diff_proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            ins_raw, del_raw, file_path = parts[:3]
+            numstat_map[file_path] = {
+                "insertions": int(ins_raw) if ins_raw.isdigit() else 0,
+                "deletions": int(del_raw) if del_raw.isdigit() else 0,
+            }
+
+        files = []
+        total_insertions = 0
+        total_deletions = 0
+        for raw in status_proc.stdout.splitlines():
+            if not raw.strip():
+                continue
+            status = raw[:2]
+            relative = raw[3:].strip()
+            if " -> " in relative:
+                relative = relative.split(" -> ", 1)[1].strip()
+            stats = numstat_map.get(relative, {"insertions": 0, "deletions": 0})
+            total_insertions += stats["insertions"]
+            total_deletions += stats["deletions"]
+            files.append({
+                "path": relative,
+                "status": status,
+                "insertions": stats["insertions"],
+                "deletions": stats["deletions"],
+                "absolute_path": _runtime_to_host_path(str((repo_root / relative).resolve())),
+            })
+
+        return JSONResponse({
+            "success": True,
+            "workspace": _runtime_to_host_path(str(workspace)),
+            "is_git": True,
+            "changed_files": len(files),
+            "insertions": total_insertions,
+            "deletions": total_deletions,
+            "files": files[:120],
+        })
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
 
 
 def _pick_workspace_directory(initial_path: Optional[str]) -> Optional[str]:
