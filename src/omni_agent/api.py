@@ -5,13 +5,16 @@ FastAPI应用定义 - 独立模块
 import logging
 import json
 import asyncio
+import ipaddress
 import os
 import re
+import socket
 import subprocess
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -94,6 +97,11 @@ class LocationUpdateRequest(BaseModel):
 
 class LocationResolveRequest(BaseModel):
     session_id: str
+
+
+class PreviewResolveRequest(BaseModel):
+    urls: List[str] = []
+
 
 # 创建FastAPI应用
 config = load_config()
@@ -216,6 +224,203 @@ def _get_runtime_temporal_context() -> Dict[str, Any]:
     }
 
 
+def _candidate_host_ipv4s() -> List[str]:
+    candidates: List[str] = []
+
+    def _add(value: Optional[str]) -> None:
+        text = (value or "").strip()
+        if not text or text.startswith("127.") or text == "0.0.0.0":
+            return
+        if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", text) and text not in candidates:
+            candidates.append(text)
+
+    for env_name in ("OBS_PUBLIC_HOST", "PUBLIC_HOST"):
+        _add(os.getenv(env_name))
+
+    try:
+        host_name = socket.gethostname()
+        for item in socket.gethostbyname_ex(host_name)[2]:
+            _add(item)
+    except Exception:
+        pass
+
+    for command in (
+        ["ipconfig", "getifaddr", "en0"],
+        ["ipconfig", "getifaddr", "en1"],
+        ["hostname", "-I"],
+    ):
+        try:
+            output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL, timeout=1.5).strip()
+        except Exception:
+            continue
+        for token in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", output):
+            _add(token)
+
+    return candidates
+
+
+def _resolve_public_host_context(request: Request) -> Dict[str, Any]:
+    explicit_base_url = (os.getenv("OBS_PUBLIC_BASE_URL") or os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").strip()
+    forwarded_host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or ""
+    ).strip()
+
+    candidate_ips = _candidate_host_ipv4s()
+    forwarded_host_name = forwarded_host.split(":", 1)[0] if forwarded_host else ""
+    forwarded_host_is_public = bool(forwarded_host_name and not _looks_like_local_service_host(forwarded_host_name))
+
+    authoritative_base_url = explicit_base_url
+    if not authoritative_base_url:
+        if forwarded_host and forwarded_host_is_public:
+            authoritative_base_url = f"{forwarded_proto}://{forwarded_host}"
+        elif candidate_ips:
+            port = int(os.getenv("OBS_PUBLIC_PORT") or getattr(config, "api_port", 0) or request.url.port or 0)
+            port_suffix = f":{port}" if port else ""
+            authoritative_base_url = f"{forwarded_proto}://{candidate_ips[0]}{port_suffix}"
+        else:
+            authoritative_base_url = str(request.base_url).rstrip("/")
+
+    host_match = re.match(r"^[a-z]+://([^/:?#]+)", authoritative_base_url, re.IGNORECASE)
+    authoritative_host = host_match.group(1) if host_match else ""
+
+    return {
+        "authoritative_public_base_url": authoritative_base_url,
+        "authoritative_public_host": authoritative_host,
+        "host_ipv4_candidates": candidate_ips,
+    }
+
+
+def _url_origin(url: str) -> str:
+    match = re.match(r"^(https?://[^/?#]+)", url or "", re.IGNORECASE)
+    return match.group(1).rstrip("/") if match else ""
+
+
+def _looks_like_local_service_host(host: str) -> bool:
+    normalized = (host or "").strip().lower()
+    if normalized in {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}:
+        return True
+    try:
+        parsed = ipaddress.ip_address(normalized)
+        return parsed.is_private or parsed.is_loopback or parsed.is_unspecified
+    except ValueError:
+        return False
+
+
+def _preview_url_variants(raw_url: str, authoritative_host: str) -> List[str]:
+    text = (raw_url or "").strip().strip("`'\" ")
+    if not text:
+        return []
+    if not re.match(r"^https?://", text, re.IGNORECASE):
+        text = f"http://{text}"
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(text)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            return []
+        variants: List[str] = []
+        if _looks_like_local_service_host(parts.hostname or "") and authoritative_host:
+            netloc = authoritative_host
+            if parts.port:
+                netloc = f"{authoritative_host}:{parts.port}"
+            variants.append(urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, parts.fragment)))
+        variants.append(urlunsplit((parts.scheme, parts.netloc, parts.path or "/", parts.query, parts.fragment)))
+
+        deduped: List[str] = []
+        for item in variants:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped
+    except Exception:
+        return []
+
+
+def _resolve_local_preview_file(raw_path: str) -> Optional[Path]:
+    text = (raw_path or "").strip().strip("`'\" ")
+    if not text:
+        return None
+
+    if text.startswith("file://"):
+        text = unquote(urlsplit(text).path)
+    elif text.startswith("/preview/local-file"):
+        parsed = urlsplit(text)
+        text = (parse_qs(parsed.query).get("path") or [""])[0]
+    elif re.match(r"^https?://", text, re.IGNORECASE):
+        parsed = urlsplit(text)
+        if parsed.path != "/preview/local-file":
+            return None
+        text = (parse_qs(parsed.query).get("path") or [""])[0]
+
+    text = text.strip()
+    if not text:
+        return None
+
+    try:
+        candidate = _host_to_runtime_path(text)
+    except Exception:
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(_current_workspace_runtime()) / candidate
+
+    try:
+        resolved = candidate.resolve()
+    except Exception:
+        return None
+
+    if resolved.suffix.lower() not in {".html", ".htm"} or not resolved.is_file():
+        return None
+
+    allowed_roots = [
+        Path(_current_workspace_runtime()).resolve(),
+        Path(config.work_dir).resolve().parent,
+        Path.cwd().resolve(),
+        Path.home().resolve(),
+    ]
+    if HOST_HOME:
+        allowed_roots.append(Path(HOST_HOME).expanduser().resolve())
+    if HOST_HOME_MOUNT:
+        allowed_roots.append(Path(HOST_HOME_MOUNT).expanduser().resolve())
+    if HOST_REPO_ROOT:
+        allowed_roots.append(Path(HOST_REPO_ROOT).expanduser().resolve())
+
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except Exception:
+            continue
+    return None
+
+
+def _local_preview_url_for_file(path: Path, request: Request) -> str:
+    host_context = _resolve_public_host_context(request)
+    base_url = host_context.get("authoritative_public_base_url") or str(request.base_url).rstrip("/")
+    return f"{base_url.rstrip('/')}/preview/local-file?path={quote(str(path), safe='')}"
+
+
+async def _probe_preview_url(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=2.2) as client:
+            response = await client.get(url)
+    except Exception:
+        return None
+    if response.status_code >= 400:
+        return None
+
+    content_type = response.headers.get("content-type", "")
+    body_prefix = response.text[:1200] if response.text else ""
+    html_like = "text/html" in content_type.lower() or "<html" in body_prefix.lower() or "<!doctype html" in body_prefix.lower()
+    return {
+        "url": str(response.url),
+        "status": response.status_code,
+        "content_type": content_type,
+        "html_like": html_like,
+    }
+
+
 def _format_runtime_context(context: Dict[str, Any], location: Optional[Dict[str, Any]]) -> str:
     lines = [
         "Runtime context you must treat as authoritative:",
@@ -310,7 +515,9 @@ def _host_to_runtime_path(path_str: str) -> Path:
         try:
             repo_root = Path(HOST_REPO_ROOT).expanduser().resolve()
             relative = candidate.resolve().relative_to(repo_root)
-            return (Path(config.work_dir).resolve().parent / relative).resolve()
+            result = (Path(config.work_dir).resolve().parent / relative).resolve()
+            if result.exists():
+                return result
         except Exception:
             pass
 
@@ -640,6 +847,15 @@ async def root():
         "message": "前端页面未找到，请访问 /docs 查看API文档"
     })
 
+
+@app.get("/skill.md")
+async def service_skill_md():
+    """Serve a hall-friendly skill document for external registration."""
+    skill_file = Path(__file__).resolve().parents[2] / "skill.md"
+    if skill_file.exists():
+        return FileResponse(str(skill_file), media_type="text/markdown; charset=utf-8")
+    return JSONResponse({"detail": "skill.md not found"}, status_code=404)
+
 @app.get("/health")
 async def health():
     """健康检查 - 静默模式"""
@@ -670,6 +886,69 @@ async def runtime_status():
             "api_port": config.api_port,
         }
     })
+
+
+@app.post("/preview/resolve")
+async def resolve_preview_url(payload: PreviewResolveRequest, request: Request):
+    """Resolve a transcript-derived preview URL to a reachable local app page."""
+    host_context = _resolve_public_host_context(request)
+    authoritative_host = host_context.get("authoritative_public_host") or ""
+    own_origin = _url_origin(host_context.get("authoritative_public_base_url") or str(request.base_url).rstrip("/"))
+
+    seen: set[str] = set()
+    probes: List[Dict[str, Any]] = []
+    html_fallback: Optional[Dict[str, Any]] = None
+    any_fallback: Optional[Dict[str, Any]] = None
+
+    for raw_url in (payload.urls or [])[:12]:
+        local_file = _resolve_local_preview_file(raw_url)
+        if local_file:
+            url = _local_preview_url_for_file(local_file, request)
+            probe = {
+                "url": url,
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "html_like": True,
+                "source": "local-file",
+                "path": _runtime_to_host_path(str(local_file)),
+            }
+            return JSONResponse({"success": True, "url": url, "probe": probe, "probes": [probe]})
+
+        for candidate in _preview_url_variants(raw_url, authoritative_host):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if own_origin and _url_origin(candidate) == own_origin:
+                probes.append({"url": candidate, "skipped": "own-origin"})
+                continue
+
+            probe = await _probe_preview_url(candidate)
+            if not probe:
+                probes.append({"url": candidate, "reachable": False})
+                continue
+            probes.append({"url": candidate, "reachable": True, **probe})
+            any_fallback = any_fallback or probe
+            if probe.get("html_like"):
+                html_fallback = probe
+                return JSONResponse({"success": True, "url": probe["url"], "probe": probe, "probes": probes})
+
+    fallback = html_fallback or any_fallback
+    if fallback:
+        return JSONResponse({"success": True, "url": fallback["url"], "probe": fallback, "probes": probes})
+    return JSONResponse({"success": False, "url": "", "probes": probes})
+
+
+@app.get("/preview/local-file")
+async def serve_local_preview_file(path: str = Query(default="")):
+    """Serve a generated local HTML file inside the live preview iframe."""
+    resolved = _resolve_local_preview_file(path)
+    if not resolved:
+        return JSONResponse({"detail": "Preview file not found or not allowed"}, status_code=404)
+    response = FileResponse(str(resolved), media_type="text/html; charset=utf-8")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/architecture")
@@ -1100,11 +1379,13 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "files": [],
             })
 
-        status_proc = _git(["status", "--short"])
-        diff_proc = _git(["diff", "--numstat", "HEAD"])
+        status_proc = _git(["status", "--short", "--untracked-files=all", "--", "."])
+        diff_proc = _git(["diff", "--numstat", "HEAD", "--", "."])
         top_proc = _git(["rev-parse", "--show-toplevel"])
+        prefix_proc = _git(["rev-parse", "--show-prefix"])
 
         repo_root = Path(top_proc.stdout.strip()).resolve() if top_proc.returncode == 0 and top_proc.stdout.strip() else workspace
+        workspace_prefix = prefix_proc.stdout.strip() if prefix_proc.returncode == 0 else ""
         numstat_map: Dict[str, Dict[str, int]] = {}
         for line in diff_proc.stdout.splitlines():
             parts = line.split("\t")
@@ -1115,6 +1396,8 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "insertions": int(ins_raw) if ins_raw.isdigit() else 0,
                 "deletions": int(del_raw) if del_raw.isdigit() else 0,
             }
+            if workspace_prefix and file_path.startswith(workspace_prefix):
+                numstat_map[file_path[len(workspace_prefix):]] = numstat_map[file_path]
 
         files = []
         total_insertions = 0
@@ -1126,7 +1409,14 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
             relative = raw[3:].strip()
             if " -> " in relative:
                 relative = relative.split(" -> ", 1)[1].strip()
-            stats = numstat_map.get(relative, {"insertions": 0, "deletions": 0})
+            stats = numstat_map.get(relative) or numstat_map.get(f"{workspace_prefix}{relative}") or {"insertions": 0, "deletions": 0}
+            absolute_path = (workspace / relative).resolve()
+            if status == "??" and absolute_path.is_file():
+                try:
+                    content = absolute_path.read_text(encoding="utf-8", errors="ignore")
+                    stats = {**stats, "insertions": len(content.splitlines())}
+                except Exception:
+                    pass
             total_insertions += stats["insertions"]
             total_deletions += stats["deletions"]
             files.append({
@@ -1134,12 +1424,14 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "status": status,
                 "insertions": stats["insertions"],
                 "deletions": stats["deletions"],
-                "absolute_path": _runtime_to_host_path(str((repo_root / relative).resolve())),
+                "absolute_path": _runtime_to_host_path(str(absolute_path)),
             })
 
         return JSONResponse({
             "success": True,
             "workspace": _runtime_to_host_path(str(workspace)),
+            "repo_root": _runtime_to_host_path(str(repo_root)),
+            "scope": "workspace",
             "is_git": True,
             "changed_files": len(files),
             "insertions": total_insertions,
@@ -1302,6 +1594,7 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
         try:
             _ensure_session_state_loaded(session_id, streaming_agent)
             location = session_locations.get(session_id)
+            host_context = _resolve_public_host_context(request)
             if location is None and WEATHER_REQUEST_PATTERN.search(message or ""):
                 try:
                     location = await asyncio.wait_for(_resolve_location_from_ip(request), timeout=2.5)
@@ -1339,10 +1632,13 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                 enabled_skills=enabled_skills or [],
                 request_context={
                     **temporal_context,
+                    "mode": mode,
+                    "permission_mode": permission_mode,
                     "location": location,
                     "workspace_display_path": _current_workspace(),
                     "workspace_runtime_path": _current_workspace_runtime(),
                     "thread_runtime_dir": _thread_workspace_for_session(session_id),
+                    **host_context,
                     "message_parts": message_parts or [],
                     "model": selected_model,
                 },
