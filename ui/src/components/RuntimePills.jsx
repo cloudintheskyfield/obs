@@ -50,7 +50,7 @@ export default function RuntimePills({
                         key={value}
                         type="button"
                         title={meta.tip}
-                        className={`mode-chip${mode === value ? " active" : ""}`}
+                        className={`mode-chip mode-${value}${mode === value ? " active" : ""}`}
                         onClick={() => setMode(value)}
                     >
                         <i className={`fas ${meta.icon}`} aria-hidden="true" />
@@ -59,27 +59,78 @@ export default function RuntimePills({
                 ))}
             </div>
 
-            {/* ── Centre: context meter ── */}
-            <div
-                className="context-meter"
-                title={`Current thread: ${formatTokenCount(threadContextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens. Working set sent to the model this turn: ${formatTokenCount(contextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens.`}
-            >
-                <div className="context-meter-labels">
-                    <span className="context-meter-name">Context</span>
-                    <span className="context-meter-value">
-                        {formatTokenCount(threadContextTokens)} / 
-                        {formatTokenCount(contextMaxTokens)}
-                        <em>{threadPctLabel}</em>
-                    </span>
+            {/* ── Centre: context meter + file changes (dropdown) ── */}
+            <div className="unified-bar-context-cluster">
+                <div
+                    className="context-meter"
+                    title={`Current thread: ${formatTokenCount(threadContextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens. Working set sent to the model this turn: ${formatTokenCount(contextTokens)} / ${formatTokenCount(contextMaxTokens)} tokens.`}
+                >
+                    <div className="context-meter-labels">
+                        <span className="context-meter-name">Context</span>
+                        <span className="context-meter-value">
+                            {formatTokenCount(threadContextTokens)} / 
+                            {formatTokenCount(contextMaxTokens)}
+                            <em>{threadPctLabel}</em>
+                        </span>
+                    </div>
+                    <div className="context-meter-track">
+                        <div className="context-meter-fill context-meter-fill-thread" style={{ width: `${threadPct}%`, background: threadBarColor }} />
+                        <div className="context-meter-fill context-meter-fill-working" style={{ width: `${workingPct}%`, background: workingBarColor }} />
+                    </div>
+                    <div className="context-meter-meta">
+                        <span>Current thread · {roundsLabel}</span>
+                        <span>Working set · {formatTokenCount(contextTokens)} · {workingPctLabel}</span>
+                    </div>
                 </div>
-                <div className="context-meter-track">
-                    <div className="context-meter-fill context-meter-fill-thread" style={{ width: `${threadPct}%`, background: threadBarColor }} />
-                    <div className="context-meter-fill context-meter-fill-working" style={{ width: `${workingPct}%`, background: workingBarColor }} />
-                </div>
-                <div className="context-meter-meta">
-                    <span>Current thread · {roundsLabel}</span>
-                    <span>Working set · {formatTokenCount(contextTokens)} · {workingPctLabel}</span>
-                </div>
+
+                {fileChangeSummary?.visible ? (
+                    <details className="files-changed-dropdown">
+                        <summary
+                            className="files-changed-dropdown-summary"
+                            title={`${fileChangeSummary.changedFiles} files changed — 点击展开列表`}
+                        >
+                            <span className="files-changed-dropdown-label">
+                                {fileChangeSummary.changedFiles} files
+                            </span>
+                            <span className="files-changed-dropdown-stats">
+                                <em>+{fileChangeSummary.insertions}</em>
+                                <strong>-{fileChangeSummary.deletions}</strong>
+                            </span>
+                            <i className="fas fa-chevron-down files-changed-dropdown-chevron" aria-hidden="true" />
+                        </summary>
+                        <div className="files-changed-dropdown-panel">
+                            {(fileChangeSummary.files || []).length > 0 ? (
+                                <ul className="files-changed-dropdown-list">
+                                    {(fileChangeSummary.files || []).slice(0, 40).map((file) => (
+                                        <li key={file.path} className="files-changed-dropdown-row">
+                                            <span className="files-changed-dropdown-status">{String(file.status || "").trim() || "M"}</span>
+                                            <span className="files-changed-dropdown-path" title={file.path}>{file.path}</span>
+                                            <span className="files-changed-dropdown-delta">
+                                                {file.insertions || file.deletions
+                                                    ? `+${file.insertions || 0} -${file.deletions || 0}`
+                                                    : "untracked"}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="files-changed-dropdown-empty">暂无逐文件明细（仅汇总统计）。</p>
+                            )}
+                            {onFocusFiles ? (
+                                <button
+                                    type="button"
+                                    className="files-changed-dropdown-open-preview"
+                                    onClick={(event) => {
+                                        event.preventDefault();
+                                        onFocusFiles();
+                                    }}
+                                >
+                                    在右侧打开预览与完整列表
+                                </button>
+                            ) : null}
+                        </div>
+                    </details>
+                ) : null}
             </div>
 
             {/* ── Right: icon actions ── */}
@@ -94,22 +145,6 @@ export default function RuntimePills({
                         <i className="fas fa-download" />
                     </button>
                 )}
-                {fileChangeSummary?.visible ? (
-                    <button
-                        className="icon-button files-changed-trigger"
-                        type="button"
-                        title={`${fileChangeSummary.changedFiles} files changed`}
-                        onClick={onFocusFiles}
-                    >
-                        <span className="files-changed-trigger-text">
-                            {fileChangeSummary.changedFiles} files changed
-                        </span>
-                        <span className="files-changed-trigger-stats">
-                            <em>+{fileChangeSummary.insertions}</em>
-                            <strong>-{fileChangeSummary.deletions}</strong>
-                        </span>
-                    </button>
-                ) : null}
                 <button
                     className={`icon-button${previewOpen ? " active" : ""}`}
                     type="button"

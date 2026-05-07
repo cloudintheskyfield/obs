@@ -548,6 +548,170 @@ select {
     /* sits right after the mode chips */
     min-width: 160px;
     max-width: 220px;
+    flex-shrink: 0;
+}
+
+/* Context meter + file-change dropdown sit together immediately right of mode chips */
+.unified-bar-context-cluster {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+/* File changes: dropdown to the right of the Context meter */
+.files-changed-dropdown {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.files-changed-dropdown > summary {
+    list-style: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 12px 0 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-soft);
+    font-size: 12px;
+    font-weight: 600;
+    user-select: none;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.files-changed-dropdown > summary::-webkit-details-marker {
+    display: none;
+}
+
+.files-changed-dropdown > summary:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(217, 201, 171, 0.35);
+}
+
+.files-changed-dropdown[open] > summary {
+    background: rgba(217, 201, 171, 0.12);
+    border-color: rgba(217, 201, 171, 0.45);
+}
+
+.files-changed-dropdown-label {
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+
+.files-changed-dropdown-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.files-changed-dropdown-stats em {
+    font-style: normal;
+    color: rgba(110, 220, 140, 0.92);
+}
+
+.files-changed-dropdown-stats strong {
+    color: rgba(235, 124, 124, 0.92);
+}
+
+.files-changed-dropdown-chevron {
+    font-size: 9px;
+    margin-left: 2px;
+    opacity: 0.65;
+    transition: transform 0.18s ease;
+}
+
+.files-changed-dropdown[open] .files-changed-dropdown-chevron {
+    transform: rotate(180deg);
+}
+
+.files-changed-dropdown-panel {
+    position: absolute;
+    z-index: 80;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: min(420px, 72vw);
+    max-width: min(520px, 86vw);
+    max-height: min(360px, 52vh);
+    overflow: auto;
+    padding: 10px 10px 8px;
+    border-radius: 14px;
+    border: 1px solid var(--line-strong);
+    background: rgba(22, 22, 22, 0.98);
+    box-shadow: var(--shadow-soft), 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.files-changed-dropdown-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.files-changed-dropdown-row {
+    display: grid;
+    grid-template-columns: 28px 1fr auto;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 11px;
+    padding: 5px 7px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.files-changed-dropdown-status {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-align: center;
+}
+
+.files-changed-dropdown-path {
+    min-width: 0;
+    color: var(--text-soft);
+    word-break: break-all;
+}
+
+.files-changed-dropdown-delta {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    white-space: nowrap;
+    font-size: 10px;
+}
+
+.files-changed-dropdown-empty {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 6px 4px 8px;
+}
+
+.files-changed-dropdown-open-preview {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.files-changed-dropdown-open-preview:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(217, 201, 171, 0.35);
 }
 
 .unified-bar-actions {
@@ -733,9 +897,25 @@ select {
 }
 
 .mode-chip.active {
-    background: rgba(217, 201, 171, 0.10);
-    border-color: rgba(217, 201, 171, 0.30);
-    color: rgba(233, 224, 210, 0.90);
+    background: rgba(217, 201, 171, 0.22);
+    border-color: rgba(217, 201, 171, 0.55);
+    color: var(--text);
+    box-shadow: 0 0 0 1px rgba(217, 201, 171, 0.12), 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.mode-chip.active i {
+    color: rgba(233, 224, 210, 0.95);
+}
+
+/* Create mode: slightly stronger accent so the wand tab reads as “selected” */
+.mode-chip.mode-create.active {
+    background: linear-gradient(135deg, rgba(168, 130, 255, 0.22), rgba(217, 201, 171, 0.18));
+    border-color: rgba(186, 160, 255, 0.55);
+    box-shadow: 0 0 0 1px rgba(186, 160, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.mode-chip.mode-create.active i {
+    color: rgba(210, 190, 255, 0.95);
 }
 
 /* ── Context usage meter ── */

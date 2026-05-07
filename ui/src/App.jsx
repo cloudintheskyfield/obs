@@ -598,6 +598,7 @@ function App() {
         changedFiles: workspaceChanges.changedFiles || 0,
         insertions: workspaceChanges.insertions || 0,
         deletions: workspaceChanges.deletions || 0,
+        files: Array.isArray(workspaceChanges.files) ? workspaceChanges.files : [],
     };
 
     useEffect(() => {
