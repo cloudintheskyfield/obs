@@ -530,6 +530,42 @@ select {
     margin-right: 4px;
 }
 
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.preview-artifact-picker {
+    display: block;
+    margin-top: 6px;
+}
+
+.preview-artifact-select {
+    max-width: 100%;
+    width: 100%;
+    margin-top: 2px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.preview-artifact-select:focus {
+    border-color: rgba(217, 201, 171, 0.45);
+    outline: none;
+}
+
 .preview-frame-wrap {
     min-height: 0;
     flex: 1 1 auto;
@@ -597,10 +633,11 @@ select {
     flex: 1 1 auto;
 }
 
-/* File changes: dropdown to the right of the Context meter */
+/* File changes: dropdown — nudged right from Context meter */
 .files-changed-dropdown {
     position: relative;
     flex-shrink: 0;
+    margin-left: 22px;
 }
 
 .files-changed-dropdown > summary {

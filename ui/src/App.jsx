@@ -377,34 +377,73 @@ function detectPreviewUrls(session) {
     return urls;
 }
 
-/** When the model only created HTML files (no http URL in chat), serve the best candidate via /preview/local-file. */
-function pickWorkspaceHtmlPreviewUrl(workspaceChanges, apiBase) {
+function scoreWorkspaceHtmlFile(f) {
+    const p = String(f.path || "").toLowerCase();
+    const ins = Number(f.insertions) || 0;
+    if (p.endsWith("index.html")) {
+        return 1_000_000 + ins;
+    }
+    if (p.includes("jump") || p.includes("game") || p.includes("play")) {
+        return 500_000 + ins;
+    }
+    return ins;
+}
+
+/** All workspace .html/.htm entries as /preview/local-file URLs, best-first (for multi-artifact picker). */
+function buildWorkspaceHtmlPreviewEntries(workspaceChanges, apiBase) {
     if (!workspaceChanges?.isGit || !Array.isArray(workspaceChanges.files) || !apiBase) {
-        return "";
+        return [];
     }
     const htmlFiles = workspaceChanges.files.filter((f) => /\.html?$/i.test(String(f.path || "")));
     if (!htmlFiles.length) {
-        return "";
+        return [];
     }
-    const score = (f) => {
-        const p = String(f.path || "").toLowerCase();
-        const ins = Number(f.insertions) || 0;
-        if (p.endsWith("index.html")) {
-            return 1_000_000 + ins;
-        }
-        if (p.includes("jump") || p.includes("game") || p.includes("play")) {
-            return 500_000 + ins;
-        }
-        return ins;
-    };
-    htmlFiles.sort((a, b) => score(b) - score(a));
-    const top = htmlFiles[0];
-    const hostPath = String(top.absolute_path || "").trim();
-    if (!hostPath) {
-        return "";
-    }
+    const sorted = [...htmlFiles].sort((a, b) => scoreWorkspaceHtmlFile(b) - scoreWorkspaceHtmlFile(a));
     const base = String(apiBase || "").replace(/\/$/, "");
-    return `${base}/preview/local-file?path=${encodeURIComponent(hostPath)}`;
+    return sorted
+        .map((f) => {
+            const hostPath = String(f.absolute_path || "").trim();
+            if (!hostPath) {
+                return null;
+            }
+            return {
+                path: String(f.path || ""),
+                url: `${base}/preview/local-file?path=${encodeURIComponent(hostPath)}`,
+            };
+        })
+        .filter(Boolean);
+}
+
+function shortPreviewLabel(url) {
+    const u = String(url || "");
+    if (!u) {
+        return "";
+    }
+    if (u.includes("/preview/local-file")) {
+        try {
+            const q = new URL(u, "http://_").searchParams.get("path") || "";
+            const base = q.split(/[/\\]/).filter(Boolean).pop() || q;
+            return base || "local HTML";
+        } catch {
+            return "local HTML";
+        }
+    }
+    return u.replace(/^https?:\/\//i, "").replace(/\/$/, "").slice(0, 56) || u;
+}
+
+function buildPreviewArtifactOptions(detectedUrls, workspaceChanges, apiBase) {
+    const out = [];
+    const seen = new Set();
+    const push = (label, url) => {
+        if (!url || seen.has(url)) {
+            return;
+        }
+        seen.add(url);
+        out.push({ label: label || shortPreviewLabel(url), url });
+    };
+    (detectedUrls || []).forEach((u) => push(shortPreviewLabel(u), u));
+    buildWorkspaceHtmlPreviewEntries(workspaceChanges, apiBase).forEach((e) => push(e.path, e.url));
+    return out;
 }
 
 function App() {
@@ -612,12 +651,16 @@ function App() {
     const currentSession = sessions.find((session) => session.id === currentSessionId) || null;
     const activeWorkspacePath = workspacePath || runtime?.work_dir || "";
     const detectedPreviewUrls = detectPreviewUrls(currentSession);
-    const inferredWorkspacePreviewUrl = pickWorkspaceHtmlPreviewUrl(workspaceChanges, settings.apiUrl);
-    const activePreviewUrl = previewUrl || detectedPreviewUrls[0] || inferredWorkspacePreviewUrl || "";
+    const previewArtifactOptions = buildPreviewArtifactOptions(
+        detectedPreviewUrls,
+        workspaceChanges,
+        settings.apiUrl,
+    );
+    const activePreviewUrl = previewUrl || previewArtifactOptions[0]?.url || "";
     const previewHeadline = activePreviewUrl
         ? (activePreviewUrl.includes("/preview/local-file")
-            ? "Workspace HTML 预览"
-            : "Detected app surface")
+            ? `Workspace HTML · ${shortPreviewLabel(activePreviewUrl)}`
+            : `URL · ${shortPreviewLabel(activePreviewUrl)}`)
         : "Preview waiting for a runnable URL";
     const recallableUserInputs = (currentSession?.transcript || [])
         .filter((entry) => entry?.role === "user" && typeof entry.content === "string" && entry.content.trim())
@@ -762,15 +805,17 @@ function App() {
     }, [currentSessionId]);
 
     useEffect(() => {
-        const fromTranscript = detectedPreviewUrls[0];
-        if (fromTranscript) {
-            setPreviewUrl((current) => current || fromTranscript);
-            return;
-        }
-        const inferred = pickWorkspaceHtmlPreviewUrl(workspaceChanges, settingsRef.current.apiUrl);
-        if (inferred) {
-            setPreviewUrl((current) => current || inferred);
-        }
+        const options = buildPreviewArtifactOptions(
+            detectedPreviewUrls,
+            workspaceChanges,
+            settingsRef.current.apiUrl,
+        );
+        setPreviewUrl((prev) => {
+            if (prev && options.some((o) => o.url === prev)) {
+                return prev;
+            }
+            return options[0]?.url || "";
+        });
     }, [currentSessionId, detectedPreviewUrls, workspaceChanges]);
 
     useEffect(() => {
@@ -2212,6 +2257,24 @@ function App() {
                                     <div className="preview-pane-copy">
                                         <span className="preview-pane-kicker">Live Preview</span>
                                         <strong>{previewHeadline}</strong>
+                                        {previewArtifactOptions.length > 1 ? (
+                                            <label className="preview-artifact-picker">
+                                                <span className="visually-hidden">切换预览产物</span>
+                                                <select
+                                                    className="preview-artifact-select"
+                                                    value={activePreviewUrl}
+                                                    onChange={(e) => {
+                                                        setPreviewUrl(e.target.value);
+                                                        setPreviewNonce((n) => n + 1);
+                                                    }}
+                                                    title="工作区内多个 HTML 或对话中有多个 URL 时可在此切换"
+                                                >
+                                                    {previewArtifactOptions.map((o) => (
+                                                        <option key={o.url} value={o.url}>{o.label}</option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                        ) : null}
                                     </div>
                                     <div className="preview-pane-actions">
                                         {publishToast ? (
