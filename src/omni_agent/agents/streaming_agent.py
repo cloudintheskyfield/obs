@@ -118,8 +118,11 @@ class StreamingAgent:
         text = raw_text or ""
         return any(marker in text for marker in RAW_TOOL_CALL_MARKERS)
 
-    def _sanitize_visible_text(self, raw_text: str) -> str:
-        text = raw_text or ""
+    def _sanitize_visible_text(self, raw_text: Any) -> str:
+        text = raw_text if isinstance(raw_text, str) else self._message_content_to_text(raw_text)
+        if not isinstance(text, str):
+            text = str(text or "")
+        text = text or ""
         text = RAW_TOOL_CALL_BLOCK_PATTERN.sub("", text)
         marker_positions = [text.find(marker) for marker in RAW_TOOL_CALL_MARKERS if marker in text]
         if marker_positions:
@@ -127,17 +130,29 @@ class StreamingAgent:
         return text
 
     def _message_content_to_text(self, content: Any) -> str:
+        if content is None:
+            return ""
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            parts = []
+            parts: List[str] = []
             for item in content:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("type") == "text":
+                if isinstance(item, dict) and item.get("type") == "text":
                     parts.append(str(item.get("text") or ""))
+                elif isinstance(item, str):
+                    parts.append(item)
             return "".join(parts)
+        if isinstance(content, dict):
+            if content.get("type") == "text":
+                return str(content.get("text") or "")
+            nested = content.get("content")
+            if nested is not None and nested is not content:
+                return self._message_content_to_text(nested)
         return ""
+
+    def _plain_message_content(self, content: Any) -> str:
+        """Normalize message content (str or OpenAI-style multipart) to plain text."""
+        return self._message_content_to_text(content).strip()
 
     def _compose_user_message_content(
         self,
@@ -1483,7 +1498,9 @@ class StreamingAgent:
         conversation_history = chat_sessions[session_id].copy()
         rewritten_history = self._rewrite_followup_reference_request(conversation_history)
         rewritten_history = self._rewrite_followup_location_query(rewritten_history)
-        current_user_message = rewritten_history[-1]["content"] if rewritten_history else ""
+        current_user_message = self._plain_message_content(
+            rewritten_history[-1].get("content") if rewritten_history else "",
+        )
         raw_message_parts = (request_context or {}).get("message_parts") or []
         has_inline_images = self._has_image_parts(raw_message_parts)
         inline_image_context = self._analyze_inline_images_locally(raw_message_parts) if has_inline_images else ""
@@ -1763,7 +1780,7 @@ class StreamingAgent:
         if latest.get("role") != "user":
             return rewritten
 
-        latest_text = self._rewrite_inline_url_request((latest.get("content") or "").strip())
+        latest_text = self._rewrite_inline_url_request(self._plain_message_content(latest.get("content")))
         latest["content"] = latest_text
         if not latest_text:
             return rewritten
@@ -1778,7 +1795,7 @@ class StreamingAgent:
         for item in reversed(rewritten[:-1]):
             if item.get("role") != "user":
                 continue
-            previous_text = (item.get("content") or "").strip()
+            previous_text = self._plain_message_content(item.get("content"))
             urls = self._extract_reference_urls(previous_text)
             if not urls:
                 continue
@@ -2305,7 +2322,7 @@ class StreamingAgent:
                     part for part in [
                         historical_summary.strip(),
                         recent_verbatim.strip(),
-                        (original[-1].get("content") or "").strip(),
+                        self._plain_message_content(original[-1].get("content")),
                     ] if part
                 ),
             },
@@ -2440,14 +2457,14 @@ class StreamingAgent:
         if latest.get("role") != "user":
             return rewritten
 
-        latest_text = (latest.get("content") or "").strip()
+        latest_text = self._plain_message_content(latest.get("content"))
         if not latest_text or len(latest_text) > 20 or any(token in latest_text for token in ["天气", "温度", "气温", "weather", "forecast"]):
             return rewritten
 
         previous_assistant = None
         for item in reversed(rewritten[:-1]):
             if item.get("role") == "assistant":
-                previous_assistant = (item.get("content") or "").strip()
+                previous_assistant = self._plain_message_content(item.get("content"))
                 break
 
         if not previous_assistant:
@@ -2572,7 +2589,9 @@ class StreamingAgent:
         conversation_history = chat_sessions[session_id].copy()
         rewritten_history = self._rewrite_followup_reference_request(conversation_history)
         rewritten_history = self._rewrite_followup_location_query(rewritten_history)
-        current_user_message = rewritten_history[-1]["content"] if rewritten_history else ""
+        current_user_message = self._plain_message_content(
+            rewritten_history[-1].get("content") if rewritten_history else "",
+        )
         is_simple_greeting = bool(SIMPLE_GREETING_PATTERN.match((current_user_message or "").strip()))
         raw_message_parts = (request_context or {}).get("message_parts") or []
         has_inline_images = self._has_image_parts(raw_message_parts)
@@ -2634,7 +2653,9 @@ class StreamingAgent:
         conversation_history = chat_sessions[session_id].copy()
         rewritten_history = self._rewrite_followup_reference_request(conversation_history)
         rewritten_history = self._rewrite_followup_location_query(rewritten_history)
-        current_user_message = rewritten_history[-1]["content"] if rewritten_history else ""
+        current_user_message = self._plain_message_content(
+            rewritten_history[-1].get("content") if rewritten_history else "",
+        )
         yield self._phase("prep_route")
         system_prompts = []
         tool_guidance = self._build_request_tool_guidance(current_user_message, tool_context, tools)
