@@ -125,7 +125,7 @@ export default function RuntimePills({
                                         onFocusFiles();
                                     }}
                                 >
-                                    在右侧打开预览与完整列表
+                                    打开右侧预览
                                 </button>
                             ) : null}
                         </div>

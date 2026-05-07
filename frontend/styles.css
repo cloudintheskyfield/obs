@@ -447,12 +447,16 @@ select {
     min-width: 360px;
     max-width: 52vw;
     min-height: 0;
+    flex: 1 1 auto;
     display: flex;
+    flex-direction: column;
+    align-self: stretch;
 }
 
 .preview-pane-shell {
     width: 100%;
     min-height: 0;
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -491,6 +495,39 @@ select {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.preview-publish-btn {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(217, 201, 171, 0.45);
+    background: rgba(217, 201, 171, 0.14);
+    color: rgba(240, 232, 218, 0.95);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.preview-publish-btn:hover {
+    background: rgba(217, 201, 171, 0.22);
+    border-color: rgba(217, 201, 171, 0.65);
+}
+
+.preview-publish-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.preview-publish-toast {
+    font-size: 11px;
+    color: rgba(116, 198, 157, 0.95);
+    white-space: nowrap;
+    margin-right: 4px;
 }
 
 .preview-frame-wrap {

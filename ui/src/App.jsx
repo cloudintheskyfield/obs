@@ -377,6 +377,36 @@ function detectPreviewUrls(session) {
     return urls;
 }
 
+/** When the model only created HTML files (no http URL in chat), serve the best candidate via /preview/local-file. */
+function pickWorkspaceHtmlPreviewUrl(workspaceChanges, apiBase) {
+    if (!workspaceChanges?.isGit || !Array.isArray(workspaceChanges.files) || !apiBase) {
+        return "";
+    }
+    const htmlFiles = workspaceChanges.files.filter((f) => /\.html?$/i.test(String(f.path || "")));
+    if (!htmlFiles.length) {
+        return "";
+    }
+    const score = (f) => {
+        const p = String(f.path || "").toLowerCase();
+        const ins = Number(f.insertions) || 0;
+        if (p.endsWith("index.html")) {
+            return 1_000_000 + ins;
+        }
+        if (p.includes("jump") || p.includes("game") || p.includes("play")) {
+            return 500_000 + ins;
+        }
+        return ins;
+    };
+    htmlFiles.sort((a, b) => score(b) - score(a));
+    const top = htmlFiles[0];
+    const hostPath = String(top.absolute_path || "").trim();
+    if (!hostPath) {
+        return "";
+    }
+    const base = String(apiBase || "").replace(/\/$/, "");
+    return `${base}/preview/local-file?path=${encodeURIComponent(hostPath)}`;
+}
+
 function App() {
     const [settings, setSettings] = useState({
         apiUrl: resolveDefaultApiBaseUrl(),
@@ -432,6 +462,7 @@ function App() {
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewUrl, setPreviewUrl] = useState("");
     const [previewNonce, setPreviewNonce] = useState(0);
+    const [publishToast, setPublishToast] = useState("");
     const [workspaceChanges, setWorkspaceChanges] = useState({
         isGit: false,
         changedFiles: 0,
@@ -581,7 +612,13 @@ function App() {
     const currentSession = sessions.find((session) => session.id === currentSessionId) || null;
     const activeWorkspacePath = workspacePath || runtime?.work_dir || "";
     const detectedPreviewUrls = detectPreviewUrls(currentSession);
-    const activePreviewUrl = previewUrl || detectedPreviewUrls[0] || "";
+    const inferredWorkspacePreviewUrl = pickWorkspaceHtmlPreviewUrl(workspaceChanges, settings.apiUrl);
+    const activePreviewUrl = previewUrl || detectedPreviewUrls[0] || inferredWorkspacePreviewUrl || "";
+    const previewHeadline = activePreviewUrl
+        ? (activePreviewUrl.includes("/preview/local-file")
+            ? "Workspace HTML 预览"
+            : "Detected app surface")
+        : "Preview waiting for a runnable URL";
     const recallableUserInputs = (currentSession?.transcript || [])
         .filter((entry) => entry?.role === "user" && typeof entry.content === "string" && entry.content.trim())
         .map((entry) => entry.content);
@@ -725,11 +762,16 @@ function App() {
     }, [currentSessionId]);
 
     useEffect(() => {
-        if (!detectedPreviewUrls.length) {
+        const fromTranscript = detectedPreviewUrls[0];
+        if (fromTranscript) {
+            setPreviewUrl((current) => current || fromTranscript);
             return;
         }
-        setPreviewUrl((current) => current || detectedPreviewUrls[0]);
-    }, [currentSessionId, detectedPreviewUrls]);
+        const inferred = pickWorkspaceHtmlPreviewUrl(workspaceChanges, settingsRef.current.apiUrl);
+        if (inferred) {
+            setPreviewUrl((current) => current || inferred);
+        }
+    }, [currentSessionId, detectedPreviewUrls, workspaceChanges]);
 
     useEffect(() => {
         if (!activeWorkspacePath) {
@@ -1961,6 +2003,25 @@ function App() {
         setPreviewNonce((current) => current + 1);
     }
 
+    async function publishPreviewLink() {
+        const url = activePreviewUrl;
+        if (!url) {
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(url);
+            setPublishToast("预览链接已复制");
+        } catch {
+            try {
+                window.prompt("复制以下预览链接：", url);
+                setPublishToast("已弹出复制框");
+            } catch {
+                setPublishToast("");
+            }
+        }
+        window.setTimeout(() => setPublishToast(""), 2400);
+    }
+
     function focusFilesChanged() {
         setPreviewOpen(true);
     }
@@ -2150,11 +2211,22 @@ function App() {
                                 <div className="preview-pane-header">
                                     <div className="preview-pane-copy">
                                         <span className="preview-pane-kicker">Live Preview</span>
-                                        <strong>{activePreviewUrl ? "Detected app surface" : "Preview waiting for a runnable URL"}</strong>
+                                        <strong>{previewHeadline}</strong>
                                     </div>
                                     <div className="preview-pane-actions">
+                                        {publishToast ? (
+                                            <span className="preview-publish-toast" role="status">{publishToast}</span>
+                                        ) : null}
                                         {activePreviewUrl ? (
                                             <>
+                                                <button
+                                                    type="button"
+                                                    className="preview-publish-btn"
+                                                    title="复制当前预览链接（他人需能访问同一网络 / 服务）"
+                                                    onClick={publishPreviewLink}
+                                                >
+                                                    发布
+                                                </button>
                                                 <button type="button" className="icon-button" title="Refresh preview" onClick={refreshPreviewPane}>
                                                     <i className="fas fa-rotate-right" />
                                                 </button>
@@ -2178,47 +2250,12 @@ function App() {
                                 ) : (
                                     <div className="preview-empty">
                                         <i className="fas fa-window-restore" aria-hidden="true" />
-                                        <p>Create 模式生成并启动应用后，只要回答或日志里出现可访问 URL，这里就会自动在右半侧打开预览。</p>
+                                        <p>
+                                            对话里出现可访问的 http(s) URL 时会自动加载；若只有本地 HTML 文件，
+                                            会在检测到 workspace 变更后尝试用「Workspace HTML 预览」打开（需已选择 git workspace）。
+                                        </p>
                                     </div>
                                 )}
-
-                                <div className="files-changed-panel">
-                                    <div className="files-changed-panel-head">
-                                        <div>
-                                            <span className="preview-pane-kicker">Files Changed</span>
-                                            <strong>
-                                                {workspaceChanges.isGit
-                                                    ? `${workspaceChanges.changedFiles} files changed`
-                                                    : "Current workspace is not a git repo"}
-                                            </strong>
-                                        </div>
-                                        {workspaceChanges.isGit ? (
-                                            <span className="files-changed-summary">
-                                                <em>+{workspaceChanges.insertions}</em>
-                                                <strong>-{workspaceChanges.deletions}</strong>
-                                            </span>
-                                        ) : null}
-                                    </div>
-                                    {workspaceChanges.isGit && workspaceChanges.files.length > 0 ? (
-                                        <div className="files-changed-list">
-                                            {workspaceChanges.files.slice(0, 12).map((file) => (
-                                                <div key={file.path} className="files-changed-row">
-                                                    <span className="files-changed-status">{file.status.trim() || "M"}</span>
-                                                    <span className="files-changed-path">{file.path}</span>
-                                                    <span className="files-changed-delta">
-                                                        {file.insertions || file.deletions
-                                                            ? `+${file.insertions} -${file.deletions}`
-                                                            : "untracked"}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="preview-empty preview-empty-small">
-                                            <p>当前 workspace 里还没有检测到 git 文件变更。</p>
-                                        </div>
-                                    )}
-                                </div>
                             </div>
                         </aside>
                     ) : null}
