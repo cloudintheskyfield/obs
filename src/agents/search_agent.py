@@ -118,6 +118,7 @@ class SearchAgent:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
+        self.system_prompt = self.harness.load_agent_prompt("Search", SEARCH_SYSTEM_PROMPT)
         self.last_search_report: Dict[str, Any] = {}
 
     def _sse(self, payload: Dict[str, Any]) -> str:
@@ -145,7 +146,7 @@ class SearchAgent:
 
         search_tools = self.harness.filter_tools_for_role("Search", tools)
         messages = [
-            {"role": "system", "content": SEARCH_SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": json.dumps(dict(search_input), ensure_ascii=False, indent=2)},
         ]
 

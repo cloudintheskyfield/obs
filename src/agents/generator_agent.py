@@ -158,6 +158,7 @@ class GeneratorAgent:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
+        self.system_prompt = self.harness.load_agent_prompt("Generator", GENERATOR_SYSTEM_PROMPT)
         self.last_patch_result: Dict[str, Any] = {}
 
     def _sse(self, payload: Dict[str, Any]) -> str:
@@ -359,7 +360,7 @@ class GeneratorAgent:
 
         generator_tools = self._generator_tool_defs(tools)
         messages = [
-            {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": self._build_user_prompt(generator_input)},
         ]
 

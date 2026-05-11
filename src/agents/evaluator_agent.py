@@ -183,6 +183,7 @@ class EvaluatorAgent:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
+        self.system_prompt = self.harness.load_agent_prompt("Evaluator", EVALUATOR_SYSTEM_PROMPT)
         self.last_verdict: Dict[str, Any] = {}
 
     def _sse(self, payload: Dict[str, Any]) -> str:
@@ -207,7 +208,7 @@ class EvaluatorAgent:
         )
 
         messages = [
-            {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": json.dumps(dict(evaluation_input), ensure_ascii=False, indent=2)},
         ]
 

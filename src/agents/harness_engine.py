@@ -645,6 +645,15 @@ class HarnessEngine:
         "Evaluator": set(),
     }
 
+    def load_agent_prompt(self, role: str, fallback: str = "") -> str:
+        prompt_name = f"{str(role or '').strip().lower()}.prompt.md"
+        prompt_path = Path(__file__).resolve().parent / "identity" / prompt_name
+        try:
+            prompt_text = prompt_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            prompt_text = ""
+        return prompt_text or fallback.strip()
+
     def validate_agent_input(self, role: str, payload: Mapping[str, Any]) -> List[str]:
         required = self.AGENT_INPUT_REQUIRED.get(role)
         if required is None:

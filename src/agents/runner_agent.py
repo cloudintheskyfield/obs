@@ -228,6 +228,7 @@ class RunnerAgent:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
+        self.system_prompt = self.harness.load_agent_prompt("Runner", RUNNER_SYSTEM_PROMPT)
         self.last_run_report: Dict[str, Any] = {}
 
     def _sse(self, payload: Dict[str, Any]) -> str:
@@ -360,7 +361,7 @@ class RunnerAgent:
 
         runner_tools = self.harness.filter_tools_for_role("Runner", tools)
         messages = [
-            {"role": "system", "content": RUNNER_SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": self._build_user_prompt(runner_input)},
         ]
 
