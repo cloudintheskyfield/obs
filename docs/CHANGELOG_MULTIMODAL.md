@@ -9,7 +9,7 @@
    - 服务器地址保持不变：`223.109.239.14`
 
 2. **配置文件更新**
-   - `src/omni_agent/config/config.py`: 更新 `VisionVLLMConfig` 默认端口
+   - `src/config/config.py`: 更新 `VisionVLLMConfig` 默认端口
    - `.env`: 添加视觉模型环境变量配置
    - `.env.example`: 添加配置示例和说明
 
@@ -107,7 +107,7 @@ kill 2623064
 python scripts/test_multimodal_config.py
 
 # 或使用项目内置测试命令
-python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/completions
+PYTHONPATH=src python -m main test --vllm-url http://223.109.239.14:10009/v1/chat/completions
 ```
 
 ### 影响范围
@@ -132,7 +132,7 @@ python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/complet
    VISION_VLLM_BASE_URL=http://223.109.239.14:8001/v1/chat/completions
    ```
 
-2. 或修改 `src/omni_agent/config/config.py`:
+2. 或修改 `src/config/config.py`:
    ```python
    class VisionVLLMConfig(BaseModel):
        base_url: str = "http://223.109.239.14:8001/v1/chat/completions"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from omni_agent.skills.text_editor import TextEditorSkill
+from skills.text_editor import TextEditorSkill
 
 
 class FakeVLLMClient:

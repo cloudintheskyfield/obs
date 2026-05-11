@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from omni_agent.agents.harness_engine import HarnessEngine
+from agents.harness_engine import HarnessEngine
 
 
 def test_harness_signature_defines_three_roles_and_six_layers() -> None:
@@ -143,6 +143,18 @@ def test_path_and_patch_policy_enforce_forbidden_files(tmp_path) -> None:
         plan,
         workspace=tmp_path,
     )
+
+
+def test_harness_forbids_root_workflow_test_artifacts(tmp_path) -> None:
+    harness = HarnessEngine()
+    plan = {
+        "allowed_files": ["**"],
+        "forbidden_files": ["workflow_*/**", "workflow_game_tests/**"],
+    }
+
+    assert not harness.is_path_allowed("workflow_e2e_tmp/index.html", plan["allowed_files"], plan["forbidden_files"], tmp_path)
+    assert not harness.is_path_allowed("workflow_game_tests/current/package.json", plan["allowed_files"], plan["forbidden_files"], tmp_path)
+    assert harness.is_path_allowed("tmp/workflow_e2e_tmp/index.html", plan["allowed_files"], plan["forbidden_files"], tmp_path)
 
 
 def test_search_route_uses_report_recommendation() -> None:

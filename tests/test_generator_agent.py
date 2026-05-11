@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from omni_agent.agents.generator_agent import GeneratorAgent, _parse_tool_arguments
+from agents.generator_agent import GeneratorAgent, _parse_tool_arguments
 
 
 class _DummySkillManager:

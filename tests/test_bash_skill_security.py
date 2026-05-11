@@ -8,7 +8,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from omni_agent.skills.bash import BashSkill
+from skills.bash import BashSkill
 
 
 def test_allows_nohup_for_local_service_startup() -> None:

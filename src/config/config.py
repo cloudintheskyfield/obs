@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 from dotenv import load_dotenv
 
-from ..utils.paths import app_root, claude_skills_root, repo_skills_root
+from utils.paths import app_root, claude_skills_root, repo_skills_root
 
 
 def _runtime_data_root() -> Path:
@@ -37,7 +37,7 @@ def _config_base_dir() -> Path:
 def _iter_env_candidates() -> Iterable[Path]:
     """Yield candidate .env files in descending priority order."""
     seen: set[Path] = set()
-    explicit_env = os.getenv("OMNI_AGENT_ENV_FILE")
+    explicit_env = os.getenv("OBS_CODE_ENV_FILE")
     if explicit_env:
         candidate = Path(explicit_env).expanduser()
         if candidate not in seen:
@@ -318,7 +318,7 @@ def load_config(config_file: Optional[str] = None) -> AgentConfig:
     config.work_dir = _resolve_dir_setting(config.work_dir, "workspace", "work_dir")
     config.screenshot_dir = _resolve_dir_setting(config.screenshot_dir, "screenshots", "screenshot_dir")
     config.web_browsing.screenshot_dir = config.screenshot_dir
-    config.log.file_path = _resolve_file_setting(config.log.file_path, "logs/omni_agent.log", "log_file")
+    config.log.file_path = _resolve_file_setting(config.log.file_path, "logs/app.log", "log_file")
     config.skills_dir = _resolve_skills_dir(config.skills_dir)
     
     return config

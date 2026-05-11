@@ -16,7 +16,7 @@
   - `minimax-m2`: MiniMax-M2 + thinking 关闭
   - `gpt-5.5`: GPT-5.5 模型（不支持 thinking）
 
-### 2. 配置文件修改 (src/omni_agent/config/config.py)
+### 2. 配置文件修改 (src/config/config.py)
 - **新增**: `GPT55Config` 类，定义 GPT-5.5 配置
   - `base_url`: https://api.acedata.cloud/openai/chat/completions
   - `api_key`: 587473ccbe934b3fa700adb9ec442955
@@ -31,7 +31,7 @@
   - `GPT55_API_KEY`
   - `GPT55_MODEL`
 
-### 3. VLLM 客户端修改 (src/omni_agent/core/vllm_client.py)
+### 3. VLLM 客户端修改 (src/core/vllm_client.py)
 - **修改**: `__init__` 方法，接受 `gpt55_config` 参数
 - **修改**: `_pick_config` 方法，支持 GPT-5.5 路由
   - 优先级1: 如果指定 `model="gpt-5.5"`，使用 GPT-5.5 配置
@@ -44,8 +44,8 @@
   - 添加详细的日志记录
 
 ### 4. 初始化代码修改
-- **src/omni_agent/core/agent.py**: 传递 `gpt55_config` 到 VLLMClient
-- **src/omni_agent/api.py**: 传递 `gpt55_config` 到 VLLMClient
+- **src/core/agent.py**: 传递 `gpt55_config` 到 VLLMClient
+- **src/api.py**: 传递 `gpt55_config` 到 VLLMClient
 
 ### 5. 环境变量配置
 - **.env**: 添加 GPT-5.5 配置
@@ -58,7 +58,7 @@
 
 - **.env.example**: 添加 GPT-5.5 配置示例
 
-### 6. 任务列表自动完成修复 (src/omni_agent/agents/streaming_agent.py)
+### 6. 任务列表自动完成修复 (src/agents/streaming_agent.py)
 - **新增**: 在工具执行成功后自动调用 `_auto_advance_pinned_plan_todo_round`
 - **位置**: 在 `for tool_call in tool_calls:` 循环结束后
 - **逻辑**: 如果本轮有任何工具执行成功，自动标记当前任务为完成

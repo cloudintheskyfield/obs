@@ -2,8 +2,8 @@
 from typing import Dict, Any, Optional
 from loguru import logger
 
-from ..config.config import WebBrowsingConfig
-from ..core.vllm_client import VLLMClient
+from config.config import WebBrowsingConfig
+from core.vllm_client import VLLMClient
 
 
 class WebAgent:

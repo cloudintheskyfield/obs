@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch the native OBS Agent desktop window."""
 
-from omni_agent.desktop_app import run_desktop_app
+from desktop_app import run_desktop_app
 
 
 if __name__ == "__main__":

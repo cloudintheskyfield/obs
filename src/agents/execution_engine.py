@@ -10,7 +10,7 @@ from loguru import logger
 
 from .plan_agent import PlanAgent, ExecutionPlan, PlanStep
 from .task_graph import TaskGraph, TaskNode, analyze_task_dependencies
-from ..core.vllm_client import VLLMClient
+from core.vllm_client import VLLMClient
 
 
 class TaskResult:

@@ -8,7 +8,7 @@ def app_root() -> Path:
     """Resolve the project/resource root in source and PyInstaller builds."""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def claude_skills_root() -> Path:

@@ -1240,7 +1240,7 @@ wheels = [
 ]
 
 [[package]]
-name = "omni-agent"
+name = "obs-code"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

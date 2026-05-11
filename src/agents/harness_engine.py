@@ -227,6 +227,8 @@ class HarnessEngine:
             "dist/**",
             "build/**",
             ".harness/state.json",
+            "workflow_*/**",
+            "workflow_game_tests/**",
         ],
         "package_json_policy": {
             "allow_modify": False,
@@ -295,6 +297,8 @@ class HarnessEngine:
                     "build/**",
                     ".harness/**",
                     "package.json",
+                    "workflow_*/**",
+                    "workflow_game_tests/**",
                 ],
             },
             "Runner": {
@@ -1304,6 +1308,8 @@ class HarnessEngine:
             return False
         if normalized_pattern.endswith("/**"):
             prefix = normalized_pattern[:-3].rstrip("/")
+            if any(token in prefix for token in ("*", "?", "[")):
+                return fnmatch.fnmatch(normalized_path, prefix) or fnmatch.fnmatch(normalized_path, f"{prefix}/*")
             return normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
         return fnmatch.fnmatch(normalized_path, normalized_pattern)
 

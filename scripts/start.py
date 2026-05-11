@@ -80,17 +80,17 @@ def main():
     print("\n" + "=" * 50)
     print("✅ 初始化完成！")
     print("\n启动命令:")
-    print("  uv run omni-agent start              # 启动交互式会话")
-    print("  uv run omni-agent start --live-logs  # 启动并显示实时日志")
-    print("  uv run omni-agent test               # 测试VLLM连接")
-    print("  uv run omni-agent --help             # 查看帮助")
+    print("  uv run obs-code start              # 启动交互式会话")
+    print("  uv run obs-code start --live-logs  # 启动并显示实时日志")
+    print("  uv run obs-code test               # 测试VLLM连接")
+    print("  uv run obs-code --help             # 查看帮助")
     
     # 询问是否立即启动
     try:
         choice = input("\n是否立即启动Omni Agent？[y/N]: ").strip().lower()
         if choice in ['y', 'yes']:
             print("\n🎯 启动 Omni Agent...")
-            subprocess.run(["uv", "run", "omni-agent", "start"])
+            subprocess.run(["uv", "run", "obs-code", "start"])
     except KeyboardInterrupt:
         print("\n👋 再见！")
 

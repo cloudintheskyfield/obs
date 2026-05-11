@@ -9,8 +9,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from omni_agent.config.config import load_config
-from omni_agent.core.vllm_client import VLLMClient
+from config.config import load_config
+from core.vllm_client import VLLMClient
 
 
 async def test_text_model():

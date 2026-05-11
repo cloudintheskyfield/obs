@@ -56,7 +56,7 @@ echo   API文档: http://localhost:8000/docs
 echo   健康检查: http://localhost:8000/health
 echo.
 echo 实时日志查看:
-echo   docker-compose logs -f omni-agent
+echo   docker-compose logs -f obs-code
 echo.
 echo 代码修改自动生效:
 echo   [OK] 修改 src\ 目录下的Python代码会自动重载
@@ -84,7 +84,7 @@ echo   API文档: http://localhost:8000/docs
 echo   健康检查: http://localhost:8000/health
 echo.
 echo 实时日志查看:
-echo   docker-compose logs -f omni-agent
+echo   docker-compose logs -f obs-code
 echo.
 echo 代码修改自动生效:
 echo   [OK] 修改 src\ 目录下的Python代码会自动重载
@@ -174,8 +174,8 @@ echo.
 echo [INFO] 部署完成！
 echo.
 echo 常用命令:
-echo   查看日志: docker-compose logs -f omni-agent
-echo   重启服务: docker-compose restart omni-agent
+echo   查看日志: docker-compose logs -f obs-code
+echo   重启服务: docker-compose restart obs-code
 echo   停止服务: docker-compose down
 echo   完整重建: docker-compose down ^&^& docker-compose up --build -d
 echo.

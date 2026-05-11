@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from omni_agent.services.session_store import SessionStore, SessionStorePaths
+from services.session_store import SessionStore, SessionStorePaths
 
 
 def build_store(tmp_path: Path) -> SessionStore:

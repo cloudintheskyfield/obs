@@ -28,7 +28,7 @@ VISION_VLLM_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
 
 ### 2. 代码配置
 
-在 `src/omni_agent/config/config.py` 中：
+在 `src/config/config.py` 中：
 
 ```python
 class VLLMConfig(BaseModel):
@@ -56,7 +56,7 @@ class VisionVLLMConfig(BaseModel):
 1. **包含图片** → 自动路由到视觉模型（端口 10009）
 2. **纯文本** → 使用主模型（MiniMax API）
 
-路由逻辑在 `src/omni_agent/core/vllm_client.py` 中实现：
+路由逻辑在 `src/core/vllm_client.py` 中实现：
 
 ```python
 def _pick_config(self, messages: List[Dict[str, Any]]) -> VLLMConfig:
@@ -117,10 +117,10 @@ ps -ww -fp 2623064
 
 ```bash
 # 测试主模型
-python -m omni_agent test --vllm-url https://api.minimaxi.com/v1/chat/completions
+PYTHONPATH=src python -m main test --vllm-url https://api.minimaxi.com/v1/chat/completions
 
 # 测试视觉模型
-python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/completions
+PYTHONPATH=src python -m main test --vllm-url http://223.109.239.14:10009/v1/chat/completions
 ```
 
 ## 故障排查
@@ -140,7 +140,7 @@ python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/complet
 
 3. 查看日志：
    ```bash
-   tail -f logs/omni_agent.log | grep -i vision
+   tail -f logs/log | grep -i vision
    ```
 
 ### 路由未生效

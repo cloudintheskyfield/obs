@@ -24,8 +24,8 @@ from pydantic import BaseModel
 from loguru import logger
 import httpx
 
-from .config.config import load_config
-from .utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
+from config.config import load_config
+from utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
 import sys
 from pathlib import Path
 
@@ -41,12 +41,12 @@ os.environ.setdefault(
     str(root_skills_path if root_skills_path.exists() else claude_skills_path),
 )
 
-from skill_manager import SkillManager
-from .core.vllm_client import VLLMClient
-from .agents.plan_agent import PlanAgent
-from .agents.execution_engine import ExecutionEngine
-from .agents.harness_runtime import HarnessRuntime, normalize_llm_message_content
-from .services import RequestLifecycle, SessionStore
+from skills.skill_manager import SkillManager
+from core.vllm_client import VLLMClient
+from agents.plan_agent import PlanAgent
+from agents.execution_engine import ExecutionEngine
+from agents.harness_runtime import HarnessRuntime, normalize_llm_message_content
+from services import RequestLifecycle, SessionStore
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -125,7 +125,7 @@ class PublishProjectRequest(BaseModel):
 # 创建FastAPI应用
 config = load_config()
 app = FastAPI(
-    title="Omni Agent API",
+    title="OBS Code API",
     description="全能AI Agent - 支持Claude Skills三级架构",
     version="1.0.0"
 )
@@ -1012,7 +1012,7 @@ async def startup_event():
     )
     app.state.harness_runtime = harness_runtime
     
-    logger.info("Omni Agent API 启动完成")
+    logger.info("OBS Code API 启动完成")
     
     # 同时存储在app.state中
     app.state.skill_manager = skill_manager
@@ -1052,7 +1052,7 @@ async def root():
         print(f"Failed to serve frontend: {e}")
     
     return JSONResponse({
-        "name": "Omni Agent API",
+        "name": "OBS Code API",
         "version": "1.0.0",
         "description": "全能AI Agent - 支持Claude Skills三级架构",
         "message": "前端页面未找到，请访问 /docs 查看API文档"
@@ -1994,7 +1994,7 @@ async def execute_skill(request_data: SkillExecuteRequest):
                 chat_sessions[session_id] = [
                     {
                         "role": "system",
-                        "content": """你是Omni Agent智能助手。
+                        "content": """你是OBS Code智能助手。
 
 **工具使用规则**：
 当用户询问天气、新闻、股票等实时信息时，直接输出：
@@ -2159,7 +2159,7 @@ async def list_experts():
     if not vllm_client:
         return JSONResponse({"success": False, "error": "VLM客户端未初始化"})
     
-    from .agents.expert_agents import ExpertAgentOrchestrator
+    from agents.expert_agents import ExpertAgentOrchestrator
     orchestrator = ExpertAgentOrchestrator(vllm_client)
     
     experts = orchestrator.get_available_experts()
@@ -2175,7 +2175,7 @@ async def execute_with_expert(request_data: Dict[str, Any]):
         return JSONResponse({"success": False, "error": "VLM客户端未初始化"})
     
     try:
-        from .agents.expert_agents import ExpertAgentOrchestrator
+        from agents.expert_agents import ExpertAgentOrchestrator
         orchestrator = ExpertAgentOrchestrator(vllm_client)
         
         task = request_data.get("task", "")
@@ -2252,7 +2252,7 @@ async def reject_plan(plan_id: str):
 # Creature Management API
 # ============================================================================
 
-from .core.creature_manager import creature_manager
+from core.creature_manager import creature_manager
 
 
 class CreatureStartRequest(BaseModel):

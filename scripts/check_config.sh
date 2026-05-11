@@ -106,10 +106,10 @@ if command -v python &> /dev/null; then
         echo -e "${RED}✗${NC} httpx 未安装"
     fi
     
-    if python -c "from omni_agent.config.config import load_config" 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} omni_agent 模块可导入"
+    if python -c "from config.config import load_config" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} 后端模块可导入"
     else
-        echo -e "${RED}✗${NC} omni_agent 模块无法导入"
+        echo -e "${RED}✗${NC} 后端模块无法导入"
     fi
 else
     echo -e "${RED}✗${NC} Python 不可用"
@@ -121,10 +121,10 @@ echo ""
 echo "6. 检查日志目录..."
 if [ -d "logs" ]; then
     echo -e "${GREEN}✓${NC} 日志目录存在"
-    if [ -f "logs/omni_agent.log" ]; then
+    if [ -f "logs/app.log" ]; then
         echo -e "${GREEN}✓${NC} 日志文件存在"
         echo "   最近的错误:"
-        tail -5 logs/omni_agent.log | grep -i error || echo "   (无错误)"
+        tail -5 logs/app.log | grep -i error || echo "   (无错误)"
     fi
 else
     echo -e "${YELLOW}⚠${NC} 日志目录不存在"

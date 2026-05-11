@@ -14,7 +14,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # 检查是否在正确的目录
-if [ ! -f "src/omni_agent/main.py" ]; then
+if [ ! -f "src/main.py" ]; then
     echo -e "${YELLOW}⚠️  请在项目根目录运行此脚本${NC}"
     exit 1
 fi
@@ -63,4 +63,4 @@ echo "=================================="
 echo ""
 
 # 启动服务
-python -m omni_agent.main serve --reload
+python -m main serve --reload

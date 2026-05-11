@@ -6,7 +6,7 @@ import os
 sys.path.append('src')
 
 import uvicorn
-from omni_agent.main import create_fastapi_app
+from main import create_fastapi_app
 
 if __name__ == "__main__":
     app = create_fastapi_app()

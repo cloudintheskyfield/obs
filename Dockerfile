@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y \
 # 安装uv包管理器
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
+ENV PYTHONPATH="/app/src"
 
 # 复制项目配置文件
 COPY pyproject.toml uv.lock* ./
@@ -84,4 +85,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 EXPOSE 8000 8080
 
 # 启动命令
-CMD ["uv", "run", "python", "-m", "omni_agent.main", "serve"]
+CMD ["uv", "run", "python", "-m", "main", "serve"]

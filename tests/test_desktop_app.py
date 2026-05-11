@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from omni_agent import desktop_app
+import desktop_app
 
 
 def test_desktop_data_dir_uses_platform_specific_defaults(monkeypatch) -> None:
@@ -14,6 +14,7 @@ def test_desktop_data_dir_uses_platform_specific_defaults(monkeypatch) -> None:
 
 
 def test_desktop_shell_falls_back_to_browser_when_webview_missing(monkeypatch) -> None:
+    monkeypatch.setenv("OBS_DESKTOP_MIRROR_WEB", "0")
     shell = desktop_app.OBSDesktopShell()
     opened = []
 
@@ -28,6 +29,7 @@ def test_desktop_shell_falls_back_to_browser_when_webview_missing(monkeypatch) -
 
 def test_desktop_shell_uses_webview_with_local_runtime_url(monkeypatch) -> None:
     monkeypatch.delenv("OBS_DESKTOP_GUI", raising=False)
+    monkeypatch.setenv("OBS_DESKTOP_MIRROR_WEB", "0")
     shell = desktop_app.OBSDesktopShell()
     events = type("Events", (), {"closed": type("ClosedEvent", (), {"__iadd__": lambda self, callback: self})()})()
     created = {}

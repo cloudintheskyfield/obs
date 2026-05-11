@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from omni_agent.skills.skill_manager import SkillManager
+from skills.skill_manager import SkillManager
 
 
 def test_harness_skills_emit_source_backed_instruction_tools_without_legacy_aliases() -> None:

@@ -4,7 +4,7 @@ __all__ = [
     "setup_logger",
     "start_live_logging",
     "VLLMClient",
-    "OmniAgent",
+    "OBSAgent",
 ]
 
 
@@ -20,8 +20,8 @@ def __getattr__(name: str):
         from .vllm_client import VLLMClient
 
         return VLLMClient
-    if name == "OmniAgent":
-        from .agent import OmniAgent
+    if name == "OBSAgent":
+        from .agent import OBSAgent
 
-        return OmniAgent
+        return OBSAgent
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -11,8 +11,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from omni_agent.skills.skill_loader import SkillLoader
-from omni_agent.skills.skill_manager import SkillManager
+from skills.skill_loader import SkillLoader
+from skills.skill_manager import SkillManager
 
 
 def test_skill_loader():

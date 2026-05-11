@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
-from ..config.config import LogConfig
+from config.config import LogConfig
 
 
 def setup_logger(config: LogConfig) -> logger:
@@ -46,7 +46,7 @@ def start_live_logging():
     console = Console()
     
     def create_log_table():
-        table = Table(title="🤖 Omni Agent Live Logs")
+        table = Table(title="🤖 OBS Code Live Logs")
         table.add_column("Time", style="cyan", width=12)
         table.add_column("Level", style="bold", width=8)
         table.add_column("Message", style="white")

@@ -8,7 +8,7 @@ import re
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
-from ..core.vllm_client import VLLMClient
+from core.vllm_client import VLLMClient
 from .expert_agents import ExpertAgentOrchestrator
 
 

@@ -19,7 +19,7 @@ import traceback
 import requests
 import uvicorn
 
-from omni_agent.utils.paths import app_root, claude_skills_root, repo_skills_root
+from utils.paths import app_root, claude_skills_root, repo_skills_root
 
 
 APP_NAME = "OBS Code"
@@ -104,7 +104,7 @@ class BackendServer:
         root_skills = repo_skills_root()
         os.environ.setdefault("SKILLS_DIR", str(root_skills if root_skills.exists() else claude_skills_root()))
 
-        from omni_agent.api import app
+        from api import app
 
         config = uvicorn.Config(
             app,

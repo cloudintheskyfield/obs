@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-from ..agents.harness_engine import HarnessEngine
+from agents.harness_engine import HarnessEngine
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class RequestLifecycle:
                     "lane_en": "FastAPI",
                     "title_zh": "API 恢复线程状态并注入运行时上下文",
                     "title_en": "API restores thread state and injects runtime context",
-                    "module": "src/omni_agent/api.py",
+                    "module": "src/api.py",
                     "entrypoints": ["chat_stream()", "_ensure_session_state_loaded()"],
                     "role_zh": "利用 SessionStore 恢复 chat_sessions 与压缩缓存，再注入日期、时区、位置、thread workspace 和线程目录等权威运行时字段。",
                     "role_en": "Uses SessionStore to restore chat sessions and compacted cache, then injects date, timezone, location, thread workspace, and runtime directory.",
@@ -89,7 +89,7 @@ class RequestLifecycle:
                     "lane_en": "Planner",
                     "title_zh": "模糊需求转完整规格与验收标准",
                     "title_en": "Ambiguous request to specification and acceptance criteria",
-                    "module": "src/omni_agent/agents/harness_runtime.py + planner_agent.py + harness_engine.py",
+                    "module": "src/agents/harness_runtime.py + planner_agent.py + harness_engine.py",
                     "entrypoints": ["HarnessRuntime.chat_stream()", "PlannerAgent.plan()"],
                     "role_zh": "理解目标、判断缺失信息、选择最小工具集合，产出规格、假设、任务图和 Evaluator checklist。",
                     "role_en": "Understands target, judges missing information, chooses the minimum tool set, and produces spec, assumptions, task graph, and evaluator checklist.",
@@ -102,7 +102,7 @@ class RequestLifecycle:
                     "lane_en": "Context Harness",
                     "title_zh": "相关上下文裁剪与工作 Prompt 装配",
                     "title_en": "Relevant context selection and working-prompt assembly",
-                    "module": "src/omni_agent/agents/harness_runtime.py",
+                    "module": "src/agents/harness_runtime.py",
                     "entrypoints": ["chat_stream()", "_append_assistant_message()"],
                     "role_zh": "把长历史压缩为 historical_summary 与 recent_summary，再叠加 runtime context、skill 索引、工具指导和当前请求。",
                     "role_en": "Compacts long history into historical and recent summaries, then layers runtime context, skill index, tool guidance, and the active user request.",
@@ -115,7 +115,7 @@ class RequestLifecycle:
                     "lane_en": "Search",
                     "title_zh": "按 Search Gate 执行外部资料确认",
                     "title_en": "External research through the Search Gate",
-                    "module": "src/omni_agent/agents/harness_engine.py",
+                    "module": "src/agents/harness_engine.py",
                     "entrypoints": ["HarnessEngine.should_search()", "SearchReport"],
                     "role_zh": "只在用户明确要求、计划需要外部资料、或第三方 API 用法不确定时检索，并把资料先交回 Harness。",
                     "role_en": "Searches only for explicit lookup requests, planned external research, or uncertain third-party API usage, then returns evidence to Harness.",
@@ -128,7 +128,7 @@ class RequestLifecycle:
                     "lane_en": "Generator",
                     "title_zh": "按规格实现代码与运行入口",
                     "title_en": "Implementation against the specification",
-                    "module": "src/omni_agent/agents/generator_agent.py + harness_runtime.py",
+                    "module": "src/agents/generator_agent.py + harness_runtime.py",
                     "entrypoints": ["GeneratorAgent.generate()", "HarnessRuntime.chat_stream()"],
                     "role_zh": "在当前 thread workspace 内创建/修改真实文件，并由 Harness 归并为 PatchResult，不直接执行验证。",
                     "role_en": "Creates/edits real files inside the current thread workspace, then lets the Harness synthesize PatchResult without running verification directly.",
@@ -141,7 +141,7 @@ class RequestLifecycle:
                     "lane_en": "Runner",
                     "title_zh": "执行命令、页面冒烟测试与证据采集",
                     "title_en": "Command execution, browser smoke tests, and evidence collection",
-                    "module": "src/omni_agent/agents/runner_agent.py + harness_runtime.py",
+                    "module": "src/agents/runner_agent.py + harness_runtime.py",
                     "entrypoints": ["RunnerAgent.run()", "desktop-commander", "Skill Management = python runtime", "playwright-e2e", "web-testing-playwright-e2e", "e2e", "computer-use"],
                     "role_zh": "只运行 Harness 指定的命令和浏览器检查，把 stdout/stderr、截图、控制台和错误分类写入 RunReport。",
                     "role_en": "Runs only Harness-provided commands and browser checks, then records stdout/stderr, screenshots, console output, and classified errors in RunReport.",
@@ -154,7 +154,7 @@ class RequestLifecycle:
                     "lane_en": "Evaluator",
                     "title_zh": "基于证据的一次性验收判断",
                     "title_en": "Single-pass evidence-based judgement",
-                    "module": "src/omni_agent/agents/evaluator_agent.py + harness_engine.py",
+                    "module": "src/agents/evaluator_agent.py + harness_engine.py",
                     "entrypoints": ["EvaluatorAgent.evaluate()", "HarnessEngine.build_harness_decision()"],
                     "role_zh": "只读取 PlanContract、PatchResult、RunReport 和既有证据，输出一次性 EvalVerdict，不直接执行工具。",
                     "role_en": "Reads PlanContract, PatchResult, RunReport, and existing evidence only, then emits one EvalVerdict without running tools.",
@@ -167,7 +167,7 @@ class RequestLifecycle:
                     "lane_en": "SSE / Persistence",
                     "title_zh": "事件回流、落盘与后续审计",
                     "title_en": "Event replay, persistence, and later audit",
-                    "module": "src/omni_agent/api.py + src/omni_agent/services/session_store.py",
+                    "module": "src/api.py + src/services/session_store.py",
                     "entrypoints": ["StreamingResponse(generate())", "persist_llm_trace()", "persist_chat_session()", "persist_context_cache()"],
                     "role_zh": "把 LLM trace、chat session、压缩缓存、Evaluator 证据和 UI 会话持久化，同时通过 SSE 实时回报关键节点。",
                     "role_en": "Persists LLM traces, chat sessions, compacted cache, evaluator evidence, and UI sessions while reporting checkpoints via SSE.",
@@ -178,22 +178,22 @@ class RequestLifecycle:
             "layers": [
                 {
                     "id": "session_store",
-                    "module": "omni_agent.services.session_store.SessionStore",
+                    "module": "services.session_store.SessionStore",
                     "role": "Durable history, compacted memory cache, traces, workspace state, and UI session persistence",
                 },
                 {
                     "id": "request_lifecycle",
-                    "module": "omni_agent.services.request_lifecycle.RequestLifecycle",
+                    "module": "services.request_lifecycle.RequestLifecycle",
                     "role": "Structured execution phases for request preparation, routing, prompt assembly, model wait, and completion",
                 },
                 {
                     "id": "harness_engine",
-                    "module": "omni_agent.agents.harness_engine.HarnessEngine",
+                    "module": "agents.harness_engine.HarnessEngine",
                     "role": "Planner/Search/Generator/Runner/Evaluator contract, state machine, search gate, policy, evidence handling, and recovery rules",
                 },
                 {
                     "id": "harness_runtime",
-                    "module": "omni_agent.agents.harness_runtime.HarnessRuntime",
+                    "module": "agents.harness_runtime.HarnessRuntime",
                     "role": "Unified five-agent Harness runtime with orchestration, streaming, context accounting, and SSE delivery",
                 },
             ],

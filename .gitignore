@@ -10,10 +10,18 @@ venv/
 # logs/runtime
 logs/
 *.log
+.run/
+creatures/
+screenshots/screenshot_*.png
 
 # local workspace artifacts
 workspace/
+workflow_*/
+workflow_game_tests/
 *.backup
+
+# pulled skill source: keep code, skip large demo media
+skills/**/1080_60.mp4
 
 # IDE
 .idea/

@@ -45,7 +45,7 @@ case $MODE in
         echo "  ❤️  健康检查: http://localhost:8000/health"
         echo ""
         echo -e "${YELLOW}实时日志查看:${NC}"
-        echo "  docker-compose logs -f omni-agent"
+        echo "  docker-compose logs -f obs-code"
         echo ""
         echo -e "${YELLOW}代码修改自动生效:${NC}"
         echo "  ✅ 修改 src/ 目录下的Python代码会自动重载"
@@ -143,7 +143,7 @@ fi
 
 echo ""
 echo -e "${YELLOW}📋 常用命令:${NC}"
-echo "  查看日志: docker-compose logs -f omni-agent"
-echo "  重启服务: docker-compose restart omni-agent"  
+echo "  查看日志: docker-compose logs -f obs-code"
+echo "  重启服务: docker-compose restart obs-code"
 echo "  停止服务: docker-compose down"
 echo "  完整重建: docker-compose down && docker-compose up --build -d"

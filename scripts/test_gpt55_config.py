@@ -7,8 +7,8 @@ from pathlib import Path
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from omni_agent.config.config import load_config
-from omni_agent.core.vllm_client import VLLMClient
+from config.config import load_config
+from core.vllm_client import VLLMClient
 
 
 async def test_gpt55_config():

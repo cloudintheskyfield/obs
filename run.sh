@@ -42,7 +42,7 @@ start() {
     mkdir -p "$PID_DIR"
 
     echo "Starting backend..."
-    start_detached "$SCRIPT_DIR" "$BACKEND_LOG" "$BACKEND_PID" uv run uvicorn omni_agent.api:app --host 0.0.0.0 --port 8000
+    start_detached "$SCRIPT_DIR" "$BACKEND_LOG" "$BACKEND_PID" env PYTHONPATH="$SCRIPT_DIR/src" uv run uvicorn api:app --host 0.0.0.0 --port 8000
     echo "  Backend PID: $(cat "$BACKEND_PID")  (log: $BACKEND_LOG)"
 
     echo "Starting frontend..."

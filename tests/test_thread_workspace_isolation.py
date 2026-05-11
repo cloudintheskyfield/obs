@@ -3,8 +3,8 @@ import asyncio
 import json
 from urllib.parse import quote
 
-from omni_agent import api
-from omni_agent.services.session_store import SessionStore, SessionStorePaths
+import api
+from services.session_store import SessionStore, SessionStorePaths
 
 
 def _store(tmp_path: Path) -> SessionStore:

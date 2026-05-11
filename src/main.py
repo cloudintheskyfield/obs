@@ -21,11 +21,11 @@ from rich.json import JSON
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from loguru import logger
 
-from .core.agent import OmniAgent
-from .config.config import load_config
-from .core.logger import start_live_logging, stop_live_logging
-from .desktop_app import run_desktop_app
-from .utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
+from core.agent import OBSAgent
+from config.config import load_config
+from core.logger import start_live_logging, stop_live_logging
+from desktop_app import run_desktop_app
+from utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
 import sys
 from pathlib import Path
 
@@ -41,10 +41,10 @@ os.environ.setdefault(
     str(root_skills_path if root_skills_path.exists() else claude_skills_path),
 )
 
-from skill_manager import SkillManager
+from skills.skill_manager import SkillManager
 
 app = typer.Typer(
-    name="omni-agent",
+    name="obs-code",
     help="全能AI Agent - 支持多模态网页浏览、文件处理和终端执行",
     add_completion=False
 )
@@ -52,7 +52,7 @@ app = typer.Typer(
 console = Console()
 
 # 全局Agent实例
-agent: Optional[OmniAgent] = None
+agent: Optional[OBSAgent] = None
 
 
 class SkillExecuteRequest(BaseModel):
@@ -68,7 +68,7 @@ def create_fastapi_app() -> FastAPI:
     uvicorn_access.disabled = True
 
     fastapi_app = FastAPI(
-        title="Omni Agent API",
+        title="OBS Code API",
         description="全能AI Agent - 支持Claude Skills三级架构",
         version="1.0.0"
     )
@@ -126,7 +126,7 @@ def create_fastapi_app() -> FastAPI:
         
         # 如果前端不存在，返回API信息
         return JSONResponse({
-            "name": "Omni Agent API",
+            "name": "OBS Code API",
             "version": "1.0.0",
             "description": "全能AI Agent - 支持Claude Skills三级架构",
             "endpoints": {
@@ -178,11 +178,11 @@ def start(
     live_logs: bool = typer.Option(False, "--live-logs", help="启用实时日志显示"),
     config_file: Optional[str] = typer.Option(None, "--config", help="配置文件路径")
 ):
-    """启动Omni Agent交互式会话"""
+    """启动OBS Code交互式会话"""
     global agent
     
     console.print(Panel.fit(
-        "🚀 [bold blue]Omni Agent[/bold blue] - 全能AI助手\n"
+        "🚀 [bold blue]OBS Code[/bold blue] - 全能AI助手\n"
         "支持多模态网页浏览、文件处理、终端执行和Claude Skills",
         border_style="blue"
     ))
@@ -235,7 +235,7 @@ def serve(
     if reload:
         # 开发模式：使用模块路径字符串以支持热重载
         uvicorn.run(
-            "omni_agent.main:fastapi_app",
+            "main:fastapi_app",
             host=host,
             port=actual_port,
             reload=True,
@@ -273,7 +273,7 @@ async def interactive_session(config, live_logs: bool):
     ) as progress:
         task = progress.add_task("正在初始化Agent...", total=None)
         
-        async with OmniAgent(config) as agent:
+        async with OBSAgent(config) as agent:
             progress.update(task, description="✅ Agent初始化完成")
             
             if live_logs:
@@ -425,7 +425,7 @@ def display_result(result: Dict[str, Any]):
 
 def show_help():
     """显示帮助信息"""
-    help_table = Table(title="🔧 Omni Agent 命令帮助", show_header=True)
+    help_table = Table(title="🔧 OBS Code 命令帮助", show_header=True)
     help_table.add_column("命令格式", style="cyan")
     help_table.add_column("描述", style="white")
     help_table.add_column("示例", style="green")
@@ -568,8 +568,8 @@ def test(
     console.print("🔍 测试VLLM连接...")
     
     async def test_connection():
-        from .core.vllm_client import VLLMClient
-        from .config.config import VLLMConfig
+        from core.vllm_client import VLLMClient
+        from config.config import VLLMConfig
         
         config = VLLMConfig(base_url=vllm_url)
         
@@ -594,8 +594,7 @@ def test(
 @app.command()
 def version():
     """显示版本信息"""
-    from . import __version__
-    console.print(f"🤖 Omni Agent v{__version__}")
+    console.print("OBS Code v0.1.0")
 
 
 if __name__ == "__main__":

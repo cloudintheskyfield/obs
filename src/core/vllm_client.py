@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, Union
 import httpx
 from loguru import logger
 
-from ..config.config import VLLMConfig, VisionVLLMConfig, GPT55Config
+from config.config import VLLMConfig, VisionVLLMConfig, GPT55Config
 
 # Max retries for rate-limit / server-overload errors (529 / 429).
 # Each retry uses exponential backoff with jitter; see _retry_delay_for_status.

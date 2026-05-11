@@ -7,13 +7,13 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..config.config import AgentConfig, load_config
-from ..core.vllm_client import VLLMClient
-from ..core.logger import setup_logger, start_live_logging
-from ..agents.web_agent import WebAgent
+from config.config import AgentConfig, load_config
+from core.vllm_client import VLLMClient
+from core.logger import setup_logger, start_live_logging
+from agents.web_agent import WebAgent
 import sys
 from pathlib import Path
-from ..utils.paths import claude_skills_root, repo_skills_root
+from utils.paths import claude_skills_root, repo_skills_root
 
 # Add .claude/skills and root skills to Python path for skills
 claude_skills_path = claude_skills_root()
@@ -23,10 +23,10 @@ if claude_skills_path.exists():
 if root_skills_path.exists():
     sys.path.insert(0, str(root_skills_path))
 
-from skill_manager import SkillManager
+from skills.skill_manager import SkillManager
 
 
-class OmniAgent:
+class OBSAgent:
     """全能Agent - 主调度器"""
     
     def __init__(self, config: Optional[AgentConfig] = None):
@@ -45,7 +45,7 @@ class OmniAgent:
         self.current_task: Optional[Dict[str, Any]] = None
         self.is_running = False
         
-        logger.info("OmniAgent initialized successfully")
+        logger.info("OBSAgent initialized successfully")
     
     async def __aenter__(self):
         """异步上下文管理器入口"""
@@ -58,7 +58,7 @@ class OmniAgent:
     
     async def initialize(self):
         """初始化所有组件"""
-        logger.info("Initializing OmniAgent components...")
+        logger.info("Initializing OBSAgent components...")
         
         try:
             # 初始化VLLM客户端
@@ -90,7 +90,7 @@ class OmniAgent:
     
     async def cleanup(self):
         """清理资源"""
-        logger.info("Cleaning up OmniAgent...")
+        logger.info("Cleaning up OBSAgent...")
         
         try:
             # 清理Skills

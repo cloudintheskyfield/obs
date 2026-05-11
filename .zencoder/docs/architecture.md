@@ -211,7 +211,7 @@ StreamingAgent.run(mode=...)
 
 ```
 obs/
-├── src/omni_agent/
+├── src/
 │   ├── api.py                    # FastAPI 应用 + 路由
 │   ├── main.py                   # 启动入口
 │   ├── desktop_app.py            # macOS 原生桌面封装
@@ -251,7 +251,7 @@ obs/
 │   ├── context_cache/
 │   └── workspace_state.json
 │
-└── docker-compose.yml            # omni-agent + postgres + redis
+└── docker-compose.yml            # obs-code + postgres + redis
 ```
 
 ---

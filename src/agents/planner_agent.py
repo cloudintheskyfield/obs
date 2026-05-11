@@ -19,6 +19,8 @@ _PROTECTED_PATHS = [
     "package-lock.json",
     "pnpm-lock.yaml",
     "yarn.lock",
+    "workflow_*/**",
+    "workflow_game_tests/**",
 ]
 
 _DEFAULT_ACCEPTANCE_CRITERIA = [
@@ -101,7 +103,7 @@ PLANNER_SYSTEM_PROMPT = (
 
     "File safety rules:\n"
     "- Keep allowed_files as narrow as possible.\n"
-    "- Always protect .env, .env.*, .git/**, node_modules/**, dist/**, build/**, .harness/**, logs/**, screenshots/**, and lock files unless explicitly allowed.\n"
+    "- Always protect .env, .env.*, .git/**, node_modules/**, dist/**, build/**, .harness/**, logs/**, screenshots/**, root workflow_* test directories, and lock files unless explicitly allowed.\n"
     "- Lock files include package-lock.json, pnpm-lock.yaml, yarn.lock, poetry.lock, Pipfile.lock, Cargo.lock, go.sum.\n"
     "- forbidden_files has priority over allowed_files.\n"
     "- Do not allow editing files outside the workspace.\n"
@@ -150,7 +152,7 @@ PLANNER_SYSTEM_PROMPT = (
     "- preserve_harness_artifacts should usually be true.\n\n"
 
     "Default protected forbidden_files should include at least:\n"
-    "[\".env\", \".env.*\", \".git/**\", \"node_modules/**\", \"dist/**\", \"build/**\", \".harness/**\", \"logs/**\", \"screenshots/**\", "
+    "[\".env\", \".env.*\", \".git/**\", \"node_modules/**\", \"dist/**\", \"build/**\", \".harness/**\", \"logs/**\", \"screenshots/**\", \"workflow_*/**\", \"workflow_game_tests/**\", "
     "\"package-lock.json\", \"pnpm-lock.yaml\", \"yarn.lock\", \"poetry.lock\", \"Pipfile.lock\", \"Cargo.lock\", \"go.sum\"].\n\n"
 
     "Return only the JSON PlanContract object."

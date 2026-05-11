@@ -43,4 +43,4 @@ if (-not $env:OBS_DESKTOP_TARGET_URL) {
   npm --prefix "$RootDir\ui" run build
 }
 
-python -m omni_agent.main desktop
+python -m main desktop

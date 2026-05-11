@@ -39,4 +39,4 @@ if [[ -z "${OBS_DESKTOP_TARGET_URL:-}" ]]; then
   npm --prefix "$ROOT_DIR/ui" run build
 fi
 
-python -m omni_agent.main desktop
+python -m main desktop

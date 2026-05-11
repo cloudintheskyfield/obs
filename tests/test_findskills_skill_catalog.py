@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from omni_agent.skills import SkillManager
+from skills import SkillManager
 
 
 HARNESS_FIND_SKILLS = {

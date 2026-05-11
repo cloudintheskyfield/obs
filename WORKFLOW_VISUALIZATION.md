@@ -35,7 +35,7 @@ frontend/
 ├── styles.css                 # 样式文件（包含工作流样式）
 └── test_workflow_data.json    # 测试数据
 
-src/omni_agent/agents/
+src/agents/
 ├── task_graph.py              # DAG任务图管理
 ├── execution_engine.py        # 执行引擎（集成可视化）
 └── plan_agent.py              # 计划代理（集成专家选择）
@@ -100,7 +100,7 @@ workflowViz.updateTaskStatus("T1", "success");
 ### 后端Python集成
 
 ```python
-from omni_agent.agents.task_graph import analyze_task_dependencies
+from agents.task_graph import analyze_task_dependencies
 
 # 从执行计划生成DAG
 steps_dict = [step.to_dict() for step in plan.steps]

@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from omni_agent.agents.harness_runtime import HarnessRuntime
+from agents.harness_runtime import HarnessRuntime
 
 
 class _DummySkillManager:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from omni_agent.agents.harness_engine import HarnessEngine
-from omni_agent.agents.runner_agent import RunnerAgent, _fallback_run_report, _normalize_run_report
+from agents.harness_engine import HarnessEngine
+from agents.runner_agent import RunnerAgent, _fallback_run_report, _normalize_run_report
 
 
 def test_normalize_run_report_keeps_spec_shaped_artifacts_object() -> None:

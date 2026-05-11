@@ -46,7 +46,7 @@ $pyiArgs = @(
   "--icon", $IconIco,
   "--paths", "$RootDir\src",
   "--paths", "$RootDir\.claude\skills",
-  "--hidden-import", "omni_agent.api",
+  "--hidden-import", "api",
   "--hidden-import", "skill_manager",
   "--hidden-import", "skill_loader",
   "--hidden-import", "base_skill",
@@ -73,7 +73,7 @@ $pyiArgs += @(
   "--add-data", "$RootDir\.claude\skills;.claude\skills",
   "--add-data", "$RootDir\frontend;frontend",
   "--add-data", "$RootDir\skills;skills",
-  "$RootDir\src\omni_agent\desktop_app.py"
+  "$RootDir\src\desktop_app.py"
 )
 
 python @pyiArgs

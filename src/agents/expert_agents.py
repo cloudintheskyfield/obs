@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 from loguru import logger
 
-from ..core.vllm_client import VLLMClient
+from core.vllm_client import VLLMClient
 
 
 class BaseExpertAgent(ABC):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from omni_agent.skills.skill_manager import SkillManager
+from skills.skill_manager import SkillManager
 def test_skill_loader_integration():
     """测试 Skill Loader 与 Skills 的集成"""
     config = {

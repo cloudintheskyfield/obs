@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from omni_agent.services.request_lifecycle import RequestLifecycle
+from services.request_lifecycle import RequestLifecycle
 
 
 def test_phase_payload_uses_expected_event_types() -> None:

@@ -77,9 +77,33 @@ OBS Code 是一套面向真实任务的本地 AI 控制台。它不是单纯的�
 
 ### 1. 本地 Web 控制台
 
+推荐用仓库脚本同时启动前后端：
+
 ```bash
 cd /Users/wangshuang/PycharmProjects/obs/obs
-docker-compose up -d omni-agent
+./run.sh start
+```
+
+后端入口是 `api:app`，前端入口是 `ui/` 下的 Vite dev server。
+
+如需直接运行后端：
+
+```bash
+cd /Users/wangshuang/PycharmProjects/obs/obs
+PYTHONPATH=src uv run uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+PyCharm 调试后端时，右键运行：
+
+- `scripts/pycharm_debug_backend.py`
+
+这个脚本会自动启动前端，并在当前 Python 进程中运行后端，方便断点直接进入 endpoint 和 Harness 代码。
+
+Docker 运行：
+
+```bash
+cd /Users/wangshuang/PycharmProjects/obs/obs
+docker-compose up -d obs-code
 ```
 
 启动后访问：
@@ -245,16 +269,33 @@ python -m pip install pyinstaller pywebview pillow pythonnet
 ```text
 obs/
 ├── assets/                       # Logo 与当前版本 README 截图
-├── src/omni_agent/
-│   ├── api.py                    # FastAPI + SSE 入口
+├── src/
+│   ├── api.py                    # FastAPI + /chat/stream SSE 入口
+│   ├── main.py                   # Typer CLI / uvicorn 开发入口
+│   ├── desktop_app.py            # 复用同一套 Web UI 的桌面壳
 │   ├── agents/
-│   │   ├── streaming_agent.py    # 主 Agent Loop / 模式路由 / 快路径 / 压缩逻辑
+│   │   ├── harness_runtime.py    # Harness 主状态机与五角色编排
+│   │   ├── harness_engine.py     # 合约、权限、Search Gate、决策和策略校验
+│   │   ├── planner_agent.py      # 生成 PlanContract
+│   │   ├── search_agent.py       # 受控外部检索
+│   │   ├── generator_agent.py    # 受限文件生成/修改
+│   │   ├── runner_agent.py       # 命令、dev server、浏览器 smoke 证据采集
+│   │   ├── evaluator_agent.py    # PASS / 修复 / 重规划 / 搜索判定
+│   │   ├── plan_agent.py         # 旧 UI 规划兼容能力
 │   │   ├── execution_engine.py   # review / 执行引擎
 │   │   └── web_agent.py          # 浏览器/网页相关能力
+│   ├── config/
+│   │   └── config.py             # 环境变量、路径与模型配置
+│   ├── core/
+│   │   ├── agent.py              # OBSAgent 主调度器
+│   │   ├── vllm_client.py        # 文本/视觉/思考模型客户端
+│   │   └── logger.py             # 日志初始化与 live logging
 │   ├── services/
 │   │   ├── session_store.py      # 会话、trace、UI 状态、本地持久化
 │   │   └── request_lifecycle.py  # 请求生命周期整理
-│   └── desktop_app.py            # 复用同一套 Web UI 的原生桌面壳（macOS / Windows）
+│   ├── skills/                   # 项目内部对 FindSkills/Claude skill 的兼容加载层
+│   └── utils/
+│       └── paths.py              # 源码/打包环境下的资源路径解析
 ├── ui/src/
 │   ├── App.jsx
 │   └── components/
@@ -362,10 +403,11 @@ obs/
 
 对应修复位置：
 
-- `src/omni_agent/agents/streaming_agent.py`
+- `src/agents/harness_runtime.py`
+- `src/agents/generator_agent.py`
+- `src/agents/runner_agent.py`
 - `ui/src/lib/formatting.js`
 - `ui/src/App.jsx`
-- `tests/test_streaming_agent_obs_tags.py`
 
 ### 改进后的效果
 
@@ -376,7 +418,9 @@ obs/
 
 ## 架构总览
 
-OBS Code 的核心设计是把“模型推理”和“本地执行”拆开，再用一条稳定的 Harness 把它们串起来：
+OBS Code 当前采用展平后的源码结构：后端模块直接位于 `src/` 下，不再有 `src/omni_agent/` 包层级。运行时入口是 `api:app`，主链路由 `src/agents/harness_runtime.py` 统一编排。
+
+核心设计是把“模型推理”和“本地执行”拆开，再用一条稳定的 Harness 把它们串起来：
 
 ```text
 Web UI / macOS Desktop / Windows Desktop
@@ -385,18 +429,37 @@ FastAPI /chat/stream
     ↓
 SessionStore 恢复会话、UI 状态、工作区、context cache
     ↓
-StreamingAgent.chat_stream()
-    ├── agent   -> 原生工具调用循环
-    ├── plan    -> 只生成计划
-    ├── battle  -> 多路结果对比
-    └── review  -> 审查/执行引擎
+HarnessRuntime.chat_stream()
     ↓
-SkillManager / Tool Runtime
+Planner
+    └── 输出 PlanContract：目标、allowed_files、test_commands、smoke_tests、验收标准
     ↓
-SSE 推流到前端 Transcript / Logs / Thinking
+Search Gate
+    └── 只有需要当前外部事实/API 文档时才调用 Search
+    ↓
+Generator
+    └── 只能读写 PlanContract.allowed_files，必须产出非空 PatchResult / PatchEnvelope
+    ↓
+Runner
+    └── 只执行 PlanContract 中的可执行命令、dev server 和浏览器 smoke tests
+    ↓
+Evaluator
+    └── 基于 PlanContract、PatchResult、RunReport 判定 PASS / CALL_GENERATOR / CALL_PLANNER / CALL_SEARCH / FAIL_HARD
+    ↓
+Harness Decision
+    └── 状态机负责下一步，Agent 之间不直接互相调用
     ↓
 SessionStore 持久化 traces / sessions / compacted context
 ```
+
+关键约束：
+
+- `Planner` 和 `Evaluator` 无工具权限。
+- `Generator` 只能使用文件工具，不能运行命令、浏览器或搜索。
+- `Runner` 不能修改业务文件，只写 `.harness/`、日志、截图和临时证据。
+- `Search` 只能在 Search Gate 打开后使用 FindSkills/GitHub 来源的检索能力。
+- 根目录 `workflow_*` 和 `workflow_game_tests` 这类临时测试项目被禁止作为 Generator 输出目录。
+- `test_commands` 必须是真实可执行 shell 命令，浏览器描述必须进入 `smoke_tests`。
 
 如果你想看更细的运行链路，可以直接在应用里打开 `Architecture` 抽屉。
 
@@ -406,7 +469,7 @@ SessionStore 持久化 traces / sessions / compacted context
 
 ```bash
 cd /Users/wangshuang/PycharmProjects/obs/obs
-pytest -q tests
+PYTHONPATH=src python -m pytest -q tests
 npm --prefix ui run build
 ```
 

@@ -11,11 +11,11 @@ if ENV_FILE.exists():
 
 
 a = Analysis(
-    ['/Users/wangshuang/PycharmProjects/obs/obs/src/omni_agent/desktop_app.py'],
+    ['/Users/wangshuang/PycharmProjects/obs/obs/src/desktop_app.py'],
     pathex=['/Users/wangshuang/PycharmProjects/obs/obs/src', '/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills'],
     binaries=[],
     datas=[('/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills', '.claude/skills'), ('/Users/wangshuang/PycharmProjects/obs/obs/frontend', 'frontend'), ('/Users/wangshuang/PycharmProjects/obs/obs/skills', 'skills'), *ENV_DATAS],
-    hiddenimports=['omni_agent.api', 'skill_manager', 'skill_loader', 'base_skill', 'webview', 'webview.platforms.cocoa'],
+    hiddenimports=['api', 'skill_manager', 'skill_loader', 'base_skill', 'webview', 'webview.platforms.cocoa'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -67,7 +67,7 @@ python -m PyInstaller \
   --icon "$ICON_ICNS" \
   --paths "$ROOT_DIR/src" \
   --paths "$ROOT_DIR/.claude/skills" \
-  --hidden-import omni_agent.api \
+  --hidden-import api \
   --hidden-import skill_manager \
   --hidden-import skill_loader \
   --hidden-import base_skill \
@@ -91,7 +91,7 @@ python -m PyInstaller \
   --add-data "$ROOT_DIR/.claude/skills:.claude/skills" \
   --add-data "$ROOT_DIR/frontend:frontend" \
   --add-data "$ROOT_DIR/skills:skills" \
-  "$ROOT_DIR/src/omni_agent/desktop_app.py"
+  "$ROOT_DIR/src/desktop_app.py"
 
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then

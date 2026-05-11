@@ -4,7 +4,7 @@
 
 ### 1. 配置文件更新
 
-#### `src/omni_agent/config/config.py`
+#### `src/config/config.py`
 - ✅ 将 `VisionVLLMConfig.base_url` 从端口 8001 改为 10009
 - ✅ 保持其他配置不变
 
@@ -96,7 +96,7 @@ cat .env | grep VISION
 ### 运行时监控
 ```bash
 # 监控日志
-tail -f logs/omni_agent.log | grep -i "routing\|vision"
+tail -f logs/log | grep -i "routing\|vision"
 
 # 检查服务
 curl http://223.109.239.14:10009/health
@@ -188,8 +188,8 @@ curl http://localhost:10009/v1/models
 
 ### Python 代码中使用
 ```python
-from omni_agent.config.config import load_config
-from omni_agent.core.vllm_client import VLLMClient
+from config.config import load_config
+from core.vllm_client import VLLMClient
 
 # 加载配置
 config = load_config()
@@ -215,10 +215,10 @@ image_response = await client.chat_completion([{
 ### 命令行测试
 ```bash
 # 测试主模型
-python -m omni_agent test
+PYTHONPATH=src python -m main test
 
 # 测试视觉模型
-python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/completions
+PYTHONPATH=src python -m main test --vllm-url http://223.109.239.14:10009/v1/chat/completions
 ```
 
 ## 💡 最佳实践
@@ -241,8 +241,8 @@ python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/complet
 ## 🔗 快速链接
 
 - 配置文件: `.env`
-- 主配置类: `src/omni_agent/config/config.py`
-- 客户端: `src/omni_agent/core/vllm_client.py`
+- 主配置类: `src/config/config.py`
+- 客户端: `src/core/vllm_client.py`
 - 测试脚本: `scripts/test_multimodal_config.py`
 - 检查脚本: `scripts/check_config.sh`
 
@@ -252,7 +252,7 @@ python -m omni_agent test --vllm-url http://223.109.239.14:10009/v1/chat/complet
 
 1. 查看 `docs/QUICK_REFERENCE.md` 的故障排查部分
 2. 运行 `scripts/check_config.sh` 诊断问题
-3. 查看日志: `tail -f logs/omni_agent.log`
+3. 查看日志: `tail -f logs/log`
 4. 联系服务器管理员: maintain@223.109.239.14
 
 ---

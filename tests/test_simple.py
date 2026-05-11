@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 try:
-    from omni_agent.api import app
+    from api import app
     print("API module imported successfully")
     
     routes = []

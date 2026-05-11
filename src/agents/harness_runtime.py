@@ -14,7 +14,7 @@ from .harness_engine import HarnessEngine
 from .planner_agent import PlannerAgent
 from .runner_agent import RunnerAgent
 from .search_agent import SearchAgent
-from ..services.request_lifecycle import RequestLifecycle
+from services.request_lifecycle import RequestLifecycle
 
 MODEL_CONTEXT_WINDOWS = {
     "minimax-m2": 200_000,

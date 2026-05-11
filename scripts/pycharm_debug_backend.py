@@ -148,7 +148,7 @@ def main() -> None:
         atexit.register(_stop_frontend, frontend_process)
 
     import uvicorn
-    from omni_agent.api import app
+    from api import app
 
     print(f"[pycharm] backend ready to debug on http://localhost:{args.backend_port}")
     print("[pycharm] uvicorn reload is disabled so PyCharm breakpoints stay attached.")

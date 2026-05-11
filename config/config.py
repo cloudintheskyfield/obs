@@ -24,7 +24,7 @@ class WebBrowsingConfig(BaseModel):
 class LogConfig(BaseModel):
     """日志配置"""
     level: str = "INFO"
-    file_path: str = "logs/omni_agent.log"
+    file_path: str = "logs/app.log"
     max_file_size: str = "10MB"
     backup_count: int = 5
     console_output: bool = True

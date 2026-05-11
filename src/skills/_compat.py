@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from ..utils.paths import claude_skills_root, repo_skills_root
+from utils.paths import claude_skills_root, repo_skills_root
 
 
 def _load_module_from_path(module_name: str, file_path: Path) -> ModuleType:

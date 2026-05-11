@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from omni_agent.skills import SkillLoader, SkillManager, SkillResult
+from skills import SkillLoader, SkillManager, SkillResult
 
 
 def test_findskills_harness_skill_surface_resolves() -> None:

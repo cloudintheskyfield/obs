@@ -9,7 +9,9 @@
     "node_modules/**",
     "dist/**",
     "build/**",
-    ".harness/state.json"
+    ".harness/state.json",
+    "workflow_*/**",
+    "workflow_game_tests/**"
   ],
   "package_json_policy": {
     "allow_modify": false,
@@ -82,7 +84,9 @@
         "dist/**",
         "build/**",
         ".harness/**",
-        "package.json"
+        "package.json",
+        "workflow_*/**",
+        "workflow_game_tests/**"
       ]
     },
     "Runner": {

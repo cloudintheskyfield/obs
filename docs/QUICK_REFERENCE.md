@@ -22,7 +22,7 @@ python scripts/test_multimodal_config.py
 
 ### 3. 查看日志
 ```bash
-tail -f logs/omni_agent.log | grep -i "routing\|vision"
+tail -f logs/log | grep -i "routing\|vision"
 ```
 
 ## 📊 模型路由表
@@ -83,13 +83,13 @@ echo $VISION_VLLM_ENABLED
 echo $VISION_VLLM_BASE_URL
 
 # 3. 查看详细日志
-tail -100 logs/omni_agent.log
+tail -100 logs/log
 ```
 
 ### 问题2: 路由未生效
 ```bash
 # 1. 确认配置已加载
-python -c "from omni_agent.config.config import load_config; c=load_config(); print(f'Enabled: {c.vision_vllm.enabled}, URL: {c.vision_vllm.base_url}')"
+python -c "from config.config import load_config; c=load_config(); print(f'Enabled: {c.vision_vllm.enabled}, URL: {c.vision_vllm.base_url}')"
 
 # 2. 运行路由测试
 python scripts/test_multimodal_config.py
@@ -112,8 +112,8 @@ nc -zv 223.109.239.14 10009
 | 文件 | 路径 | 说明 |
 |-----|------|------|
 | 环境变量 | `.env` | 运行时配置 |
-| 配置类 | `src/omni_agent/config/config.py` | 默认配置 |
-| 客户端 | `src/omni_agent/core/vllm_client.py` | 路由逻辑 |
+| 配置类 | `src/config/config.py` | 默认配置 |
+| 客户端 | `src/core/vllm_client.py` | 路由逻辑 |
 | 测试脚本 | `scripts/test_multimodal_config.py` | 配置测试 |
 
 ## 🔍 日志关键字
@@ -122,13 +122,13 @@ nc -zv 223.109.239.14 10009
 
 ```bash
 # 路由信息
-grep "Routing to vision model" logs/omni_agent.log
+grep "Routing to vision model" logs/log
 
 # 错误信息
-grep -i "error\|failed" logs/omni_agent.log | grep -i vision
+grep -i "error\|failed" logs/log | grep -i vision
 
 # 请求信息
-grep "VLLM" logs/omni_agent.log | tail -20
+grep "VLLM" logs/log | tail -20
 ```
 
 ## 💡 最佳实践
@@ -140,7 +140,7 @@ grep "VLLM" logs/omni_agent.log | tail -20
 
 2. **监控日志确认路由正确**
    ```bash
-   tail -f logs/omni_agent.log | grep "Routing"
+   tail -f logs/log | grep "Routing"
    ```
 
 3. **定期检查服务状态**

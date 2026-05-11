@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from omni_agent.agents.planner_agent import _normalize_plan_contract
+from agents.planner_agent import _normalize_plan_contract
 
 
 def test_planner_filters_browser_description_out_of_test_commands() -> None:
@@ -70,6 +70,6 @@ def test_planner_derives_fallback_steps_from_current_contract() -> None:
 
 
 def test_planner_has_no_static_default_implementation_steps_constant() -> None:
-    source = Path("src/omni_agent/agents/planner_agent.py").read_text(encoding="utf-8")
+    source = Path("src/agents/planner_agent.py").read_text(encoding="utf-8")
 
     assert "_DEFAULT_IMPLEMENTATION_STEPS" not in source
