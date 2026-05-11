@@ -8,13 +8,13 @@ from typing import List, Dict, Any, Optional, Union
 import httpx
 from loguru import logger
 
-from ..config.config import VLLMConfig
+from ..config.config import VLLMConfig, VisionVLLMConfig, GPT55Config
 
 # Max retries for rate-limit / server-overload errors (529 / 429).
 # Each retry uses exponential backoff with jitter; see _retry_delay_for_status.
 _RATE_LIMIT_MAX_RETRIES = 5
 
-# Sent to streaming_agent between HTTP retries so the UI can show progress
+# Sent to the Harness runtime between HTTP retries so the UI can show progress
 # (MiniMax 529 backoff can total minutes of silence otherwise).
 def _rate_limit_wait_chunk(
     status: int,
@@ -36,11 +36,69 @@ def _rate_limit_wait_chunk(
 
 
 class VLLMClient:
-    """VLLM多模态客户端"""
-    
-    def __init__(self, config: VLLMConfig):
+    """VLLM多模态客户端（支持视觉模型和GPT-5.5自动路由）"""
+
+    def __init__(self, config: VLLMConfig, vision_config: Optional[VisionVLLMConfig] = None, gpt55_config: Optional[GPT55Config] = None):
         self.config = config
+        self.vision_config = vision_config
+        self.gpt55_config = gpt55_config
         self.client: Optional[httpx.AsyncClient] = None
+
+    @staticmethod
+    def _has_images(messages: List[Dict[str, Any]]) -> bool:
+        """检查消息列表中是否包含图片内容。
+        
+        检查规则：
+        1. 检查最后一条用户消息是否包含图片
+        2. 检查最后一条assistant消息之后的tool结果是否包含图片（截图等）
+        """
+        # 检查最后一条用户消息
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") in ("image_url", "image"):
+                            return True
+                break
+        
+        # 检查最近的tool结果中是否有图片（如computer工具的截图）
+        for msg in reversed(messages):
+            if msg.get("role") == "tool":
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") in ("image_url", "image"):
+                            return True
+            # 如果遇到assistant消息，说明已经检查完最近的tool结果
+            elif msg.get("role") == "assistant":
+                break
+        
+        return False
+
+    def _pick_config(self, messages: List[Dict[str, Any]], model: Optional[str] = None) -> VLLMConfig:
+        """根据消息内容和指定模型选择配置。
+        
+        优先级：
+        1. 如果指定了 gpt-5.5 模型，使用 GPT-5.5 配置
+        2. 如果消息含图片且视觉路由已启用，使用视觉配置
+        3. 否则使用主配置（MiniMax-M2）
+        """
+        # 检查是否指定了 GPT-5.5
+        if model == "gpt-5.5" and self.gpt55_config is not None and self.gpt55_config.enabled:
+            logger.debug(f"Routing to GPT-5.5: {self.gpt55_config.model} @ {self.gpt55_config.base_url}")
+            return self.gpt55_config
+        
+        # 检查是否需要视觉模型
+        if (
+            self.vision_config is not None
+            and self.vision_config.enabled
+            and self._has_images(messages)
+        ):
+            logger.debug(f"Routing to vision model: {self.vision_config.model} @ {self.vision_config.base_url}")
+            return self.vision_config
+        
+        return self.config
 
     @staticmethod
     def _retry_delay(attempt: int) -> float:
@@ -84,41 +142,64 @@ class VLLMClient:
         Args:
             messages: 消息列表
             tools: Anthropic格式的工具定义列表
-            **kwargs: 其他参数（temperature, max_tokens, stream等）
+            **kwargs: 其他参数（temperature, max_tokens, stream, model等）
         
         Returns:
             API响应结果或异步生成器（如果stream=True）
         """
         if not self.client:
             raise RuntimeError("Client not initialized. Use async context manager.")
+
+        # 获取指定的模型
+        requested_model = kwargs.get("model")
         
+        # 根据模型和消息内容选择配置
+        active_cfg = self._pick_config(messages, requested_model)
+        is_vision_request = active_cfg is self.vision_config
+        is_gpt55_request = active_cfg is self.gpt55_config
         stream = kwargs.get("stream", False)
-        
+
+        # 确定最终使用的模型名称
+        if is_gpt55_request:
+            model = active_cfg.model
+        elif is_vision_request:
+            model = active_cfg.model
+        else:
+            model = requested_model or self.config.model
+            
         payload = {
-            "model": kwargs.get("model") or self.config.model,
+            "model": model,
             "messages": messages,
             "temperature": kwargs.get("temperature", 0.7),
             "max_tokens": kwargs.get("max_tokens", 4000),
             "stream": stream
         }
         
-        if tools:
+        # 只有非视觉请求且非GPT-5.5请求才添加工具（这些模型可能不支持工具调用）
+        if tools and not is_vision_request and not is_gpt55_request:
             payload["tools"] = self._normalize_tools_for_provider(tools)
             payload["tool_choice"] = kwargs.get("tool_choice", "auto")
             logger.debug(f"Including {len(tools)} tools in request")
         
+        # 记录请求信息
+        if is_vision_request:
+            logger.info(f"Vision request to {active_cfg.base_url}, model={model}, has_tools={bool(tools)}, tools_in_payload={'tools' in payload}")
+        elif is_gpt55_request:
+            logger.info(f"GPT-5.5 request to {active_cfg.base_url}, model={model}")
+        
         try:
-            logger.debug(f"Sending request to VLLM: {self.config.base_url}")
+            logger.debug(f"Sending request to VLLM: {active_cfg.base_url}")
             
             headers = {
-                "Authorization": f"Bearer {self.config.api_key}",
+                "Authorization": f"Bearer {active_cfg.api_key}",
                 "Content-Type": "application/json"
             }
+            req_timeout = httpx.Timeout(active_cfg.timeout)
 
             if stream:
                 # 流式请求
                 async def stream_generator():
-                    normal_retries = max(1, int(self.config.max_retries))
+                    normal_retries = max(1, int(active_cfg.max_retries))
                     rate_retries = _RATE_LIMIT_MAX_RETRIES
                     rate_attempt = 0
                     attempt = 0
@@ -131,9 +212,10 @@ class VLLMClient:
                         try:
                             async with self.client.stream(
                                 "POST",
-                                self.config.base_url,
+                                active_cfg.base_url,
                                 json=payload,
-                                headers=headers
+                                headers=headers,
+                                timeout=req_timeout,
                             ) as response:
                                 if response.is_error:
                                     error_text = await response.aread()
@@ -228,7 +310,7 @@ class VLLMClient:
                 return stream_generator()
             else:
                 # 非流式请求
-                normal_retries = max(1, int(self.config.max_retries))
+                normal_retries = max(1, int(active_cfg.max_retries))
                 rate_retries = _RATE_LIMIT_MAX_RETRIES
                 rate_attempt = 0
                 last_error: Optional[Exception] = None
@@ -237,9 +319,10 @@ class VLLMClient:
                     attempt += 1
                     try:
                         response = await self.client.post(
-                            self.config.base_url,
+                            active_cfg.base_url,
                             json=payload,
-                            headers=headers
+                            headers=headers,
+                            timeout=req_timeout,
                         )
                         if response.is_error:
                             status = response.status_code

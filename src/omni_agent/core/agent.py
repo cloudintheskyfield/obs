@@ -62,7 +62,11 @@ class OmniAgent:
         
         try:
             # 初始化VLLM客户端
-            self.vllm_client = VLLMClient(self.config.vllm)
+            self.vllm_client = VLLMClient(
+                self.config.vllm, 
+                vision_config=getattr(self.config, "vision_vllm", None),
+                gpt55_config=getattr(self.config, "gpt55", None)
+            )
             logger.info("VLLM client initialized")
             
             # 初始化Skills管理器

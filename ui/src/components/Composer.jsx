@@ -52,30 +52,62 @@ export default function Composer({
     onSkillsToggle,
     architectureOpen,
     onArchitectureToggle,
-    workspacePath,
-    onWorkspaceOpen,
     statusItems,
     inputRef
 }) {
+    // 构建模型+thinking组合选项
+    const modelOptions = [
+        { value: "minimax-m2-thinking", label: "MiniMax-M2 (thinking)" },
+        { value: "minimax-m2", label: "MiniMax-M2" },
+        { value: "gpt-5.5", label: "GPT-5.5" }
+    ];
+    
+    // 根据当前模型和thinking状态确定选中的选项
+    const getCurrentOption = () => {
+        if (selectedModel === "gpt-5.5") {
+            return "gpt-5.5";
+        }
+        return thinkingMode ? "minimax-m2-thinking" : "minimax-m2";
+    };
+    
+    // 处理选项变化
+    const handleOptionChange = (value) => {
+        if (value === "gpt-5.5") {
+            onModelChange("gpt-5.5");
+            if (thinkingMode) {
+                onThinkingToggle(); // 关闭thinking
+            }
+        } else if (value === "minimax-m2-thinking") {
+            onModelChange("minimax-m2");
+            if (!thinkingMode) {
+                onThinkingToggle(); // 开启thinking
+            }
+        } else { // minimax-m2
+            onModelChange("minimax-m2");
+            if (thinkingMode) {
+                onThinkingToggle(); // 关闭thinking
+            }
+        }
+    };
+    
     return (
         <section className="composer-wrap">
             <div className="composer-card">
                 <div className="composer-head">
                     <div className="composer-meta">
-                        <div className="composer-workspace">
-                            <strong className="workspace-inline-path">{workspacePath || "No workspace selected"}</strong>
-                        </div>
                         <div className="composer-toggles">
-                            <select id="model-select" className="model-pill-select" value={selectedModel} onChange={(event) => onModelChange(event.target.value)}>
-                                {(availableModels || []).map((model) => (
-                                    <option key={model} value={model}>{model}</option>
+                            <select 
+                                id="model-select" 
+                                className="model-pill-select" 
+                                value={getCurrentOption()} 
+                                onChange={(event) => handleOptionChange(event.target.value)}
+                            >
+                                {modelOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
                                 ))}
                             </select>
                             <button className="tiny-pill" type="button" onClick={onPermissionToggle}>
                                 Permission · {permissionMode}
-                            </button>
-                            <button className={`tiny-pill thinking-pill${thinkingMode ? " active" : ""}`} type="button" onClick={onThinkingToggle}>
-                                Thinking · {thinkingMode ? "on" : "off"}
                             </button>
                         </div>
                     </div>
@@ -97,13 +129,9 @@ export default function Composer({
                 />
                 <div className="composer-foot">
                     <div className="composer-left">
-                        <button className="small-tool workspace-tool active" type="button" onClick={onWorkspaceOpen}>
-                            <i className="fas fa-folder-tree" />
-                            <span>Workspace</span>
-                        </button>
                         <button className={`small-tool${logsOpen ? " active" : ""}`} type="button" onClick={onLogsToggle}>
                             <i className="fas fa-wave-square" />
-                            <span>Logs</span>
+                            <span>Debug</span>
                         </button>
                         <button className={`small-tool${skillsOpen ? " active" : ""}`} type="button" onClick={onSkillsToggle}>
                             <i className="fas fa-sliders" />

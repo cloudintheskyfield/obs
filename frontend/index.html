@@ -67,12 +67,26 @@
             </header>
 
             <section class="modebar">
-                <div class="mode-selector">
-                    <label class="mode-selector-label" for="mode-select">Mode</label>
+                <div class="agent-pipeline-track" id="agent-pipeline-track">
+                    <div class="agent-node" data-agent="planner">
+                        <span class="agent-icon"><i class="fas fa-sitemap"></i></span>
+                        <span class="agent-name">Planner</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="agent-node" data-agent="generator">
+                        <span class="agent-icon"><i class="fas fa-code"></i></span>
+                        <span class="agent-name">Generator</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="agent-node" data-agent="evaluator">
+                        <span class="agent-icon"><i class="fas fa-check-double"></i></span>
+                        <span class="agent-name">Evaluator</span>
+                    </div>
+                </div>
+                <div class="mode-selector" style="display: none;">
                     <select id="mode-select" class="mode-select" aria-label="Select mode">
                         <option value="agent">Agent</option>
                         <option value="plan">Plan</option>
-                        <option value="review">Review</option>
                     </select>
                 </div>
                 <div class="runtime-pills">
@@ -114,18 +128,6 @@
                     <textarea id="message-input" rows="1" placeholder="Describe the task, mention files, or ask for a coordinated refactor"></textarea>
                     <div class="composer-foot">
                         <div class="composer-left">
-                            <button class="small-tool" data-tool-context="computer" type="button">
-                                <i class="fas fa-desktop"></i>
-                                <span>Computer</span>
-                            </button>
-                            <button class="small-tool active" data-tool-context="workspace" type="button">
-                                <i class="fas fa-folder-tree"></i>
-                                <span>Workspace</span>
-                            </button>
-                            <button class="small-tool" data-tool-context="agents" type="button">
-                                <i class="fas fa-diagram-project"></i>
-                                <span>Agents</span>
-                            </button>
                             <button id="logs-toggle-btn" class="small-tool" type="button">
                                 <i class="fas fa-wave-square"></i>
                                 <span>Logs</span>

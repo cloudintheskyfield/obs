@@ -15,6 +15,7 @@ def build_store(tmp_path: Path) -> SessionStore:
             thread_workspace_dir=tmp_path / "thread_workspaces",
             workspace_state_file=tmp_path / "workspace_state.json",
             ui_sessions_dir=tmp_path / "ui_sessions",
+            published_projects_dir=tmp_path / "published_projects",
         )
     )
 
@@ -60,3 +61,15 @@ def test_session_store_handles_ui_and_workspace_state(tmp_path: Path) -> None:
 
     store.delete_ui_session(session_id)
     assert store.load_ui_session(session_id) is None
+
+
+def test_session_store_handles_published_projects(tmp_path: Path) -> None:
+    store = build_store(tmp_path)
+    payload = {"id": "project-demo", "title": "Zombie Rush", "published_at": "2026-05-07T18:00:00+08:00"}
+
+    store.save_published_project(payload["id"], payload)
+    assert store.load_published_project(payload["id"]) == payload
+    assert store.list_published_projects()[0]["id"] == payload["id"]
+
+    store.delete_published_project(payload["id"])
+    assert store.load_published_project(payload["id"]) is None

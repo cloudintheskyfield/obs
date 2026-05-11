@@ -1,0 +1,165 @@
+{
+  "schema_version": "1.0",
+  "sandbox_mode": "workspace-write",
+  "approval_policy": "ask",
+  "protected_paths": [
+    ".env",
+    ".env.*",
+    ".git/**",
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    ".harness/state.json"
+  ],
+  "package_json_policy": {
+    "allow_modify": false,
+    "allow_add_scripts": false,
+    "allow_add_dependencies": false,
+    "requires_approval": true
+  },
+  "agent_permissions": {
+    "Planner": {
+      "tools": [],
+      "can_read_files": false,
+      "can_write_files": false,
+      "can_run_commands": false,
+      "can_use_browser": false,
+      "can_use_search": false
+    },
+    "Search": {
+      "tools": [
+        "web-search-free",
+        "search",
+        "web-scraper-pro",
+        "firecrawl-scraper",
+        "skill-lookup"
+      ],
+      "can_read_files": false,
+      "can_write_files": false,
+      "can_run_commands": false,
+      "can_use_browser": false,
+      "can_use_search": true,
+      "can_scrape_web": true,
+      "allowed_write_paths": [
+        ".harness/search/**"
+      ],
+      "forbidden_write_paths": [
+        "src/**",
+        "app/**",
+        "components/**",
+        "package.json",
+        ".env",
+        ".git/**",
+        "node_modules/**"
+      ],
+      "allow_login": false,
+      "allow_download": false,
+      "allow_execute_remote_code": false,
+      "max_pages_to_scrape": 3
+    },
+    "Generator": {
+      "tools": [
+        "filesystem",
+        "file-manager"
+      ],
+      "can_read_files": true,
+      "can_write_files": true,
+      "can_run_commands": false,
+      "can_use_browser": false,
+      "can_use_search": false,
+      "allowed_write_paths": [
+        "src/**",
+        "app/**",
+        "components/**",
+        "public/**",
+        "index.html"
+      ],
+      "forbidden_write_paths": [
+        ".env",
+        ".env.*",
+        ".git/**",
+        "node_modules/**",
+        "dist/**",
+        "build/**",
+        ".harness/**",
+        "package.json"
+      ]
+    },
+    "Runner": {
+      "tools": [
+        "desktop-commander",
+        "Skill Management = python runtime",
+        "playwright-e2e",
+        "web-testing-playwright-e2e",
+        "e2e",
+        "computer-use"
+      ],
+      "can_read_files": true,
+      "can_write_project_files": false,
+      "can_write_artifacts": true,
+      "can_run_commands": true,
+      "can_use_browser": true,
+      "can_use_search": false,
+      "allowed_write_paths": [
+        ".harness/**",
+        "logs/**",
+        "screenshots/**",
+        "tmp/**"
+      ],
+      "forbidden_write_paths": [
+        "src/**",
+        "app/**",
+        "components/**",
+        "package.json",
+        ".env",
+        ".git/**",
+        "node_modules/**"
+      ]
+    },
+    "Evaluator": {
+      "tools": [],
+      "can_read_files": true,
+      "can_write_files": false,
+      "can_run_commands": false,
+      "can_use_browser": false,
+      "can_use_search": false
+    }
+  },
+  "command_policy": {
+    "allowed_commands": [
+      "npm run build",
+      "npm run lint",
+      "npm test",
+      "npm run test",
+      "npm run dev",
+      "pnpm build",
+      "pnpm lint",
+      "pnpm test",
+      "pnpm dev",
+      "yarn build",
+      "yarn lint",
+      "yarn test",
+      "yarn dev",
+      "python",
+      "pytest",
+      "node"
+    ],
+    "blocked_patterns": [
+      "rm\\s+-rf\\s+/",
+      "\\bsudo\\b",
+      "curl\\s+.*\\|\\s*bash",
+      "wget\\s+.*\\|\\s*bash",
+      "chmod\\s+-R\\s+777",
+      "chown\\s+-R",
+      "kill\\s+-9\\s+-1",
+      "\\bdd\\s+if=",
+      "\\bmkfs\\b",
+      "diskutil\\s+erase"
+    ],
+    "network_default": false,
+    "install_default": false,
+    "restrict_to_runner_input_commands": true,
+    "require_timeout": true,
+    "command_mode": "argv_or_escaped_shell"
+  }
+}

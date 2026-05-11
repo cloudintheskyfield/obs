@@ -3,7 +3,7 @@ from __future__ import annotations
 from omni_agent.skills import SkillLoader, SkillManager, SkillResult
 
 
-def test_legacy_skill_import_surface_still_resolves() -> None:
+def test_findskills_harness_skill_surface_resolves() -> None:
     loader = SkillLoader()
     skills = loader.load_all_skills()
     assert skills
@@ -16,5 +16,10 @@ def test_legacy_skill_import_surface_still_resolves() -> None:
         "enable_text_editor": True,
         "enable_bash": True,
     })
-    assert "bash" in manager.skills
-    assert "str_replace_editor" in manager.skills
+    metadata = manager.list_skill_metadata()
+    assert "desktop-commander" in metadata
+    assert "file-manager" in metadata
+    assert "desktop-commander" in manager.skills
+    assert "file-manager" in manager.skills
+    assert "terminal" not in manager.list_skill_metadata()
+    assert "file-operations" not in manager.list_skill_metadata()

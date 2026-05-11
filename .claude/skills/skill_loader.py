@@ -1,5 +1,5 @@
 """
-Skill Loader - Load Claude Code Skills from .claude/skills directory
+Skill Loader - Load Harness skills from the project skills directory.
 """
 import os
 import sys
@@ -19,12 +19,14 @@ class SkillDefinition:
         description: str,
         instructions: str,
         skill_dir: Path,
+        skill_file: Optional[Path] = None,
         skill_class: Optional[Type] = None
     ):
         self.name = name
         self.description = description
         self.instructions = instructions
         self.skill_dir = skill_dir
+        self.skill_file = skill_file or (skill_dir / "SKILL.md")
         self.skill_class = skill_class
     
     def to_dict(self) -> Dict[str, Any]:
@@ -34,13 +36,14 @@ class SkillDefinition:
             "description": self.description,
             "instructions": self.instructions,
             "skill_dir": str(self.skill_dir),
+            "skill_file": str(self.skill_file),
             "has_implementation": self.skill_class is not None
         }
 
 
 class SkillLoader:
     """
-    Load Claude Code Skills from .claude/skills directory
+    Load Harness skills from a configured skills directory.
     
     Skills follow three-level structure:
     - Level 1: Metadata (YAML frontmatter - always loaded)
@@ -69,27 +72,45 @@ class SkillLoader:
         if env_override:
             return Path(env_override)
 
-        rel = Path(".claude") / "skills"
+        project_rel = Path("skills")
+        legacy_rel = Path(".claude") / "skills"
 
-        from_cwd = self._find_upwards(Path.cwd(), rel)
+        from_cwd = self._find_upwards(Path.cwd(), project_rel)
         if from_cwd:
             return from_cwd
 
-        from_module = self._find_upwards(Path(__file__).resolve().parent, rel)
+        from_module = self._find_upwards(Path(__file__).resolve().parent, project_rel)
         if from_module:
             return from_module
 
-        return Path.cwd() / rel
+        legacy_from_cwd = self._find_upwards(Path.cwd(), legacy_rel)
+        if legacy_from_cwd:
+            return legacy_from_cwd
+
+        legacy_from_module = self._find_upwards(Path(__file__).resolve().parent, legacy_rel)
+        if legacy_from_module:
+            return legacy_from_module
+
+        return Path.cwd() / project_rel
         
     def load_all_skills(self) -> Dict[str, SkillDefinition]:
-        """Load all skills from .claude/skills directory"""
+        """Load all skills from the configured skills directory."""
         if not self.skills_root.exists():
             logger.warning(f"Skills directory not found: {self.skills_root}")
             return {}
         
         for skill_dir in self.skills_root.iterdir():
             if skill_dir.is_dir():
-                skill_file = skill_dir / "SKILL.md"
+                source_dir = skill_dir / "source"
+                source_candidates = [
+                    source_dir / "SKILL.md",
+                    source_dir / "README.md",
+                ]
+                source_candidates.extend(sorted(source_dir.glob("*-SKILL.md")) if source_dir.exists() else [])
+                fallback_candidates = [candidate for candidate in source_candidates if candidate.exists()]
+                fallback_candidates.append(skill_dir / "SKILL.md")
+                skill_file = next((candidate for candidate in fallback_candidates if candidate.exists()), skill_dir / "SKILL.md")
+
                 if skill_file.exists():
                     try:
                         skill = self._load_skill_file(skill_file, skill_dir)
@@ -102,7 +123,7 @@ class SkillLoader:
                             else:
                                 logger.info(f"Loaded skill definition only: {skill.name}")
                             
-                            self.skills[skill.name] = skill
+                            self.skills[skill_dir.name] = skill
                     except Exception as e:
                         logger.error(f"Failed to load skill from {skill_file}: {e}")
         
@@ -136,8 +157,17 @@ class SkillLoader:
         )
         
         if not frontmatter_match:
-            logger.warning(f"No frontmatter found in {skill_file}")
-            return None
+            instructions = content.strip()
+            lines = [line.strip("# ").strip() for line in instructions.splitlines() if line.strip()]
+            description = next((line for line in lines if line), skill_dir.name)
+            logger.info(f"No frontmatter found in {skill_file}; using directory name as skill id")
+            return SkillDefinition(
+                name=skill_dir.name,
+                description=description,
+                instructions=instructions,
+                skill_dir=skill_dir,
+                skill_file=skill_file,
+            )
         
         frontmatter = frontmatter_match.group(1)
         instructions = frontmatter_match.group(2).strip()
@@ -170,7 +200,8 @@ class SkillLoader:
             name=name,
             description=description,
             instructions=instructions,
-            skill_dir=skill_dir
+            skill_dir=skill_dir,
+            skill_file=skill_file,
         )
     
     def _load_skill_implementation(self, skill_dir: Path, skill_name: str) -> Optional[Type]:
@@ -182,9 +213,15 @@ class SkillLoader:
         # 映射skill名称到可能的Python文件名
         filename_candidates = [
             f"{skill_name.replace('-', '_')}.py",
+            "bash.py" if skill_name == "desktop-commander" else None,
+            "text_editor.py" if skill_name == "file-manager" else None,
+            "text_editor.py" if skill_name == "filesystem" else None,
             "computer_use.py" if skill_name == "computer-use" else None,
-            "text_editor.py" if skill_name == "file-operations" else None,
-            "bash.py" if skill_name == "terminal" else None,
+            "web_search.py" if skill_name == "web-search-free" else None,
+            "web_search.py" if skill_name == "search" else None,
+            "web_search.py" if skill_name == "web-scraper-pro" else None,
+            "web_search.py" if skill_name == "firecrawl-scraper" else None,
+            "web_search.py" if skill_name == "skill-lookup" else None,
         ]
         
         # 移除None值
@@ -223,9 +260,10 @@ class SkillLoader:
         """从模块中查找skill类"""
         # 常见的skill类名模式
         class_candidates = [
+            "BashSkill" if skill_name == "desktop-commander" else None,
+            "TextEditorSkill" if skill_name in {"file-manager", "filesystem"} else None,
             "ComputerUseSkill" if skill_name == "computer-use" else None,
-            "TextEditorSkill" if skill_name == "file-operations" else None,
-            "BashSkill" if skill_name == "terminal" else None,
+            "WebSearchSkill" if skill_name in {"web-search-free", "search", "web-scraper-pro", "firecrawl-scraper", "skill-lookup"} else None,
         ]
         
         # 移除None值并添加通用模式
@@ -262,7 +300,8 @@ class SkillLoader:
         """
         return {
             name: {
-                "name": skill.name,
+                "name": name,
+                "source_name": skill.name,
                 "description": skill.description
             }
             for name, skill in self.skills.items()

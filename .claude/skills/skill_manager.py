@@ -1,4 +1,4 @@
-"""Skills管理器 - 管理Claude官方Skills"""
+"""Harness skill manager."""
 import os
 import json
 from pathlib import Path
@@ -11,20 +11,66 @@ from base_skill import BaseSkill, SkillResult
 from skill_loader import SkillLoader
 
 
+class InstructionOnlySkill(BaseSkill):
+    """Minimal executable wrapper for documentation-only skills."""
+
+    def __init__(self, skill_name: str, description: str, instructions: str):
+        super().__init__(
+            name=skill_name,
+            description=description or f"Documentation helper for {skill_name}",
+        )
+        self._instructions = instructions.strip()
+        self.add_parameter(
+            "query",
+            "str",
+            "Optional question or topic to focus when returning the skill instructions",
+            False,
+            "",
+        )
+
+    async def execute(self, **kwargs) -> SkillResult:
+        query = str(kwargs.get("query") or "").strip()
+        content = self._instructions
+        if query:
+            content = f"Requested topic: {query}\n\n{content}"
+        return SkillResult(
+            success=True,
+            content=content or "No instructions available.",
+            metadata={"mode": "instruction_only"},
+        )
+
+
 class SkillManager:
-    """Skills管理器"""
+    """Manage the FindSkills-backed Harness skill set."""
+
+    HARNESS_SPEC_SKILLS = {
+        "desktop-commander",
+        "file-manager",
+        "filesystem",
+        "agent-skills",
+        "skill-management-python-runtime",
+        "computer-use",
+        "web-e2e",
+        "playwright-e2e",
+        "web-testing-playwright-e2e",
+        "e2e",
+        "web-search-free",
+        "search",
+        "web-scraper-pro",
+        "firecrawl-scraper",
+        "skill-lookup",
+        "skill-manager",
+    }
 
     TOOL_SKILL_ALIASES = {
-        "advanced_web_search": "web-search",
-        "web_search": "web-search",
-        "bash": "terminal",
-        "str_replace_editor": "file-operations",
-        "code_sandbox": "code-sandbox",
+        "advanced_web_search": "web-search-free",
+        "web_search": "web-search-free",
+        "bash": "desktop-commander",
+        "str_replace_editor": "file-manager",
         "computer": "computer-use",
-        "weather": "weather",
         "skill_manager": "skill-manager",
     }
-    
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.skills: Dict[str, BaseSkill] = {}
@@ -32,25 +78,21 @@ class SkillManager:
         self._initialize_skills()
     
     def _initialize_skills(self):
-        """初始化Skills - 从.claude/skills目录加载完整的三级结构"""
+        """Initialize skills from the configured project skills directory."""
         work_dir = self.config.get("work_dir", "workspace")
         screenshot_dir = self.config.get("screenshot_dir", "screenshots")
         
-        # Load advanced web search skill from web-search directory
-        try:
-            import sys
-            sys.path.insert(0, str(Path(__file__).parent / "web-search"))
-            from advanced_web_search import AdvancedWebSearchSkill
-            web_search_skill = AdvancedWebSearchSkill()
-            # Override the regular web_search with our enhanced version
-            self.skills["web_search"] = web_search_skill
-            self.skills["advanced_web_search"] = web_search_skill
-            logger.info("Initialized advanced web_search skill, overriding regular web_search")
-        except Exception as e:
-            logger.error(f"Failed to load advanced web_search skill: {e}")
-        
-        skill_definitions = self.skill_loader.load_all_skills()
-        logger.info(f"Loaded {len(skill_definitions)} skill definitions from .claude/skills")
+        all_definitions = self.skill_loader.load_all_skills()
+        skill_definitions = {
+            name: skill_def
+            for name, skill_def in all_definitions.items()
+            if name in self.HARNESS_SPEC_SKILLS
+        }
+        skipped = sorted(set(all_definitions) - set(skill_definitions))
+        if skipped:
+            logger.info(f"Filtered non-harness skills from default runtime: {skipped}")
+        self.skill_loader.skills = dict(skill_definitions)
+        logger.info(f"Loaded {len(skill_definitions)} harness skill definitions from {self.skill_loader.skills_root}")
         
         # 从skill definitions创建skill实例
         for skill_name, skill_def in skill_definitions.items():
@@ -65,17 +107,8 @@ class SkillManager:
                         
                         # Skip regular web_search if we already have advanced web_search loaded,
                         # but associate the SKILL.md definition so it doesn't warn as missing
-                        if skill_instance.name == "web_search" and "web_search" in self.skills:
-                            existing = self.skills["web_search"]
-                            if not getattr(existing, "skill_definition", None):
-                                existing.skill_definition = skill_def
-                                if "advanced_web_search" in self.skills:
-                                    self.skills["advanced_web_search"].skill_definition = skill_def
-                            logger.info(f"Skipping regular web_search, using enhanced version")
-                            continue
-                            
-                        self.skills[skill_instance.name] = skill_instance
-                        logger.info(f"Initialized skill from .claude/skills: {skill_name} -> {skill_instance.name}")
+                        self.skills[skill_name] = skill_instance
+                        logger.info(f"Initialized skill from {self.skill_loader.skills_root}: {skill_name} -> {skill_instance.name}")
                     else:
                         logger.debug(f"Skill '{skill_name}' loaded as definition-only (no Python tools, instructions only)")
                         
@@ -88,8 +121,9 @@ class SkillManager:
         """检查skill是否应该启用"""
         skill_config_map = {
             "computer-use": "enable_computer_use",
-            "file-operations": "enable_text_editor", 
-            "terminal": "enable_bash"
+            "file-manager": "enable_text_editor",
+            "filesystem": "enable_text_editor",
+            "desktop-commander": "enable_bash",
         }
         
         config_key = skill_config_map.get(skill_name)
@@ -107,34 +141,33 @@ class SkillManager:
                 # 根据skill类型传递适当的参数
                 if skill_name == "computer-use":
                     return skill_def.skill_class(screenshot_dir=screenshot_dir)
-                elif skill_name in ["file-operations", "terminal"]:
+                elif skill_name in ["file-manager", "filesystem", "desktop-commander"]:
                     return skill_def.skill_class(work_dir=work_dir)
-                elif skill_name == "code-sandbox":
-                    return skill_def.skill_class(config={"workspace_dir": work_dir})
                 else:
                     # 尝试通用初始化
                     return skill_def.skill_class()
                     
             except Exception as e:
                 logger.error(f"Failed to create instance from Level 3 implementation for {skill_name}: {e}")
-        
-        # No Level 3 implementation — this is a documentation/instructions-only skill, which is valid
+
+        instructions = getattr(skill_def, "instructions", "")
+        if instructions.strip():
+            logger.debug(f"Skill '{skill_name}' has no runtime backend; using instruction-only wrapper")
+            return InstructionOnlySkill(skill_name, skill_def.description, instructions)
+
         logger.debug(f"Skill '{skill_name}' has no Python implementation; will be used as context instructions only")
         return None
     
     def get_skill(self, name: str) -> Optional[BaseSkill]:
         """获取指定Skill"""
-        return self.skills.get(name)
+        resolved_name = self.resolve_skill_name_for_tool(name) or name
+        return self.skills.get(name) or self.skills.get(resolved_name)
 
     def get_current_workspace(self) -> str:
-        for skill_name in ["bash", "str_replace_editor"]:
+        for skill_name in ["desktop-commander", "file-manager"]:
             skill = self.skills.get(skill_name)
             if skill is not None and hasattr(skill, "work_dir"):
                 return str(Path(skill.work_dir).resolve())
-
-        sandbox = self.skills.get("code_sandbox")
-        if sandbox is not None and hasattr(sandbox, "workspace_dir"):
-            return str(Path(sandbox.workspace_dir).resolve())
 
         return str(Path(self.config.get("work_dir", "workspace")).expanduser().resolve())
 
@@ -143,20 +176,12 @@ class SkillManager:
         workspace.mkdir(parents=True, exist_ok=True)
         self.config["work_dir"] = str(workspace)
 
-        for skill_name in ["bash", "str_replace_editor"]:
+        for skill_name in ["desktop-commander", "file-manager"]:
             skill = self.skills.get(skill_name)
             if skill is None or not hasattr(skill, "work_dir"):
                 continue
             skill.work_dir = workspace
             skill.work_dir.mkdir(parents=True, exist_ok=True)
-
-        sandbox = self.skills.get("code_sandbox")
-        if sandbox is not None and hasattr(sandbox, "workspace_dir"):
-            sandbox_root = workspace / ".obs_code_sandbox"
-            sandbox_root.mkdir(parents=True, exist_ok=True)
-            sandbox.workspace_dir = sandbox_root
-            if hasattr(sandbox, "config") and isinstance(sandbox.config, dict):
-                sandbox.config["workspace_dir"] = str(sandbox_root)
 
         logger.info(f"Workspace updated to {workspace}")
         return str(workspace)
@@ -173,7 +198,13 @@ class SkillManager:
     
     def list_skills(self) -> List[Dict[str, Any]]:
         """列出所有Skills"""
-        return [skill.to_dict() for skill in self.skills.values()]
+        items = []
+        for skill_name, skill in self.skills.items():
+            item = skill.to_dict()
+            item["name"] = skill_name
+            item["tool_name"] = getattr(skill, "name", skill_name)
+            items.append(item)
+        return items
     
     def get_enabled_skills(self) -> Dict[str, BaseSkill]:
         """获取所有启用的Skills"""
@@ -181,15 +212,17 @@ class SkillManager:
     
     def enable_skill(self, name: str) -> bool:
         """启用Skill"""
-        if name in self.skills:
-            self.skills[name].enabled = True
+        resolved_name = self.resolve_skill_name_for_tool(name) or name
+        if resolved_name in self.skills:
+            self.skills[resolved_name].enabled = True
             return True
         return False
     
     def disable_skill(self, name: str) -> bool:
         """禁用Skill"""
-        if name in self.skills:
-            self.skills[name].enabled = False
+        resolved_name = self.resolve_skill_name_for_tool(name) or name
+        if resolved_name in self.skills:
+            self.skills[resolved_name].enabled = False
             return True
         return False
     
@@ -200,6 +233,11 @@ class SkillManager:
     ) -> SkillResult:
         """执行指定Skill"""
         if skill_name not in self.skills:
+            resolved_name = self.resolve_skill_name_for_tool(skill_name)
+        else:
+            resolved_name = skill_name
+
+        if resolved_name not in self.skills:
             return SkillResult(
                 success=False,
                 error=f"Unknown skill: {skill_name}",
@@ -209,7 +247,7 @@ class SkillManager:
                 }
             )
         
-        skill = self.skills[skill_name]
+        skill = self.skills[resolved_name]
         
         if not skill.enabled:
             return SkillResult(
@@ -218,11 +256,12 @@ class SkillManager:
                 metadata={"skill_name": skill_name}
             )
         
-        logger.info(f"Executing skill: {skill_name}")
+        logger.info(f"Executing skill: {resolved_name} via {skill_name}")
         
         try:
             result = await skill.safe_execute(**kwargs)
-            result.metadata["skill_name"] = skill_name
+            result.metadata["skill_name"] = resolved_name
+            result.metadata["tool_name"] = skill_name
             result.metadata["execution_timestamp"] = datetime.now().isoformat()
             
             if result.success:
@@ -256,13 +295,16 @@ class SkillManager:
     
     def get_skill_info(self, skill_name: str) -> Optional[Dict[str, Any]]:
         """获取Skill详细信息 - 包含SKILL.md的完整instructions (Level 2)"""
-        if skill_name not in self.skills:
+        resolved_name = self.resolve_skill_name_for_tool(skill_name) or skill_name
+        if resolved_name not in self.skills:
             return None
         
-        skill = self.skills[skill_name]
+        skill = self.skills[resolved_name]
         info = {
             **skill.to_dict(),
-            "usage_examples": self._get_usage_examples(skill_name)
+            "name": resolved_name,
+            "tool_name": getattr(skill, "name", resolved_name),
+            "usage_examples": self._get_usage_examples(resolved_name)
         }
         
         if skill.skill_definition:
@@ -274,7 +316,7 @@ class SkillManager:
     def _get_usage_examples(self, skill_name: str) -> List[Dict[str, str]]:
         """获取Skill使用示例"""
         examples = {
-            "computer_use": [
+            "computer-use": [
                 {
                     "description": "Take a screenshot",
                     "command": '{"action": "screenshot"}'
@@ -292,7 +334,7 @@ class SkillManager:
                     "command": '{"action": "navigate", "url": "https://example.com"}'
                 }
             ],
-            "text_editor": [
+            "file-manager": [
                 {
                     "description": "View a file",
                     "command": '{"command": "view", "path": "example.txt"}'
@@ -310,7 +352,7 @@ class SkillManager:
                     "command": '{"command": "view", "path": "example.txt", "view_range": [1, 10]}'
                 }
             ],
-            "bash": [
+            "desktop-commander": [
                 {
                     "description": "List files",
                     "command": '{"command": "ls -la"}'
@@ -357,6 +399,10 @@ class SkillManager:
             "timestamp": datetime.now().isoformat(),
             "skills": {}
         }
+
+        if not self.skills:
+            health_status["overall_healthy"] = False
+            return health_status
         
         for skill_name, skill in self.skills.items():
             try:
@@ -431,7 +477,7 @@ class SkillManager:
         """获取Skill的Level 2 instructions (当skill被触发时加载)"""
         resolved_name = self.resolve_skill_name_for_tool(skill_name) or skill_name
 
-        skill = self.skills.get(skill_name)
+        skill = self.skills.get(resolved_name)
         if skill and skill.skill_definition:
             return skill.skill_definition.instructions
 
@@ -443,7 +489,11 @@ class SkillManager:
     
     def list_skill_metadata(self) -> Dict[str, Dict[str, str]]:
         """列出所有Skills的Level 1 metadata (轻量级)"""
-        return self.skill_loader.get_all_skill_metadata()
+        return {
+            name: metadata
+            for name, metadata in self.skill_loader.get_all_skill_metadata().items()
+            if name in self.HARNESS_SPEC_SKILLS
+        }
 
     def get_skill_metadata_for_tool(self, tool_name: str) -> Optional[Dict[str, str]]:
         resolved_name = self.resolve_skill_name_for_tool(tool_name)
@@ -455,7 +505,7 @@ class SkillManager:
             return None
 
         definition = self.skill_loader.skills.get(resolved_name)
-        location = str(definition.skill_dir / "SKILL.md") if definition else ""
+        location = str(getattr(definition, "skill_file", definition.skill_dir / "SKILL.md")) if definition else ""
         return {
             **metadata,
             "location": location,
@@ -483,7 +533,7 @@ class SkillManager:
             definition = self.skill_loader.skills.get(skill_name)
             entries.append({
                 **metadata,
-                "location": str(definition.skill_dir / "SKILL.md") if definition else "",
+                "location": str(getattr(definition, "skill_file", definition.skill_dir / "SKILL.md")) if definition else "",
                 "tool_name": skill_name,
             })
         return entries
@@ -542,9 +592,9 @@ class SkillManager:
         metadata_map = self.list_skill_metadata()
         tool_map: Dict[str, List[str]] = {}
 
-        for tool_name in self.get_enabled_skills().keys():
-            resolved_name = self.resolve_skill_name_for_tool(tool_name) or tool_name
-            tool_map.setdefault(resolved_name, []).append(tool_name)
+        for skill_name, skill in self.get_enabled_skills().items():
+            tool_name = getattr(skill, "name", skill_name)
+            tool_map.setdefault(skill_name, []).append(tool_name)
 
         for skill_name, metadata in metadata_map.items():
             definition = self.skill_loader.skills.get(skill_name)
@@ -556,7 +606,7 @@ class SkillManager:
             catalog.append({
                 "name": skill_name,
                 "description": metadata.get("description", ""),
-                "location": str(skill_dir / "SKILL.md") if skill_dir else "",
+                "location": str(getattr(definition, "skill_file", skill_dir / "SKILL.md")) if definition and skill_dir else "",
                 "tool_names": tool_names,
                 "installed_at": installed_at,
                 "protected": protected,
@@ -584,9 +634,11 @@ class SkillManager:
     def install_skill(self, name: str, skill_md: str, python_code: str = "") -> Dict[str, Any]:
         """
         Install a new skill from SKILL.md content (and optional Python implementation).
-        Creates the skill directory under .claude/skills/<name>/ then hot-reloads.
+        Creates the skill directory under the active skills root then hot-reloads.
         Returns the updated catalog entry or raises on error.
         """
+        if name not in self.HARNESS_SPEC_SKILLS:
+            raise ValueError(f"Skill '{name}' is outside the Harness spec allowlist")
         skills_root = self.skill_loader.skills_root if hasattr(self.skill_loader, "skills_root") else None
         if skills_root is None:
             # Fall back: derive from existing skill locations

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import "../../frontend/styles.css";
 import "katex/dist/katex.min.css";
+import "./improvements.css";
 
 class ErrorBoundary extends React.Component {
     constructor(props) {

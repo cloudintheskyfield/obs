@@ -130,9 +130,9 @@ export default function LogsDrawer({
                 <div className="logs-header">
                     <div className="logs-header-copy">
                         <div className="logs-title-row">
-                            <strong>LLM Logs</strong>
+                            <strong>Debug Logs</strong>
                             <span className="logs-meta">
-                                Structured request / response events
+                                Raw model, tool, and harness trace events
                                 {totalCount > 0 && <em className="logs-count"> · {totalCount} 条</em>}
                             </span>
                         </div>
@@ -143,7 +143,7 @@ export default function LogsDrawer({
                                 {threadId && <code className="logs-thread-id">{threadId}</code>}
                             </div>
                         )}
-                        <div className="logs-scope-note">只显示当前 thread 对应的日志</div>
+                        <div className="logs-scope-note">这里只保留调试轨迹，主界面展示的是 Harness 归一化后的进度摘要。</div>
                     </div>
                     <div className="logs-filters">
                         <select

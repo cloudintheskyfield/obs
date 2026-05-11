@@ -31,8 +31,9 @@ class BashSkill(BaseSkill):
             'node', 'npm', 'yarn', 'pnpm',
             'cargo', 'rustc', 'go', 'java', 'javac', 
             'gcc', 'g++', 'make', 'cmake',
+            'sleep', 'wait', 'timeout', 'watch', 'env', 'nohup',
             'ps', 'kill', 'top', 'htop', 'free', 'uptime',
-            'curl', 'wget', 'ping', 'netstat', 'ss',
+            'curl', 'wget', 'ping', 'netstat', 'ss', 'lsof', 'pkill',
             'zip', 'unzip', 'tar', 'gzip', 'gunzip',
             'awk', 'sed', 'cut', 'tr',
             'apt', 'yum', 'dnf', 'pacman', 'brew'
@@ -71,6 +72,13 @@ class BashSkill(BaseSkill):
             False,
             False
         )
+        self.add_parameter(
+            "background",
+            "bool",
+            "Start the command as a managed background process and return a process id for polling",
+            False,
+            False
+        )
     
     def _is_safe_command(self, command: str) -> bool:
         """检查命令是否安全"""
@@ -82,16 +90,26 @@ class BashSkill(BaseSkill):
                 logger.warning(f"Dangerous command detected: {dangerous}")
                 return False
         
-        # 检查基本命令是否在允许列表中
-        first_word = command.split()[0] if command.split() else ""
+        # 检查基本命令是否在允许列表中。跳过安全的 env/timeout/watch/sudo 包装器，
+        # 这样 `env VAR=1 python3 ...` 或 `timeout 5 curl ...` 不会被误判。
+        tokens = command.split()
+        first_word = tokens[0] if tokens else ""
         
         # 特殊处理：允许带路径的命令
         if '/' in first_word:
             first_word = Path(first_word).name
         
-        # 移除sudo前缀检查实际命令
-        if first_word == 'sudo' and len(command.split()) > 1:
-            first_word = command.split()[1]
+        wrapper_words = {'sudo', 'env', 'timeout', 'watch', 'nohup'}
+        token_index = 0
+        while first_word in wrapper_words and token_index + 1 < len(tokens):
+            token_index += 1
+            while first_word == 'env' and token_index < len(tokens) and '=' in tokens[token_index]:
+                token_index += 1
+            if token_index >= len(tokens):
+                break
+            first_word = tokens[token_index]
+            if '/' in first_word:
+                first_word = Path(first_word).name
         
         if first_word not in self.allowed_commands:
             logger.warning(f"Command not in allowed list: {first_word}")
@@ -104,6 +122,25 @@ class BashSkill(BaseSkill):
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         return f"bash_{timestamp}"
+
+    def _normalize_workspace_aliases(self, command: str) -> str:
+        """Map common container-style workspace aliases to the configured workspace."""
+        workspace = str(self.work_dir)
+        return (
+            command
+            .replace("/workspace/", f"{workspace}/")
+            .replace("/workspace", workspace)
+        )
+
+    def _is_compacted_history_placeholder(self, command: str) -> bool:
+        """Detect placeholders that summarize old tool args and must not run."""
+        normalized = (command or "").strip().lower()
+        return (
+            normalized.startswith("[omitted ")
+            or normalized.startswith("<large ")
+            or "omitted from history" in normalized
+            or "do not copy or execute this placeholder" in normalized
+        )
     
     async def execute_command(
         self,
@@ -112,6 +149,16 @@ class BashSkill(BaseSkill):
         background: bool = False
     ) -> SkillResult:
         """执行Bash命令"""
+        command = self._normalize_workspace_aliases(command)
+        if self._is_compacted_history_placeholder(command):
+            return SkillResult(
+                success=False,
+                error=(
+                    "This command is a compacted-history placeholder, not executable source. "
+                    "Create a fresh small command or split the file write into real chunks."
+                ),
+                metadata={"command": command}
+            )
         if not self._is_safe_command(command):
             return SkillResult(
                 success=False,

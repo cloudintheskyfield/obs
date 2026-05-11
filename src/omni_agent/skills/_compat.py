@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from ..utils.paths import claude_skills_root
+from ..utils.paths import claude_skills_root, repo_skills_root
 
 
 def _load_module_from_path(module_name: str, file_path: Path) -> ModuleType:
@@ -19,7 +19,10 @@ def _load_module_from_path(module_name: str, file_path: Path) -> ModuleType:
 
 
 def load_claude_skill_module(relative_parts: list[str], module_name: str) -> ModuleType:
-    skills_root = claude_skills_root()
+    project_root = repo_skills_root()
+    legacy_root = claude_skills_root()
+    project_path = project_root.joinpath(*relative_parts)
+    skills_root = project_root if project_path.exists() else legacy_root
     module_path = skills_root.joinpath(*relative_parts)
     module_parent = str(module_path.parent)
     if module_parent not in sys.path:

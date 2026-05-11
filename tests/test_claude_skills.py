@@ -65,16 +65,12 @@ def test_skill_manager():
     
     manager = SkillManager(config)
     
-    print(f"初始化了 {len(manager.skills)} 个技能:")
-    for name, skill in manager.skills.items():
-        print(f"  - {name}: {skill.description}")
-        print(f"    启用: {skill.enabled}")
-        print(f"    有SKILL.md定义: {skill.skill_definition is not None}")
-        if skill.skill_definition:
-            print(f"    SKILL.md名称: {skill.skill_definition.name}")
-        print()
+    metadata = manager.list_skill_metadata()
+    print(f"加载了 {len(metadata)} 个上游 source-backed skills:")
+    for name, meta in metadata.items():
+        print(f"  - {name}: {meta['description']}")
     
-    # 测试Anthropic工具定义生成
+    # Source-backed skills expose instruction-only tools, not legacy local fake adapters.
     print("Anthropic工具定义:")
     tools = manager.get_anthropic_tools()
     for tool in tools:
@@ -94,7 +90,9 @@ def test_skill_manager():
     
     asyncio.run(run_health_check())
     
-    assert len(manager.skills) > 0
+    assert len(metadata) > 0
+    assert "desktop-commander" in manager.skills
+    assert all(getattr(skill, "_instructions", "") for skill in manager.skills.values())
 
 
 def test_skill_execution():
@@ -112,35 +110,9 @@ def test_skill_execution():
     manager = SkillManager(config)
     
     async def run_tests():
-        # 测试文本编辑器 - 创建文件
-        if "str_replace_editor" in manager.skills:
-            print("测试文本编辑器 - 创建文件:")
-            result = await manager.execute_skill(
-                "str_replace_editor",
-                command="create",
-                path="test.txt",
-                file_text="Hello from Claude Skills!"
-            )
-            print(f"  结果: {'成功' if result.success else '失败'}")
-            if not result.success:
-                print(f"  错误: {result.error}")
-            else:
-                print(f"  内容: {result.content[:100]}...")
-            print()
-        
-        # 测试Bash - 简单命令
-        if "bash" in manager.skills:
-            print("测试Bash - 列出文件:")
-            result = await manager.execute_skill(
-                "bash",
-                command="echo 'Hello from bash skill!'"
-            )
-            print(f"  结果: {'成功' if result.success else '失败'}")
-            if not result.success:
-                print(f"  错误: {result.error}")
-            else:
-                print(f"  输出: {result.content[:100]}...")
-            print()
+        result = await manager.execute_skill("bash", command="echo should-not-run")
+        assert result.success
+        assert result.metadata["mode"] == "instruction_only"
     
     import asyncio
     asyncio.run(run_tests())

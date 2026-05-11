@@ -767,6 +767,9 @@ class ObsAgentConsole {
         if (isThinkingEntry) {
             summary = document.createElement("div");
             summary.className = "thinking-summary";
+            if (entry.agentRole) {
+                summary.setAttribute("data-agent", entry.agentRole);
+            }
             summary.textContent = this.getThinkingSummary(entry.content, entry.streaming);
             summary.style.maxHeight = isCollapsed ? "72px" : "0px";
             summary.style.opacity = isCollapsed ? "1" : "0";
@@ -1039,16 +1042,51 @@ class ObsAgentConsole {
         return selectedMode;
     }
 
+    handleAgentPhaseEvent(payload) {
+        const track = document.getElementById("agent-pipeline-track");
+        if (!track) return;
+        
+        const nodes = track.querySelectorAll(".agent-node");
+        const connectors = track.querySelectorAll(".pipeline-connector");
+        
+        // Reset all nodes
+        nodes.forEach(n => {
+            n.classList.remove("active", "done", "error");
+        });
+        connectors.forEach(c => c.classList.remove("active"));
+        
+        const agentIndex = {
+            "planner": 0,
+            "generator": 1,
+            "evaluator": 2
+        }[payload.agent] ?? -1;
+
+        if (agentIndex >= 0) {
+            // Mark previous as done
+            for (let i = 0; i < agentIndex; i++) {
+                nodes[i].classList.add("done");
+                if (connectors[i]) connectors[i].classList.add("active");
+            }
+            
+            // Mark current
+            const current = nodes[agentIndex];
+            if (payload.status === "start" || payload.status === "thinking" || payload.status === "acting") {
+                current.classList.add("active");
+                if (agentIndex > 0 && connectors[agentIndex - 1]) {
+                    connectors[agentIndex - 1].classList.add("active");
+                }
+            } else if (payload.status === "done") {
+                current.classList.add("done");
+            } else if (payload.status === "error" || payload.status === "fail") {
+                current.classList.add("error");
+            }
+        }
+    }
+
     buildContextPayload() {
-        const { toolContext } = this.store.get();
-        const contextMap = {
-            computer: "Focus on visual/browser/computer-use context. Prefer screenshot, page-state, and UI interaction reasoning when relevant.",
-            workspace: "Focus on the current workspace, local files, directories, code structure, and repository state.",
-            agents: "Focus on agent coordination, task breakdown, review flow, and multi-step execution planning only when the request actually requires it."
-        };
         return {
-            toolContext,
-            context: contextMap[toolContext] || contextMap.workspace
+            toolContext: "workspace",
+            context: "Focus on the current workspace, local files, directories, code structure, and repository state."
         };
     }
 
@@ -1318,6 +1356,34 @@ class ObsAgentConsole {
                     });
                     if (this.logsDrawer && !this.logsDrawer.classList.contains("hidden")) {
                         this.refreshLogsFromBackend();
+                    }
+                    return;
+                }
+
+                if (payload.type === "agent_phase") {
+                    this.handleAgentPhaseEvent(payload);
+                    return;
+                }
+
+                if (payload.type === "agent_thinking") {
+                    if (!this.store.get().thinkingMode) return;
+                    const nextThinking = `${thinkingEntry?.content || ""}${payload.delta || ""}`;
+                    if (!thinkingEntry) {
+                        thinkingEntry = this.addTranscriptEntry({
+                            role: "assistant",
+                            content: nextThinking,
+                            kind: "thinking_text",
+                            taskId: "main",
+                            streaming: true,
+                            agentRole: payload.agent
+                        });
+                    } else {
+                        this.updateTranscriptEntry(thinkingEntry.id, {
+                            content: nextThinking,
+                            streaming: true,
+                            pendingPlaceholder: false,
+                            agentRole: payload.agent || thinkingEntry.agentRole
+                        });
                     }
                     return;
                 }

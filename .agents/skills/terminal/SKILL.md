@@ -32,6 +32,7 @@ result = await execute_skill("bash", command="git status", restart=True)
 - **command** (required): The bash command to execute
 - **timeout** (optional): Execution timeout in seconds (default: 30)
 - **restart** (optional): Start fresh shell session (default: false)
+- **background** (optional): Start a long-running command as a managed background process and return a process id
 
 ## Allowed Commands
 
@@ -50,7 +51,20 @@ result = await execute_skill("bash", command="git status", restart=True)
 `git` (all subcommands: clone, pull, push, commit, status, etc.)
 
 ### System Utilities
-`ps`, `kill`, `top`, `htop`, `free`, `uptime`, `curl`, `wget`, `ping`, `netstat`, `ss`
+`ps`, `kill`, `pkill`, `top`, `htop`, `free`, `uptime`, `curl`, `wget`, `ping`, `netstat`, `ss`, `lsof`, `env`, `nohup`, `timeout`
+
+### Preview Servers
+For local preview servers, prefer the `background` parameter instead of appending shell `&`:
+
+```python
+result = await execute_skill("bash", command="python3 -m http.server 8123 --bind 0.0.0.0 --directory .", background=True)
+```
+
+Then poll with:
+
+```python
+result = await execute_skill("bash", command="get_output <process_id>")
+```
 
 ### Archive Tools
 `zip`, `unzip`, `tar`, `gzip`, `gunzip`

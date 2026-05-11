@@ -1,60 +1,41 @@
-"""测试Anthropic Skills实现"""
+from __future__ import annotations
+
 import asyncio
-import sys
-import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from omni_agent.skills.skill_manager import SkillManager
-def test_skill_tools():
-    """测试Skills转换为Anthropic Tool格式"""
-    async def _run():
-        config = {
-            "work_dir": "workspace",
-            "screenshot_dir": "screenshots",
-            "enable_computer_use": True,
-            "enable_text_editor": True,
-            "enable_bash": True
-        }
-
-        skill_manager = SkillManager(config)
-        tools = skill_manager.get_anthropic_tools()
-        assert tools
-
-        computer_skill = skill_manager.get_skill("computer")
-        if computer_skill:
-            tool_def = computer_skill.to_anthropic_tool()
-            assert tool_def["name"] == "computer"
-
-        editor_skill = skill_manager.get_skill("str_replace_editor")
-        if editor_skill:
-            test_file = f"test_anthropic_{uuid.uuid4().hex[:8]}.txt"
-            result = await editor_skill.execute(
-                command="create",
-                path=test_file,
-                file_text="Hello from Anthropic Skills!\nThis is a test file."
-            )
-            assert result.success
-
-            result = await editor_skill.execute(
-                command="view",
-                path=test_file
-            )
-            assert result.success
-
-        bash_skill = skill_manager.get_skill("bash")
-        if bash_skill:
-            result = await bash_skill.execute(
-                command="echo 'Hello from Bash Skill!'",
-                timeout=10
-            )
-            assert result.success
-
-        await skill_manager.cleanup()
-
-    asyncio.run(_run())
 
 
-if __name__ == "__main__":
-    test_skill_tools()
+def test_harness_skills_emit_source_backed_instruction_tools_without_legacy_aliases() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    manager = SkillManager({
+        "work_dir": str(repo_root),
+        "screenshot_dir": str(repo_root / "screenshots"),
+        "enable_computer_use": True,
+        "enable_text_editor": True,
+        "enable_bash": True,
+    })
+
+    tool_names = {tool["name"] for tool in manager.get_anthropic_tools()}
+    assert "desktop-commander" in tool_names
+    assert "file-manager" in tool_names
+    assert "computer-use" in tool_names
+    assert "bash" not in tool_names
+    assert "str_replace_editor" not in tool_names
+    assert manager.get_skill_instructions("web-search-free")
+    assert manager.get_skill_instructions("desktop-commander")
+
+    async def run_checks() -> None:
+        bash_result = await manager.execute_skill("desktop-commander", command="pwd")
+        assert bash_result.success is True
+        assert bash_result.metadata["mode"] == "instruction_only"
+
+        view_result = await manager.execute_skill("file-manager", command="view", path="AGENTS.md")
+        assert view_result.success is True
+        assert view_result.metadata["mode"] == "instruction_only"
+
+        search_result = await manager.execute_skill("search", query="obs harness orchestrator spec")
+        assert search_result.success is True
+        assert search_result.metadata["mode"] == "instruction_only"
+
+    asyncio.run(run_checks())

@@ -1,6 +1,6 @@
 ---
 name: file-operations
-description: View, create, edit, and manage text files in the workspace
+description: View, create, edit, and manage text files in the workspace. For generated HTML/CSS/JS games or other large files, use str_replace_editor write for small skeletons and append real-source chunks under 1500 characters instead of one huge create call.
 ---
 
 # File Operations Skill
@@ -23,6 +23,13 @@ result = await execute_skill("str_replace_editor",
     path="new_file.py",
     file_text="print('Hello World')"
 )
+```
+
+Create or overwrite a file, then append chunks for large source files:
+
+```python
+await execute_skill("str_replace_editor", command="write", path="index.html", file_text="<!doctype html>\n")
+await execute_skill("str_replace_editor", command="append", path="index.html", file_text="<main id=\"app\"></main>\n")
 ```
 
 Replace text in a file:
@@ -49,6 +56,18 @@ Create a new file with content
 - **path**: File path relative to workspace (required)
 - **file_text**: Complete file content (required)
 - **Returns**: Success confirmation with file path
+
+### write
+Create or overwrite a file with content
+- **path**: File path relative to workspace (required)
+- **file_text**: File content (required)
+- **Returns**: Success confirmation with character and line counts
+
+### append
+Append text to a file, creating it if needed
+- **path**: File path relative to workspace (required)
+- **file_text** or **new_str**: Text chunk to append (required)
+- **Returns**: Success confirmation with appended character count
 
 ### str_replace
 Replace exact string match in file
@@ -94,16 +113,19 @@ Text files with these extensions:
 5. Verify all changes
 
 ### Creating New Components
-1. Use `create` with full content
-2. View to verify
-3. Make adjustments with `str_replace` if needed
+1. Use `create` with full content for small files
+2. For large HTML/CSS/JS, split into small files (`index.html`, `style.css`, `game.js`) and use `write` for a tiny skeleton, then `append` real-source chunks under 1500 characters each
+3. View to verify
+4. Make adjustments with `str_replace` if needed
 
 ## Best Practices
 
 - **View before edit**: Always view file first to understand context
 - **Exact matches**: `str_replace` requires exact string match including whitespace
 - **Unique strings**: Choose `old_str` that appears only once, or edit will fail
-- **Line-by-line for complex edits**: For major changes, use multiple `str_replace` or recreate file
+- **Large browser games**: Do not put one large HTML/JS file into a single tool call. Use separate files and `write`/`append` chunks under 1500 characters.
+- **Avoid base64 source**: Do not base64-encode HTML/CSS/JS to bypass argument limits; write real source chunks so syntax remains visible.
+- **Line-by-line for complex edits**: For major changes, use multiple `str_replace`, `insert`, or `append` chunks
 - **Verify after edit**: View file after changes to confirm success
 - **Use undo**: If edit doesn't work as expected, undo and try again
 

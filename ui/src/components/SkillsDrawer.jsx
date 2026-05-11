@@ -1,12 +1,21 @@
 import React, { useState } from "react";
 
 const DISPLAY_NAME_MAP = {
-    "code-sandbox": "Python",
-    "file-operations": "File",
-    "terminal": "Terminal",
-    "web-search": "Web Search",
+    "agent-skills": "Agent Skills",
     "computer-use": "Computer Use",
-    "weather": "Weather"
+    "desktop-commander": "Desktop Commander",
+    "e2e": "E2E Reporter",
+    "file-manager": "File Manager",
+    "filesystem": "Filesystem",
+    "firecrawl-scraper": "Firecrawl Scraper",
+    "playwright-e2e": "Playwright E2E",
+    "search": "Search",
+    "skill-lookup": "Skill Lookup",
+    "skill-management-python-runtime": "Skill Runtime",
+    "web-e2e": "Web E2E",
+    "web-scraper-pro": "Web Scraper Pro",
+    "web-search-free": "Web Search Free",
+    "web-testing-playwright-e2e": "Web Tester"
 };
 
 function displayName(skill) {

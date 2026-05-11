@@ -5,15 +5,32 @@ import LogsDrawer from "./components/LogsDrawer.jsx";
 import RuntimePills from "./components/RuntimePills.jsx";
 import SkillsDrawer from "./components/SkillsDrawer.jsx";
 import TranscriptView from "./components/TranscriptView.jsx";
-import WorkspaceModal from "./components/WorkspaceModal.jsx";
 import { formatWorkspaceBreadcrumb, normalizeDisplayText, shortenModel } from "./lib/formatting.js";
 
 const STORAGE_VERSION = "20260415-01";
 const SETTINGS_KEY = "obs-agent-settings";
 const SESSIONS_KEY = "obs-agent-sessions";
 const VERSION_KEY = "obs-agent-storage-version";
-const DEFAULT_SELECTED_SKILLS = ["code-sandbox", "file-operations", "terminal", "web-search", "weather"];
-const CREATE_MODE_SKILLS = ["code-sandbox", "file-operations", "terminal"];
+const DEFAULT_SELECTED_SKILLS = ["file-manager", "desktop-commander", "computer-use"];
+const CREATE_MODE_SKILLS = ["file-manager", "desktop-commander", "computer-use"];
+const HARNESS_ALLOWED_LOCAL_SKILLS = new Set([
+    "skill-manager",
+    "desktop-commander",
+    "file-manager",
+    "filesystem",
+    "agent-skills",
+    "skill-management-python-runtime",
+    "computer-use",
+    "web-e2e",
+    "playwright-e2e",
+    "web-testing-playwright-e2e",
+    "e2e",
+    "web-search-free",
+    "search",
+    "web-scraper-pro",
+    "firecrawl-scraper",
+    "skill-lookup",
+]);
 const IMAGE_TOKEN_PATTERN = /\[\[image:([^\]]+)\]\]/g;
 const PREVIEW_URL_PATTERN = /((?:https?:\/\/|localhost(?::\d+)?|127(?:\.\d{1,3}){3}(?::\d+)?|0\.0\.0\.0(?::\d+)?)(?:\/[^\s<>"')\]]*)?)/gi;
 const GITHUB_REPO_URL = "https://github.com/cloudintheskyfield/obs";
@@ -22,9 +39,18 @@ const MODEL_CONTEXT_WINDOWS = {
     "MiniMax-M2": 200000,
 };
 const VALID_PERMISSION_MODES = ["ask", "auto"];
+const CREATE_GUIDED_TIMEOUT_MS = 5000;
+const CREATE_GUIDED_FLOW_ENABLED = false;
+const CREATE_GAME_REQUEST_PATTERN = /(game|游戏|僵尸|zombie|迷宫|maze|射击|shoot|fps|生存|boss|关卡|穿越火线|cf)/i;
+const CREATE_WEB_REQUEST_PATTERN = /(网页|web|网站|前端|html|css|react|vue|vite|dashboard|landing\s*page)/i;
+const CREATE_API_REQUEST_PATTERN = /(接口|api|后端|backend|server|服务|fastapi|flask|django|express|node)/i;
+const CREATE_SCRIPT_REQUEST_PATTERN = /(脚本|script|cli|工具|tool|自动化|automation|爬虫|crawler|parser|转换|converter|generator)/i;
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
+    if ((hostname === "localhost" || hostname === "127.0.0.1") && window.location.port === "5173") {
+        return `${protocol}//${hostname}:8000`;
+    }
     if ((protocol === "http:" || protocol === "https:") && hostname) {
         return origin;
     }
@@ -37,6 +63,15 @@ function nowIso() {
 
 function normalizePermissionMode(value) {
     return VALID_PERMISSION_MODES.includes(value) ? value : "ask";
+}
+
+function filterHarnessSkills(skills) {
+    return (Array.isArray(skills) ? skills : []).filter((skill) => {
+        if (!skill?.name) {
+            return false;
+        }
+        return skill.protected || HARNESS_ALLOWED_LOCAL_SKILLS.has(skill.name);
+    });
 }
 
 function normalizeTodo(todo) {
@@ -64,6 +99,249 @@ function normalizeTodo(todo) {
     return {
         items,
         completed: Boolean(todo.completed) || items.every((item) => item.done),
+    };
+}
+
+const HARNESS_ROLES = ["Planner", "Search", "Generator", "Runner", "Evaluator"];
+
+function normalizeHarnessRole(role) {
+    return HARNESS_ROLES.includes(role) ? role : "Generator";
+}
+
+function normalizeUserEvent(event) {
+    if (!event || typeof event !== "object") {
+        return null;
+    }
+    return {
+        type: String(event.type || "").trim(),
+        severity: String(event.severity || "info").trim(),
+        title: String(event.title || "").trim(),
+        summary: String(event.summary || "").trim(),
+        details: String(event.details || "").trim(),
+        recommendedAction: String(event.recommended_action || event.recommendedAction || "").trim(),
+        debugRef: String(event.debug_ref || event.debugRef || "").trim(),
+        hiddenByDefault: Boolean(event.hiddenByDefault),
+    };
+}
+
+function normalizeDisplaySummary(summary) {
+    if (!summary || typeof summary !== "object") {
+        return null;
+    }
+    return {
+        title: String(summary.title || "").trim(),
+        status: String(summary.status || "info").trim(),
+        summary: String(summary.summary || "").trim(),
+        highlights: Array.isArray(summary.highlights)
+            ? summary.highlights.map((item) => String(item || "").trim()).filter(Boolean)
+            : [],
+        nextStep: String(summary.next_step || summary.nextStep || "").trim(),
+        userVisible: summary.user_visible !== false,
+    };
+}
+
+function normalizeHarnessDecision(decision) {
+    if (!decision || typeof decision !== "object") {
+        return null;
+    }
+    return {
+        decision: String(decision.decision || "").trim(),
+        reason: String(decision.reason || "").trim(),
+        nextState: String(decision.next_state || "").trim(),
+        nextAgent: String(decision.next_agent || "").trim(),
+        roundId: Number(decision.round_id) || 0,
+        budgetRemaining: decision.budget_remaining && typeof decision.budget_remaining === "object"
+            ? { ...decision.budget_remaining }
+            : {},
+    };
+}
+
+function userFacingStep(step) {
+    const userEvent = normalizeUserEvent(step?.user_event || step?.userEvent);
+    if (userEvent?.title) {
+        return {
+            role: normalizeHarnessRole(step?.role),
+            status: step?.status || (userEvent.severity === "warning" ? "error" : "running"),
+            title: userEvent.title,
+            detail: userEvent.summary || userEvent.details || "",
+            evidence: userEvent.details || userEvent.debugRef || "",
+            recommendedAction: userEvent.recommendedAction || "",
+        };
+    }
+
+    const displaySummary = normalizeDisplaySummary(step?.display_summary || step?.displaySummary);
+    if (displaySummary?.title) {
+        return {
+            role: normalizeHarnessRole(step?.role),
+            status: step?.status || displaySummary.status || "success",
+            title: displaySummary.title,
+            detail: displaySummary.summary || "",
+            evidence: displaySummary.highlights.join(" · "),
+            recommendedAction: displaySummary.nextStep || "",
+        };
+    }
+
+    const role = normalizeHarnessRole(step?.role);
+    const rawTitle = String(step?.title || "");
+    const rawDetail = String(step?.detail || "");
+    const rawEvidence = String(step?.evidence || "");
+    const combined = `${rawTitle}\n${rawDetail}\n${rawEvidence}`;
+
+    if (/Locator can't be used in 'await'|object Locator/i.test(combined)) {
+        return {
+            role,
+            status: "error",
+            title: "自动化验证脚本出错",
+            detail: "页面验证脚本的点击写法有问题，这通常不是业务代码错误。",
+            evidence: "Playwright locator() 不应直接 await；技术细节已放入日志。",
+        };
+    }
+
+    if (/max iterations reached without verdict/i.test(combined)) {
+        return {
+            role: "Evaluator",
+            status: "error",
+            title: "验收未完成",
+            detail: "自动化验收没有在预算内得到有效结论，需要带证据重新验证。",
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/^执行\s+bash/i.test(rawTitle)) {
+        return {
+            role: "Runner",
+            status: step.status || "running",
+            title: "运行命令",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/bash\s+完成/i.test(rawTitle)) {
+        return {
+            role: "Runner",
+            status: step.status || "success",
+            title: "命令执行完成",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/bash\s+失败/i.test(rawTitle)) {
+        return {
+            role: "Runner",
+            status: "error",
+            title: "命令执行失败",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/执行\s+str_replace_editor/i.test(rawTitle)) {
+        return {
+            role: "Generator",
+            status: step.status || "running",
+            title: "修改文件",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/str_replace_editor\s+完成/i.test(rawTitle)) {
+        return {
+            role: "Generator",
+            status: step.status || "success",
+            title: "文件修改完成",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/执行\s+(web_search|advanced_web_search)/i.test(rawTitle)) {
+        return {
+            role: "Search",
+            status: step.status || "running",
+            title: "检索外部资料",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    if (/执行\s+(computer|code_sandbox)/i.test(rawTitle)) {
+        return {
+            role: "Runner",
+            status: step.status || "running",
+            title: "验证页面行为",
+            detail: rawDetail,
+            evidence: rawEvidence,
+        };
+    }
+
+    return {
+        role,
+        status: step?.status || "running",
+        title: rawTitle || "处理中",
+        detail: rawDetail,
+        evidence: rawEvidence,
+        recommendedAction: "",
+    };
+}
+
+function normalizeAgentProcess(process) {
+    const source = process && typeof process === "object" ? process : {};
+    const roleState = {};
+    HARNESS_ROLES.forEach((role) => {
+        const current = source.roles?.[role] || {};
+        roleState[role] = {
+            status: current.status || "pending",
+            title: current.title || "",
+            detail: current.detail || "",
+            evidence: current.evidence || "",
+            updatedAt: current.updatedAt || null,
+        };
+    });
+    const events = Array.isArray(source.events)
+        ? source.events
+            .filter((event) => event && typeof event === "object")
+            .slice(-24)
+            .map((event) => {
+                const friendly = userFacingStep(event);
+                return {
+                    role: friendly.role,
+                    status: friendly.status || "running",
+                    title: String(friendly.title || "").slice(0, 120),
+                    detail: String(friendly.detail || "").slice(0, 260),
+                    evidence: String(friendly.evidence || "").slice(0, 320),
+                    timestamp: event.timestamp || nowIso(),
+                };
+            })
+        : [];
+    const latestErrorEvent = [...events].reverse().find((event) => event.status === "error") || null;
+    return {
+        roles: roleState,
+        events,
+        statusLine: String(source.statusLine || ""),
+        currentIssue: latestErrorEvent
+            ? {
+                title: latestErrorEvent.title || "",
+                detail: latestErrorEvent.detail || "",
+                evidence: latestErrorEvent.evidence || "",
+            }
+            : source.currentIssue && typeof source.currentIssue === "object"
+            ? {
+                title: String(source.currentIssue.title || ""),
+                detail: String(source.currentIssue.detail || ""),
+                evidence: String(source.currentIssue.evidence || ""),
+            }
+            : null,
+        nextAction: String(source.nextAction || ""),
+        latestSummary: source.latestSummary && typeof source.latestSummary === "object"
+            ? normalizeDisplaySummary(source.latestSummary)
+            : null,
+        decision: source.decision && typeof source.decision === "object"
+            ? normalizeHarnessDecision(source.decision)
+            : null,
+        roundId: Number(source.roundId || 0),
     };
 }
 
@@ -145,6 +423,11 @@ function normalizeEntry(entry) {
         pendingPlaceholder: Boolean(entry.pendingPlaceholder),
         elapsedLabel: typeof entry.elapsedLabel === "string" ? entry.elapsedLabel : null,
         todo: normalizeTodo(entry.todo),
+        agentProcess: entry.agentProcess ? normalizeAgentProcess(entry.agentProcess) : null,
+        userEvent: normalizeUserEvent(entry.userEvent || entry.user_event),
+        displaySummary: normalizeDisplaySummary(entry.displaySummary || entry.display_summary),
+        harnessDecision: normalizeHarnessDecision(entry.harnessDecision || entry.harness_decision),
+        guidedChoice: entry.guidedChoice && typeof entry.guidedChoice === "object" ? entry.guidedChoice : null,
         timestamp: entry.timestamp || nowIso(),
         streaming: Boolean(entry.streaming),
         images: compactTranscriptImages(entry.images),
@@ -207,6 +490,125 @@ function upgradeSession(session) {
 
 function isSimpleChat(content) {
     return /^(hi|hello|hey|你好|嗨|在吗|早上好|下午好|晚上好)\W*$/i.test((content || "").trim());
+}
+
+function buildCreateGuidedQuestions(content) {
+    const text = String(content || "").trim();
+    if (!text) {
+        return [];
+    }
+    const questions = [];
+    const hasWebPlatform = /(web|网页|浏览器|html|canvas|webgl|three\.?js|phaser|react|vite)/i.test(text);
+    const hasDesktopPlatform = /(桌面|desktop|electron|pc客户端)/i.test(text);
+    const hasMobilePlatform = /(移动端|mobile|ios|android|手机)/i.test(text);
+    const hasSingleMode = /(单人|single\s*-?player|solo|pve)/i.test(text);
+    const hasMultiMode = /(多人|联机|在线|online|coop|co-op|局域网|pvp)/i.test(text);
+    const hasGameStack = /(three\.?js|phaser|canvas|webgl|babylon|unity)/i.test(text);
+    const hasFrontendStack = /(react|vue|svelte|next\.?js|nuxt|html|vite)/i.test(text);
+    const hasBackendStack = /(fastapi|flask|django|express|nest|spring|laravel)/i.test(text);
+    const hasScriptRuntime = /(python|node|bun|deno|bash|shell)/i.test(text);
+    const prefers3d = /(3d|fps|第一人称|third\s*-?person|穿越火线|cf|zombie|僵尸|three\.?js|webgl)/i.test(text);
+
+    if (CREATE_GAME_REQUEST_PATTERN.test(text)) {
+        if (!hasWebPlatform && !hasDesktopPlatform && !hasMobilePlatform) {
+            questions.push({
+                key: "platform",
+                title: "你希望这个游戏运行在哪个平台？",
+                description: "5 秒内不选择会自动采用默认方案。",
+                options: [
+                    { value: "Web 浏览器", label: "Web 浏览器", hint: "HTML5 / WebGL，最容易直接预览", isDefault: true },
+                    { value: "桌面端 Electron", label: "桌面端", hint: "适合封装成本地客户端" },
+                    { value: "移动端 H5", label: "移动端", hint: "优先触屏与竖屏适配" },
+                ],
+                defaultValue: "Web 浏览器",
+            });
+        }
+        if (!hasSingleMode && !hasMultiMode) {
+            questions.push({
+                key: "mode",
+                title: "你希望优先实现哪种玩法模式？",
+                description: "默认先做最容易跑通的主流方案。",
+                options: [
+                    { value: "单人模式", label: "单人模式", hint: "先做 AI 敌人与可玩主循环", isDefault: true },
+                    { value: "多人在线模式", label: "多人在线", hint: "需要房间、同步和服务器支持" },
+                    { value: "单人 + 多人", label: "两种都要", hint: "范围更大，开发时间更长" },
+                ],
+                defaultValue: "单人模式",
+            });
+        }
+        if (!hasGameStack) {
+            questions.push({
+                key: "stack",
+                title: "你希望优先使用什么技术栈？",
+                description: "默认会选最贴近当前任务体验的方案。",
+                options: prefers3d
+                    ? [
+                        { value: "Three.js（3D）", label: "Three.js（3D）", hint: "适合 FPS / 3D 场景", isDefault: true },
+                        { value: "Phaser.js（2.5D / 2D）", label: "Phaser.js", hint: "开发效率更高" },
+                        { value: "纯 JavaScript + Canvas", label: "纯 JS + Canvas", hint: "零依赖，适合轻量原型" },
+                    ]
+                    : [
+                        { value: "Phaser.js（2.5D / 2D）", label: "Phaser.js", hint: "适合快速做可玩原型", isDefault: true },
+                        { value: "Three.js（3D）", label: "Three.js（3D）", hint: "更强的 3D 表现" },
+                        { value: "纯 JavaScript + Canvas", label: "纯 JS + Canvas", hint: "实现更轻量" },
+                    ],
+                defaultValue: prefers3d ? "Three.js（3D）" : "Phaser.js（2.5D / 2D）",
+            });
+        }
+    } else if (CREATE_WEB_REQUEST_PATTERN.test(text) && !hasFrontendStack) {
+        questions.push({
+            key: "frontend_stack",
+            title: "你希望这个页面优先用什么前端方案？",
+            description: "默认采用当前项目里最顺手的主流方案。",
+            options: [
+                { value: "React + Vite", label: "React + Vite", hint: "当前项目前端就是这个栈", isDefault: true },
+                { value: "纯 HTML + CSS + JavaScript", label: "纯 HTML", hint: "更轻量，适合单页原型" },
+                { value: "Vue + Vite", label: "Vue + Vite", hint: "适合组件化页面" },
+            ],
+            defaultValue: "React + Vite",
+        });
+    } else if (CREATE_API_REQUEST_PATTERN.test(text) && !hasBackendStack) {
+        questions.push({
+            key: "backend_stack",
+            title: "你希望这个后端优先用什么框架？",
+            description: "默认采用最主流、也最适合当前仓库的方案。",
+            options: [
+                { value: "FastAPI", label: "FastAPI", hint: "Python API 开发很高效", isDefault: true },
+                { value: "Flask", label: "Flask", hint: "更轻量的 Python 后端" },
+                { value: "Express", label: "Express", hint: "Node.js 生态更常见" },
+            ],
+            defaultValue: "FastAPI",
+        });
+    } else if (CREATE_SCRIPT_REQUEST_PATTERN.test(text) && !hasScriptRuntime) {
+        questions.push({
+            key: "script_runtime",
+            title: "你希望这个工具优先用什么运行时？",
+            description: "默认会选最通用、最容易维护的方案。",
+            options: [
+                { value: "Python", label: "Python", hint: "适合自动化、解析和脚本工具", isDefault: true },
+                { value: "Node.js", label: "Node.js", hint: "适合 CLI 和工程脚本" },
+                { value: "Bash", label: "Bash", hint: "适合简单串联命令" },
+            ],
+            defaultValue: "Python",
+        });
+    }
+
+    return questions.slice(0, 3);
+}
+
+function buildCreateGuidedRequest(baseContent, answers) {
+    const normalized = String(baseContent || "").trim();
+    const lines = Object.values(answers || {}).map((item) => {
+        if (!item?.label) {
+            return null;
+        }
+        const suffix = item.autoSelected ? "（默认主流方案）" : "";
+        return `- ${item.title}：${item.label}${suffix}`;
+    }).filter(Boolean);
+    if (!lines.length) {
+        return normalized;
+    }
+    return `${normalized}\n\n补充实现约束（来自 Create 引导问题，请按这些选择继续实现）：\n${lines.join("\n")}`;
 }
 
 function buildContextPayload(toolContext, workspacePath) {
@@ -380,21 +782,36 @@ function detectPreviewUrls(session) {
 function scoreWorkspaceHtmlFile(f) {
     const p = String(f.path || "").toLowerCase();
     const ins = Number(f.insertions) || 0;
+    const mtime = Number(f.mtime) || 0;
     if (p.endsWith("index.html")) {
-        return 1_000_000 + ins;
+        return 1_000_000 + ins + mtime / 1_000_000;
     }
     if (p.includes("jump") || p.includes("game") || p.includes("play")) {
-        return 500_000 + ins;
+        return 500_000 + ins + mtime / 1_000_000;
     }
-    return ins;
+    return ins + mtime / 1_000_000;
 }
 
 /** All workspace .html/.htm entries as /preview/local-file URLs, best-first (for multi-artifact picker). */
 function buildWorkspaceHtmlPreviewEntries(workspaceChanges, apiBase) {
-    if (!workspaceChanges?.isGit || !Array.isArray(workspaceChanges.files) || !apiBase) {
+    if (!workspaceChanges || !apiBase) {
         return [];
     }
-    const htmlFiles = workspaceChanges.files.filter((f) => /\.html?$/i.test(String(f.path || "")));
+    const candidates = [
+        ...(Array.isArray(workspaceChanges.previewFiles) ? workspaceChanges.previewFiles : []),
+        ...(Array.isArray(workspaceChanges.files) ? workspaceChanges.files : []),
+    ];
+    const seenPaths = new Set();
+    const htmlFiles = candidates.filter((f) => {
+        const path = String(f.path || "");
+        const hostPath = String(f.absolute_path || "");
+        const key = hostPath || path;
+        if (!/\.html?$/i.test(path) || !hostPath || seenPaths.has(key)) {
+            return false;
+        }
+        seenPaths.add(key);
+        return true;
+    });
     if (!htmlFiles.length) {
         return [];
     }
@@ -446,6 +863,42 @@ function buildPreviewArtifactOptions(detectedUrls, workspaceChanges, apiBase) {
     return out;
 }
 
+function firstUserPrompt(session) {
+    const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+    const entry = transcript.find((item) => item?.role === "user" && typeof item.content === "string" && item.content.trim());
+    return entry?.content?.trim() || "";
+}
+
+function latestAssistantSummary(session) {
+    const transcript = Array.isArray(session?.transcript) ? [...session.transcript] : [];
+    const entry = transcript.reverse().find((item) => item?.role === "assistant" && item?.kind === "assistant_text" && typeof item.content === "string" && item.content.trim());
+    if (!entry?.content) {
+        return "";
+    }
+    return entry.content.replace(/\s+/g, " ").slice(0, 180).trim();
+}
+
+function inferProjectTags(session, previewUrl) {
+    const source = `${session?.title || ""} ${firstUserPrompt(session)} ${previewUrl || ""}`.toLowerCase();
+    const tags = [];
+    if (/(game|游戏|zombie|僵尸|fps|maze|迷宫)/i.test(source)) tags.push("游戏");
+    if (/(react|vue|html|网页|web|dashboard|landing)/i.test(source)) tags.push("网页");
+    if (/(tool|工具|script|脚本|automation|自动化)/i.test(source)) tags.push("工具");
+    if (!tags.length) tags.push("创意原型");
+    return tags.slice(0, 3);
+}
+
+function buildRemixPrompt(project) {
+    const lines = [
+        `二次创作这个已发布作品：${project.title}`,
+        project.prompt ? `原始需求：${project.prompt}` : null,
+        project.description ? `当前作品说明：${project.description}` : null,
+        project.preview_url ? `参考预览：${project.preview_url}` : null,
+        "请保留核心玩法，但做出明显的创意改造，并优先生成一个稳定、可运行、可继续发布的新版本。",
+    ].filter(Boolean);
+    return lines.join("\n");
+}
+
 function App() {
     const [settings, setSettings] = useState({
         apiUrl: resolveDefaultApiBaseUrl(),
@@ -481,6 +934,8 @@ function App() {
     const [composerHistoryDraft, setComposerHistoryDraft] = useState("");
     const [isSending, setIsSending] = useState(false);
     const [requestIndicator, setRequestIndicator] = useState(null);
+    const [guidedCreateFlow, setGuidedCreateFlow] = useState(null);
+    const [guidedChoiceNow, setGuidedChoiceNow] = useState(() => Date.now());
     const [requestTimerNow, setRequestTimerNow] = useState(() => Date.now());
     const [completedLabel, setCompletedLabel] = useState(null);
     const [justSentSessionId, setJustSentSessionId] = useState(null);
@@ -502,16 +957,24 @@ function App() {
     const [previewUrl, setPreviewUrl] = useState("");
     const [previewNonce, setPreviewNonce] = useState(0);
     const [publishToast, setPublishToast] = useState("");
+    const [publishedProjects, setPublishedProjects] = useState([]);
+    const [leaderboardProjects, setLeaderboardProjects] = useState([]);
+    const [discoverTab, setDiscoverTab] = useState("discover");
+    const [createHubOpen, setCreateHubOpen] = useState(false);
+    const [publishingProject, setPublishingProject] = useState(false);
     const [workspaceChanges, setWorkspaceChanges] = useState({
         isGit: false,
         changedFiles: 0,
         insertions: 0,
         deletions: 0,
         files: [],
+        previewFiles: [],
     });
 
     const messageInputRef = useRef(null);
     const chatMessagesRef = useRef(null);
+    const shouldStickToBottomRef = useRef(true);
+    const previewDismissedKeyRef = useRef("");
     const sessionsRef = useRef([]);
     const currentSessionIdRef = useRef(null);
     const settingsRef = useRef(settings);
@@ -556,7 +1019,8 @@ function App() {
         try {
             const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
             if (stored) {
-                setSettings((current) => ({ ...current, ...stored }));
+                const { workspacePath: _legacyWorkspacePath, ...storedSettings } = stored;
+                setSettings((current) => ({ ...current, ...storedSettings }));
                 if (typeof stored.thinkingMode === "boolean") {
                     setThinkingMode(stored.thinkingMode);
                 }
@@ -565,10 +1029,6 @@ function App() {
                 }
                 if (stored.toolContext) {
                     setToolContext(stored.toolContext);
-                }
-                if (stored.workspacePath) {
-                    setWorkspacePath(stored.workspacePath);
-                    setWorkspaceDraftPath(stored.workspacePath);
                 }
                 if (Array.isArray(stored.selectedSkills) && stored.selectedSkills.length > 0) {
                     setSelectedSkills(stored.selectedSkills);
@@ -614,19 +1074,10 @@ function App() {
             permissionMode,
             thinkingMode,
             toolContext,
-            workspacePath,
             selectedSkills,
             selectedModel
         }));
-    }, [permissionMode, thinkingMode, toolContext, workspacePath, selectedSkills, selectedModel]);
-
-    // Persist workspace path, selected model and active todo back to the current session whenever they change
-    useEffect(() => {
-        if (!currentSessionId) return;
-        updateSessionById(currentSessionId, (sess) => {
-            sess.workspacePath = workspacePath;
-        }, { touchUpdatedAt: false });
-    }, [workspacePath, currentSessionId]);
+    }, [permissionMode, thinkingMode, toolContext, selectedSkills, selectedModel]);
 
     useEffect(() => {
         if (!currentSessionId || !selectedModel) return;
@@ -649,13 +1100,14 @@ function App() {
     }, [sessions, currentSessionId]);
 
     const currentSession = sessions.find((session) => session.id === currentSessionId) || null;
-    const activeWorkspacePath = workspacePath || runtime?.work_dir || "";
+    const activeWorkspacePath = workspacePath || "";
     const detectedPreviewUrls = detectPreviewUrls(currentSession);
     const previewArtifactOptions = buildPreviewArtifactOptions(
         detectedPreviewUrls,
         workspaceChanges,
         settings.apiUrl,
     );
+    const previewAutoOpenKey = `${currentSessionId || ""}:${previewArtifactOptions.map((option) => option.url).join("|")}`;
     const activePreviewUrl = previewUrl || previewArtifactOptions[0]?.url || "";
     const previewHeadline = activePreviewUrl
         ? (activePreviewUrl.includes("/preview/local-file")
@@ -673,6 +1125,7 @@ function App() {
         ? Math.min(98, (threadContextTokens / threadContextMaxTokens) * 100)
         : 0;
     const threadTurnCount = (currentSession?.transcript || []).filter((entry) => entry?.role === "user").length;
+    const discoverProjects = discoverTab === "leaderboard" ? leaderboardProjects : publishedProjects;
     const fileChangeSummary = {
         visible: workspaceChanges.isGit && workspaceChanges.changedFiles > 0,
         changedFiles: workspaceChanges.changedFiles || 0,
@@ -711,8 +1164,25 @@ function App() {
     }
 
     useEffect(() => {
-        if (!chatMessagesRef.current) return;
-        chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+        const el = chatMessagesRef.current;
+        if (!el) return undefined;
+        const updateStickiness = () => {
+            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            shouldStickToBottomRef.current = distanceFromBottom < 140;
+        };
+        updateStickiness();
+        el.addEventListener("scroll", updateStickiness, { passive: true });
+        return () => el.removeEventListener("scroll", updateStickiness);
+    }, [currentSessionId]);
+
+    useEffect(() => {
+        const el = chatMessagesRef.current;
+        if (!el || !shouldStickToBottomRef.current) return;
+        requestAnimationFrame(() => {
+            if (shouldStickToBottomRef.current) {
+                el.scrollTop = el.scrollHeight;
+            }
+        });
     }, [currentSession?.updatedAt, logsOpen]);
 
     useEffect(() => {
@@ -727,15 +1197,32 @@ function App() {
     }, [requestIndicator?.active, requestIndicator?.startedAt]);
 
     useEffect(() => {
+        if (!guidedCreateFlow?.entryId || !guidedCreateFlow?.deadlineAt) {
+            return undefined;
+        }
+        setGuidedChoiceNow(Date.now());
+        const ticker = window.setInterval(() => {
+            setGuidedChoiceNow(Date.now());
+        }, 200);
+        const timeout = window.setTimeout(() => {
+            resolveGuidedCreateChoice(guidedCreateFlow.entryId, guidedCreateFlow.questions?.[guidedCreateFlow.currentIndex]?.defaultValue, true);
+        }, Math.max(0, guidedCreateFlow.deadlineAt - Date.now()));
+        return () => {
+            window.clearInterval(ticker);
+            window.clearTimeout(timeout);
+        };
+    }, [guidedCreateFlow?.entryId, guidedCreateFlow?.deadlineAt, guidedCreateFlow?.currentIndex]);
+
+    useEffect(() => {
         setComposerHistoryIndex(null);
         setComposerHistoryDraft("");
     }, [currentSessionId]);
 
     useEffect(() => {
         refreshRuntime();
-        refreshWorkspaceState();
         fetchSkillCatalog();
         refreshArchitectureManifest();
+        refreshPublishedProjects();
     }, []);
 
     useEffect(() => {
@@ -790,13 +1277,11 @@ function App() {
         if (currentSessionId) {
             hydrateSessionLocation(currentSessionId);
             refreshSessionContextState(currentSessionId);
-            // Restore per-session workspace and todo state
+            setWorkspacePath("");
+            setWorkspaceDraftPath("");
+            refreshWorkspaceState(currentSessionId);
             const sess = sessionsRef.current.find((s) => s.id === currentSessionId);
             if (sess) {
-                if (typeof sess.workspacePath === "string") {
-                    setWorkspacePath(sess.workspacePath);
-                    setWorkspaceDraftPath(sess.workspacePath);
-                }
                 if (sess.selectedModel) {
                     setSelectedModel(sess.selectedModel);
                 }
@@ -818,6 +1303,17 @@ function App() {
         });
     }, [currentSessionId, detectedPreviewUrls, workspaceChanges]);
 
+    // 自动打开 Preview 面板当检测到 URL 或工作区 HTML 时
+    useEffect(() => {
+        if (
+            previewArtifactOptions.length > 0
+            && !previewOpen
+            && previewDismissedKeyRef.current !== previewAutoOpenKey
+        ) {
+            setPreviewOpen(true);
+        }
+    }, [previewArtifactOptions, previewAutoOpenKey, previewOpen]);
+
     useEffect(() => {
         if (!activeWorkspacePath) {
             setWorkspaceChanges({
@@ -826,6 +1322,7 @@ function App() {
                 insertions: 0,
                 deletions: 0,
                 files: [],
+                previewFiles: [],
             });
             return;
         }
@@ -846,6 +1343,7 @@ function App() {
                     insertions: payload.insertions || 0,
                     deletions: payload.deletions || 0,
                     files: payload.files || [],
+                    previewFiles: payload.preview_files || [],
                 });
             } catch (error) {
                 if (!cancelled) {
@@ -1079,11 +1577,6 @@ function App() {
                 : [runtimePayload.runtime?.model || "MiniMax-M2"];
             setAvailableModels(modelOptions);
             setSelectedModel((current) => modelOptions.includes(current) ? current : (runtimePayload.runtime?.model || modelOptions[0] || "MiniMax-M2"));
-            const runtimeWorkspace = runtimePayload.runtime?.work_dir || "";
-            if (runtimeWorkspace) {
-                setWorkspacePath(runtimeWorkspace);
-                setWorkspaceDraftPath((current) => current || runtimeWorkspace);
-            }
             setRuntimeStatus(health.status === "ok" ? "Runtime online" : "Runtime degraded");
             refreshArchitectureManifest();
         } catch (error) {
@@ -1112,7 +1605,7 @@ function App() {
                 throw new Error(`HTTP ${response.status}`);
             }
             const payload = await response.json();
-            const skills = payload.skills || [];
+            const skills = filterHarnessSkills(payload.skills || []);
             setSkillCatalog(skills);
             setSelectedSkills((current) => {
                 const available = new Set(skills.map((skill) => skill.name));
@@ -1127,6 +1620,22 @@ function App() {
         }
     }
 
+    async function refreshPublishedProjects() {
+        try {
+            const response = await fetch(`${settingsRef.current.apiUrl}/published-projects`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            setPublishedProjects(Array.isArray(payload.discover) ? payload.discover : []);
+            setLeaderboardProjects(Array.isArray(payload.leaderboard) ? payload.leaderboard : []);
+        } catch (error) {
+            console.debug("Failed to load published projects", error);
+            setPublishedProjects([]);
+            setLeaderboardProjects([]);
+        }
+    }
+
     async function reloadSkillCatalog() {
         const response = await fetch(`${settingsRef.current.apiUrl}/skills/reload`, { method: "POST" });
         if (!response.ok) {
@@ -1134,7 +1643,7 @@ function App() {
             throw new Error(body.error || `HTTP ${response.status}`);
         }
         const payload = await response.json();
-        const skills = payload.skills || [];
+        const skills = filterHarnessSkills(payload.skills || []);
         setSkillCatalog(skills);
         setSelectedSkills((current) => {
             const available = new Set(skills.map((skill) => skill.name));
@@ -1154,7 +1663,7 @@ function App() {
         if (!response.ok || !payload.success) {
             throw new Error(payload.error || `HTTP ${response.status}`);
         }
-        const skills = payload.skills || [];
+        const skills = filterHarnessSkills(payload.skills || []);
         setSkillCatalog(skills);
         setSelectedSkills((current) => {
             const available = new Set(skills.map((skill) => skill.name));
@@ -1171,7 +1680,7 @@ function App() {
         if (!response.ok || !payload.success) {
             throw new Error(payload.error || `HTTP ${response.status}`);
         }
-        const skills = payload.skills || [];
+        const skills = filterHarnessSkills(payload.skills || []);
         setSkillCatalog(skills);
         setSelectedSkills((current) => {
             const available = new Set(skills.map((s) => s.name));
@@ -1179,16 +1688,21 @@ function App() {
         });
     }
 
-    async function refreshWorkspaceState() {
+    async function refreshWorkspaceState(sessionId = currentSessionId) {
         try {
-            const response = await fetch(`${settingsRef.current.apiUrl}/workspace`);
+            const params = new URLSearchParams();
+            if (sessionId) {
+                params.set("session_id", sessionId);
+            }
+            const suffix = params.toString() ? `?${params.toString()}` : "";
+            const response = await fetch(`${settingsRef.current.apiUrl}/workspace${suffix}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
             const payload = await response.json();
             const nextPath = payload.workspace?.path || "";
             if (nextPath) {
-                setWorkspacePath(nextPath);
+                setWorkspacePath((current) => current || nextPath);
                 setWorkspaceDraftPath((current) => current || nextPath);
             }
         } catch (error) {
@@ -1203,6 +1717,8 @@ function App() {
             const params = new URLSearchParams();
             if (nextPath) {
                 params.set("path", nextPath);
+            } else if (currentSessionId) {
+                params.set("session_id", currentSessionId);
             }
             const response = await fetch(`${settingsRef.current.apiUrl}/workspace/browser?${params.toString()}`);
             if (!response.ok) {
@@ -1222,7 +1738,7 @@ function App() {
 
     async function openWorkspaceModal() {
         setWorkspaceModalOpen(true);
-        const initialPath = workspacePath || runtime?.work_dir || "";
+        const initialPath = workspacePath || "";
         setWorkspaceDraftPath(initialPath);
         await browseWorkspace(initialPath);
     }
@@ -1230,7 +1746,12 @@ function App() {
     async function openNativeWorkspacePicker() {
         setWorkspaceError("");
         try {
-            const response = await fetch(`${settingsRef.current.apiUrl}/workspace/pick`, {
+            const params = new URLSearchParams();
+            if (currentSessionId) {
+                params.set("session_id", currentSessionId);
+            }
+            const suffix = params.toString() ? `?${params.toString()}` : "";
+            const response = await fetch(`${settingsRef.current.apiUrl}/workspace/pick${suffix}`, {
                 method: "POST"
             });
             const payload = await response.json().catch(() => ({}));
@@ -1266,7 +1787,7 @@ function App() {
             const response = await fetch(`${settingsRef.current.apiUrl}/workspace`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ path: workspaceDraftPath.trim() })
+                body: JSON.stringify({ path: workspaceDraftPath.trim(), session_id: currentSessionId })
             });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok || payload.success === false) {
@@ -1563,26 +2084,157 @@ function App() {
         focusComposerWithCursor();
     }
 
-    async function sendMessage() {
-        if (isSending && sendingSessionIdRef.current === currentSessionId) return;
-        const rawInput = (messageInputRef.current?.value ?? "").trim();
-        const snapshotImages = [...composerImages];
-        const content = rawInput;
-        if (!rawInput && snapshotImages.length === 0) return;
-        if (!currentSessionId) return;
+    function clearComposerDraft() {
+        setComposerValue("");
+        setComposerImages([]);
+        setComposerHistoryIndex(null);
+        setComposerHistoryDraft("");
+    }
+
+    function appendUserTranscript(sessionId, content, snapshotImages) {
+        appendTranscriptEntry(sessionId, {
+            role: "user",
+            content,
+            kind: "user_text",
+            taskId: "main",
+            images: compactTranscriptImages(snapshotImages),
+        });
+        updateSessionById(sessionId, (session) => {
+            if (session.transcript.length <= 1) {
+                session.title = content.slice(0, 36) || "New thread";
+            }
+        });
+    }
+
+    function queueGuidedCreateQuestion(flow, index, answers) {
+        const question = flow.questions[index];
+        if (!question) {
+            setGuidedCreateFlow(null);
+            return;
+        }
+        const deadlineAt = Date.now() + CREATE_GUIDED_TIMEOUT_MS;
+        const entry = appendTranscriptEntry(flow.sessionId, {
+            role: "assistant",
+            content: question.title,
+            kind: "guided_choice",
+            taskId: "main",
+            guidedChoice: {
+                ...question,
+                status: "pending",
+                questionIndex: index + 1,
+                questionCount: flow.questions.length,
+                deadlineAt,
+            },
+        });
+        setGuidedCreateFlow({
+            ...flow,
+            currentIndex: index,
+            answers,
+            entryId: entry.id,
+            deadlineAt,
+        });
+    }
+
+    function startGuidedCreateFlow(sessionId, content, snapshotImages) {
+        const questions = buildCreateGuidedQuestions(content);
+        if (!questions.length) {
+            return false;
+        }
+        appendUserTranscript(sessionId, content, snapshotImages);
+        clearComposerDraft();
+        queueGuidedCreateQuestion({
+            sessionId,
+            baseContent: content,
+            snapshotImages,
+            questions,
+        }, 0, {});
+        return true;
+    }
+
+    function resolveGuidedCreateChoice(entryId, optionValue, autoSelected = false) {
+        const flow = guidedCreateFlow;
+        if (!flow || flow.entryId !== entryId) {
+            return;
+        }
+        const question = flow.questions[flow.currentIndex];
+        const option = question?.options?.find((item) => item.value === optionValue)
+            || question?.options?.find((item) => item.value === question.defaultValue)
+            || question?.options?.[0];
+        if (!question || !option) {
+            setGuidedCreateFlow(null);
+            return;
+        }
+        patchTranscriptEntry(flow.sessionId, flow.entryId, {
+            content: `${question.title}\n${autoSelected ? "已自动采用默认方案" : "已选择"}：${option.label}`,
+            guidedChoice: {
+                ...question,
+                status: "resolved",
+                selectedValue: option.value,
+                selectedLabel: option.label,
+                autoSelected,
+                questionIndex: flow.currentIndex + 1,
+                questionCount: flow.questions.length,
+            },
+        });
+        const nextAnswers = {
+            ...flow.answers,
+            [question.key]: {
+                title: question.title.replace(/[？?]$/, ""),
+                label: option.label,
+                value: option.value,
+                autoSelected,
+            },
+        };
+        const nextIndex = flow.currentIndex + 1;
+        if (nextIndex < flow.questions.length) {
+            queueGuidedCreateQuestion(flow, nextIndex, nextAnswers);
+            return;
+        }
+        setGuidedCreateFlow(null);
+        void sendMessage({
+            rawInput: flow.baseContent,
+            requestContent: buildCreateGuidedRequest(flow.baseContent, nextAnswers),
+            snapshotImages: flow.snapshotImages,
+            sessionId: flow.sessionId,
+            skipUserTranscript: true,
+            skipGuidedFlowLock: true,
+        });
+    }
+
+    async function sendMessage(options = {}) {
+        if (guidedCreateFlow && !options.skipGuidedFlowLock) {
+            return;
+        }
+        const targetSessionId = options.sessionId || currentSessionId;
+        if (isSending && sendingSessionIdRef.current === targetSessionId) return;
+        const rawInput = String(options.rawInput ?? messageInputRef.current?.value ?? "").trim();
+        const snapshotImages = Array.isArray(options.snapshotImages) ? [...options.snapshotImages] : [...composerImages];
+        const content = String(options.displayContent ?? rawInput).trim();
+        const requestContent = String(options.requestContent ?? rawInput).trim();
+        if (!content && snapshotImages.length === 0) return;
+        if (!targetSessionId) return;
+        if (
+            CREATE_GUIDED_FLOW_ENABLED
+            && !options.skipGuidedCreate
+            && mode === "create"
+            && content
+            && startGuidedCreateFlow(targetSessionId, content, snapshotImages)
+        ) {
+            return;
+        }
 
         const messageParts = [
-            ...(rawInput ? [{ type: "text", text: rawInput }] : []),
+            ...(requestContent ? [{ type: "text", text: requestContent }] : []),
             ...snapshotImages.map((image) => ({ type: "image", id: image.id, name: image.name, data_url: image.dataUrl })),
         ];
 
-        const sessionId = currentSessionId;
-        const requestMode = isSimpleChat(content) ? "agent" : mode;
+        const sessionId = targetSessionId;
+        const requestMode = mode;
         const effectiveSelectedSkills = requestMode === "create"
             ? Array.from(new Set([...selectedSkills, ...CREATE_MODE_SKILLS]))
             : selectedSkills;
         const effectivePermissionMode = normalizePermissionMode(permissionMode);
-        const { toolContext: selectedToolContext, context } = buildContextPayload("workspace", workspacePath || runtime?.work_dir || "");
+        const { toolContext: selectedToolContext, context } = buildContextPayload("workspace", "");
         sendingSessionIdRef.current = sessionId;
         setIsSending(true);
         setSessionBadges((prev) => ({ ...prev, [sessionId]: "working" }));
@@ -1602,25 +2254,14 @@ function App() {
         }
         setContextPercent(computeContextPercent(currentSession, toolContext));
 
-        appendTranscriptEntry(sessionId, {
-            role: "user",
-            content,
-            kind: "user_text",
-            taskId: "main",
-            images: compactTranscriptImages(snapshotImages),
-        });
-        updateSessionById(sessionId, (session) => {
-            if (session.transcript.length <= 1) {
-                session.title = content.slice(0, 36) || "New thread";
-            }
-        });
-        setComposerValue("");
-        setComposerImages([]);
-        setComposerHistoryIndex(null);
-        setComposerHistoryDraft("");
+        if (!options.skipUserTranscript) {
+            appendUserTranscript(sessionId, content, snapshotImages);
+        }
+        clearComposerDraft();
 
         let assistantEntry = null;
         let thinkingEntry = null;
+        let agentProcessEntry = null;
         let pendingTodo = null;
         let answerBuffer = "";
         let toolCallsReceived = 0;
@@ -1635,7 +2276,7 @@ function App() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     tool_name: "chat",
-                    message: content,
+                    message: requestContent,
                     session_id: sessionId,
                     permission_mode: effectivePermissionMode,
                     permission_confirmed: effectivePermissionMode !== "ask",
@@ -1643,12 +2284,11 @@ function App() {
                     mode: requestMode,
                     model: selectedModel,
                     tool_context: selectedToolContext,
-                    workspace_path: workspacePath || runtime?.work_dir || "",
                     enabled_skills: effectiveSelectedSkills,
                     message_parts: messageParts,
                     context,
                     parameters: {
-                        message: content,
+                        message: requestContent,
                         session_id: sessionId,
                         permission_mode: effectivePermissionMode,
                         permission_confirmed: effectivePermissionMode !== "ask",
@@ -1656,7 +2296,6 @@ function App() {
                         mode: requestMode,
                         model: selectedModel,
                         tool_context: selectedToolContext,
-                        workspace_path: workspacePath || runtime?.work_dir || "",
                         enabled_skills: effectiveSelectedSkills,
                         message_parts: messageParts,
                         context
@@ -1682,14 +2321,74 @@ function App() {
                     if (!nextTodo) {
                         return;
                     }
-                    const targetEntry = assistantEntry || thinkingEntry;
+                    const targetEntry = assistantEntry || agentProcessEntry || thinkingEntry;
                     if (!targetEntry?.id) {
                         return;
                     }
                     patchTranscriptEntry(sessionId, targetEntry.id, { todo: nextTodo });
+                    if (assistantEntry?.id && agentProcessEntry?.id && agentProcessEntry.id !== assistantEntry.id) {
+                        patchTranscriptEntry(sessionId, agentProcessEntry.id, { todo: null });
+                    }
                     if (assistantEntry?.id && thinkingEntry?.id && thinkingEntry.id !== assistantEntry.id) {
                         patchTranscriptEntry(sessionId, thinkingEntry.id, { todo: null });
                     }
+                };
+
+                const upsertAgentProcess = (step) => {
+                    const friendlyStep = userFacingStep(step);
+                    const role = normalizeHarnessRole(friendlyStep.role);
+                    const timestamp = step.timestamp || nowIso();
+                    const currentProcess = normalizeAgentProcess(agentProcessEntry?.agentProcess);
+                    const nextEvent = {
+                        role,
+                        status: friendlyStep.status || "running",
+                        title: friendlyStep.title || "Working",
+                        detail: friendlyStep.detail || "",
+                        evidence: friendlyStep.evidence || "",
+                        timestamp,
+                    };
+                    const nextProcess = normalizeAgentProcess({
+                        roles: {
+                            ...currentProcess.roles,
+                            [role]: {
+                                status: nextEvent.status,
+                                title: nextEvent.title,
+                                detail: nextEvent.detail,
+                                evidence: nextEvent.evidence,
+                                updatedAt: timestamp,
+                            },
+                        },
+                        events: [...(currentProcess.events || []), nextEvent],
+                        statusLine: step.statusLine || currentProcess.statusLine || "",
+                        currentIssue: nextEvent.status === "error"
+                            ? {
+                                title: nextEvent.title,
+                                detail: nextEvent.detail,
+                                evidence: nextEvent.evidence,
+                            }
+                            : step.currentIssue || (step.decision?.decision === "PASS" ? null : currentProcess.currentIssue),
+                        nextAction: step.nextAction || friendlyStep.recommendedAction || currentProcess.nextAction || "",
+                        latestSummary: normalizeDisplaySummary(step.displaySummary || step.display_summary) || currentProcess.latestSummary,
+                        decision: normalizeHarnessDecision(step.decision) || currentProcess.decision,
+                        roundId: Number(step.roundId || step.round_id || currentProcess.roundId || 0),
+                    });
+                    if (!agentProcessEntry) {
+                        agentProcessEntry = appendTranscriptEntry(sessionId, {
+                            role: "assistant",
+                            content: "",
+                            kind: "agent_process",
+                            taskId: "main",
+                            streaming: true,
+                            agentProcess: nextProcess,
+                        });
+                    } else {
+                        agentProcessEntry = { ...agentProcessEntry, agentProcess: nextProcess, streaming: true };
+                        patchTranscriptEntry(sessionId, agentProcessEntry.id, {
+                            agentProcess: nextProcess,
+                            streaming: true,
+                        });
+                    }
+                    syncTodoAttachment();
                 };
 
                 const appendThinkingTrace = (line) => {
@@ -1718,22 +2417,88 @@ function App() {
                     syncTodoAttachment();
                 };
 
-                if (payload.type === "task_start") {
-                    toolCallsReceived += 1;
+                if (payload.type === "agent_step") {
+                    upsertAgentProcess({
+                        ...payload,
+                        user_event: payload.user_event,
+                    });
                     setRequestIndicator((current) => current?.active ? {
                         ...current,
-                        label: `Running ${payload.skill || "tool"}`,
+                        label: userFacingStep(payload).title || "Working",
                     } : current);
-                    appendThinkingTrace(`- Running \`${payload.skill || "tool"}\``);
+                    return;
+                }
+
+                if (payload.type === "agent_summary") {
+                    const displaySummary = normalizeDisplaySummary(payload.display_summary);
+                    upsertAgentProcess({
+                        role: payload.role,
+                        status: displaySummary?.status === "warning" ? "error" : (displaySummary?.status || "success"),
+                        title: displaySummary?.title || `${payload.role || "Agent"} 输出已记录`,
+                        detail: displaySummary?.summary || "",
+                        evidence: (displaySummary?.highlights || []).join(" · "),
+                        displaySummary,
+                        statusLine: displaySummary?.title || "",
+                        nextAction: displaySummary?.nextStep || "",
+                        round_id: payload.round_id,
+                    });
+                    setRequestIndicator((current) => current?.active ? {
+                        ...current,
+                        label: displaySummary?.title || current.label,
+                    } : current);
+                    return;
+                }
+
+                if (payload.type === "harness_decision") {
+                    const decision = normalizeHarnessDecision(payload.decision);
+                    upsertAgentProcess({
+                        role: decision?.nextAgent && decision.nextAgent !== "None" ? decision.nextAgent : "Evaluator",
+                        status: decision?.decision === "PASS" ? "success" : "running",
+                        title: decision?.decision === "PASS" ? "任务已通过 Harness 验收" : "Harness 已决定下一步",
+                        detail: decision?.reason || "",
+                        decision,
+                        statusLine: decision?.decision === "PASS"
+                            ? `已完成 · 第 ${decision.roundId || 0} 轮`
+                            : `${decision?.decision || "处理中"} · 第 ${decision?.roundId || 0} 轮`,
+                        nextAction: decision?.nextAgent && decision.nextAgent !== "None"
+                            ? `下一步交由 ${decision.nextAgent}，进入 ${decision.nextState || "下一阶段"}`
+                            : "",
+                        round_id: decision?.roundId || 0,
+                    });
+                    if (decision?.decision) {
+                        setRequestIndicator((current) => current?.active ? {
+                            ...current,
+                            label: decision.decision === "PASS" ? "已完成验收" : "准备进入下一步",
+                        } : current);
+                    }
+                    return;
+                }
+
+                if (payload.type === "task_start") {
+                    toolCallsReceived += 1;
+                    const taskStep = userFacingStep(payload);
+                    setRequestIndicator((current) => current?.active ? {
+                        ...current,
+                        label: taskStep.title || "Working",
+                    } : current);
+                    if (!payload.agent_role) {
+                        upsertAgentProcess({
+                            ...payload,
+                            role: payload.skill === "bash" ? "Runner" : "Generator",
+                            status: "running",
+                        });
+                    }
                     return;
                 }
 
                 if (payload.type === "task_complete") {
-                    appendThinkingTrace(
-                        payload.success === false
-                            ? `- \`${payload.description || payload.skill || "tool"}\` failed`
-                            : `- \`${payload.description || payload.skill || "tool"}\` completed`
-                    );
+                    if (!payload.agent_role) {
+                        upsertAgentProcess({
+                            ...payload,
+                            role: payload.skill === "bash" ? "Runner" : "Generator",
+                            status: payload.success === false ? "error" : "success",
+                        });
+                    }
                     return;
                 }
 
@@ -1830,37 +2595,14 @@ function App() {
                 }
 
                 if (payload.type === "thinking_delta") {
-                    if (!thinkingMode) {
-                        return;
-                    }
-                    setRequestIndicator(null);
-                    const separator = thinkingEntry?.content && payload.delta && !String(thinkingEntry.content).endsWith("\n") && !String(payload.delta).startsWith("\n")
-                        ? "\n"
-                        : "";
-                    const nextThinking = normalizeDisplayText(
-                        `${thinkingEntry?.content || ""}${separator}${payload.delta || ""}`
-                    );
-                    if (!thinkingEntry) {
-                        thinkingEntry = appendTranscriptEntry(sessionId, {
-                            role: "assistant",
-                            content: nextThinking,
-                            kind: "thinking_text",
-                            taskId: "main",
-                            streaming: true
-                        });
-                    } else {
-                        thinkingEntry = { ...thinkingEntry, content: nextThinking, pendingPlaceholder: false };
-                        patchTranscriptEntry(sessionId, thinkingEntry.id, {
-                            content: nextThinking,
-                            streaming: true,
-                            pendingPlaceholder: false
-                        });
-                    }
-                    syncTodoAttachment();
+                    // Raw provider reasoning is intentionally not rendered as user-facing
+                    // process. The visible progress surface is `agent_step`, which is
+                    // structured, role-scoped, and safe to inspect.
                     return;
                 }
 
-                if (payload.type === "answer_delta" || payload.content) {
+                const isLegacyAnswerPayload = !payload.type && typeof payload.content === "string";
+                if (payload.type === "answer_delta" || isLegacyAnswerPayload) {
                     setRequestIndicator(null);
                     answerBuffer = normalizeDisplayText(`${answerBuffer}${payload.delta || payload.content || ""}`);
                     if (!answerBuffer.trim()) {
@@ -1926,6 +2668,12 @@ function App() {
                             pendingPlaceholder: false
                         });
                     }
+                    if (agentProcessEntry) {
+                        patchTranscriptEntry(sessionId, agentProcessEntry.id, {
+                            streaming: false,
+                            agentProcess: normalizeAgentProcess(agentProcessEntry.agentProcess),
+                        });
+                    }
                 }
             };
 
@@ -1963,6 +2711,12 @@ function App() {
                     pendingPlaceholder: false
                 });
             }
+            if (agentProcessEntry) {
+                patchTranscriptEntry(sessionId, agentProcessEntry.id, {
+                    streaming: false,
+                    agentProcess: normalizeAgentProcess(agentProcessEntry.agentProcess),
+                });
+            }
                 if (error.name === "AbortError") {
                     if (assistantEntry) {
                         patchTranscriptEntry(sessionId, assistantEntry.id, { streaming: false });
@@ -1984,10 +2738,10 @@ function App() {
                         isError: true,
                         taskId: "main",
                         streaming: false,
-                        todo: pendingTodo,
+                        todo: null,
                     });
                 }
-                if (assistantEntry?.id && pendingTodo) {
+                if (assistantEntry?.id && pendingTodo && !assistantEntry?.isError) {
                     patchTranscriptEntry(sessionId, assistantEntry.id, { todo: normalizeTodo(pendingTodo) });
                 }
         } finally {
@@ -2037,11 +2791,31 @@ function App() {
     }
 
     function stopGeneration() {
+        if (guidedCreateFlow?.entryId && guidedCreateFlow?.sessionId) {
+            patchTranscriptEntry(guidedCreateFlow.sessionId, guidedCreateFlow.entryId, {
+                content: `${guidedCreateFlow.questions?.[guidedCreateFlow.currentIndex]?.title || "Create 引导问题"}\n已取消本轮引导。`,
+                guidedChoice: {
+                    ...(guidedCreateFlow.questions?.[guidedCreateFlow.currentIndex] || {}),
+                    status: "cancelled",
+                },
+            });
+            setGuidedCreateFlow(null);
+            return;
+        }
         abortControllerRef.current?.abort();
     }
 
     function togglePreview() {
-        setPreviewOpen((current) => !current);
+        setPreviewOpen((current) => {
+            const next = !current;
+            previewDismissedKeyRef.current = next ? "" : previewAutoOpenKey;
+            return next;
+        });
+    }
+
+    function closePreviewPane() {
+        previewDismissedKeyRef.current = previewAutoOpenKey;
+        setPreviewOpen(false);
     }
 
     function refreshPreviewPane() {
@@ -2049,26 +2823,70 @@ function App() {
     }
 
     async function publishPreviewLink() {
-        const url = activePreviewUrl;
-        if (!url) {
+        if (!activePreviewUrl || !currentSession) {
             return;
         }
+        setPublishingProject(true);
         try {
-            await navigator.clipboard.writeText(url);
-            setPublishToast("预览链接已复制");
-        } catch {
-            try {
-                window.prompt("复制以下预览链接：", url);
-                setPublishToast("已弹出复制框");
-            } catch {
-                setPublishToast("");
+            const response = await fetch(`${settingsRef.current.apiUrl}/published-projects`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    session_id: currentSession.id,
+                    title: currentSession.title || "未命名作品",
+                    prompt: firstUserPrompt(currentSession),
+                    description: latestAssistantSummary(currentSession),
+                    preview_url: activePreviewUrl,
+                    preview_label: previewHeadline,
+                    workspace_path: activeWorkspacePath,
+                    mode,
+                    tags: inferProjectTags(currentSession, activePreviewUrl),
+                    remixable: true,
+                }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.ok === false) {
+                throw new Error(payload.error || `HTTP ${response.status}`);
             }
+            setPublishToast("作品已发布到发现页");
+            setDiscoverTab("discover");
+            await refreshPublishedProjects();
+        } catch (error) {
+            console.debug("Failed to publish project", error);
+            setPublishToast("发布失败，请稍后重试");
+        } finally {
+            setPublishingProject(false);
         }
         window.setTimeout(() => setPublishToast(""), 2400);
     }
 
+    function remixProject(project) {
+        const session = createEmptySession(`session_${Date.now()}`);
+        session.title = `${project.title} · 二创`;
+        updateSessions((previous) => [session, ...previous]);
+        setCurrentSessionId(session.id);
+        setMode("create");
+        setPreviewOpen(true);
+        setDiscoverTab("discover");
+        setCreateHubOpen(false);
+        const apiUrl = settingsRef.current.apiUrl || resolveDefaultApiBaseUrl();
+        fetch(`${apiUrl}/ui-sessions/${session.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(session),
+        }).catch(() => {});
+        requestAnimationFrame(() => {
+            setComposerValue(buildRemixPrompt(project));
+            focusComposerWithCursor();
+        });
+    }
+
     function focusFilesChanged() {
         setPreviewOpen(true);
+    }
+
+    function toggleCreateHub() {
+        setCreateHubOpen((current) => !current);
     }
 
     function handleComposerKeyDown(event) {
@@ -2186,7 +3004,6 @@ function App() {
             <main className={`workspace${previewOpen ? " workspace-split" : ""}`}>
                 <RuntimePills
                     mode={mode}
-                    setMode={setMode}
                     contextPercent={contextPercent}
                     contextTokens={contextTokens}
                     contextMaxTokens={contextMaxTokens}
@@ -2197,9 +3014,121 @@ function App() {
                     onExport={exportCurrentSession}
                     previewOpen={previewOpen}
                     onTogglePreview={togglePreview}
+                    createHubOpen={createHubOpen}
+                    onToggleCreateHub={toggleCreateHub}
                     fileChangeSummary={fileChangeSummary}
                     onFocusFiles={focusFilesChanged}
                 />
+
+                <section className={`create-hub-dropdown${createHubOpen ? " open" : ""}`} aria-hidden={!createHubOpen}>
+                    <section className="create-hub">
+                        <div className="create-hub-header">
+                            <div>
+                                <span className="create-hub-kicker">Create Hub</span>
+                                <h2>发布、发现、二创在一条链路里完成</h2>
+                                <p>先把作品稳定生成出来，再一键发布到发现页，让其他玩家可见、可继续二创。</p>
+                            </div>
+                            <div className="create-hub-tabs">
+                                <button
+                                    type="button"
+                                    className={`create-hub-tab${discoverTab === "discover" ? " active" : ""}`}
+                                    onClick={() => setDiscoverTab("discover")}
+                                >
+                                    发现
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`create-hub-tab${discoverTab === "leaderboard" ? " active" : ""}`}
+                                    onClick={() => setDiscoverTab("leaderboard")}
+                                >
+                                    排行榜
+                                </button>
+                            </div>
+                        </div>
+                        <div className="create-hub-grid">
+                            <article className="create-priority-card">
+                                <span className="create-priority-eyebrow">当前优先级</span>
+                                <h3>先确保第一次生成就能跑，再发布</h3>
+                                <p>当前的发布会记录作品标题、原始需求、预览入口和标签，发布后立即进入首页发现区，后续可以继续补热度、评分和后台管理。</p>
+                                <div className="create-priority-pills">
+                                    <span>稳定可玩</span>
+                                    <span>发布可见</span>
+                                    <span>支持二创</span>
+                                </div>
+                            </article>
+
+                            <section className="create-gallery">
+                                <div className="create-gallery-head">
+                                    <div>
+                                        <span className="create-gallery-title">{discoverTab === "leaderboard" ? "本周排行榜" : "发现新作品"}</span>
+                                        <span className="create-gallery-subtitle">
+                                            {discoverTab === "leaderboard" ? "按热度、启动次数、二创数综合排序" : "最新发布的 create 作品会优先出现在这里"}
+                                        </span>
+                                    </div>
+                                    <button type="button" className="ghost-icon" title="刷新作品列表" onClick={refreshPublishedProjects}>
+                                        <i className="fas fa-rotate-right" />
+                                    </button>
+                                </div>
+                                {discoverProjects.length ? (
+                                    <div className="create-gallery-grid">
+                                        {discoverProjects.map((project, index) => (
+                                            <article key={project.id} className="published-project-card">
+                                                <div className="published-project-topline">
+                                                    <span className="published-project-rank">
+                                                        {discoverTab === "leaderboard" ? `#${index + 1}` : "NEW"}
+                                                    </span>
+                                                    <span className="published-project-score">
+                                                        热度 {project.leaderboard_score || 0}
+                                                    </span>
+                                                </div>
+                                                <h3>{project.title}</h3>
+                                                <p>{project.description || project.prompt || "已发布作品，等待下一位创作者继续扩展。"}</p>
+                                                <div className="published-project-tags">
+                                                    {(project.tags || []).slice(0, 3).map((tag) => (
+                                                        <span key={`${project.id}-${tag}`}>{tag}</span>
+                                                    ))}
+                                                </div>
+                                                <div className="published-project-meta">
+                                                    <span>二创 {project.remix_count || 0}</span>
+                                                    <span>启动 {project.launch_count || 0}</span>
+                                                </div>
+                                                <div className="published-project-actions">
+                                                    {project.preview_url ? (
+                                                        <button
+                                                            type="button"
+                                                            className="small-tool active"
+                                                            onClick={() => {
+                                                                setPreviewOpen(true);
+                                                                setPreviewUrl(project.preview_url);
+                                                                setPreviewNonce((n) => n + 1);
+                                                            }}
+                                                        >
+                                                            <i className="fas fa-play" />
+                                                            <span>预览</span>
+                                                        </button>
+                                                    ) : null}
+                                                    <button
+                                                        type="button"
+                                                        className="small-tool"
+                                                        onClick={() => remixProject(project)}
+                                                    >
+                                                        <i className="fas fa-code-branch" />
+                                                        <span>二创</span>
+                                                    </button>
+                                                </div>
+                                            </article>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="create-gallery-empty">
+                                        <i className="fas fa-rocket" aria-hidden="true" />
+                                        <p>还没有已发布作品。完成 create 产物后点右侧“发布作品”，这里就会开始积累内容。</p>
+                                    </div>
+                                )}
+                            </section>
+                        </div>
+                    </section>
+                </section>
 
                 <div className={`workspace-content-shell${previewOpen ? " split" : ""}`}>
                     <section className="workspace-main-pane">
@@ -2209,6 +3138,8 @@ function App() {
                                 chatMessagesRef={chatMessagesRef}
                                 expandedThinking={expandedThinking}
                                 onToggleThinking={toggleThinkingEntry}
+                                onGuidedChoiceSelect={resolveGuidedCreateChoice}
+                                guidedChoiceNow={guidedChoiceNow}
                                 requestIndicator={requestIndicator}
                                 workingTimerLabel={workingTimerLabel}
                                 completedLabel={completedLabel}
@@ -2237,12 +3168,10 @@ function App() {
                             onSkillsToggle={() => setSkillsOpen((current) => !current)}
                             architectureOpen={architectureOpen}
                             onArchitectureToggle={() => setArchitectureOpen((current) => !current)}
-                            workspacePath={activeWorkspacePath}
-                            onWorkspaceOpen={openWorkspaceModal}
                             statusItems={[
-                                `mode:${mode}`,
+                                `agent:harness`,
                                 `permission:${permissionMode}`,
-                                `workspace:${activeWorkspacePath || "--"}`,
+                                `thread:${currentSessionId || "--"}`,
                                 `messages:${currentSession?.transcript?.length || 0}`,
                                 `model:${shortenModel(runtime?.model)}`
                             ]}
@@ -2255,26 +3184,34 @@ function App() {
                             <div className="preview-pane-shell">
                                 <div className="preview-pane-header">
                                     <div className="preview-pane-copy">
-                                        <span className="preview-pane-kicker">Live Preview</span>
-                                        <strong>{previewHeadline}</strong>
-                                        {previewArtifactOptions.length > 1 ? (
-                                            <label className="preview-artifact-picker">
-                                                <span className="visually-hidden">切换预览产物</span>
-                                                <select
-                                                    className="preview-artifact-select"
-                                                    value={activePreviewUrl}
-                                                    onChange={(e) => {
-                                                        setPreviewUrl(e.target.value);
-                                                        setPreviewNonce((n) => n + 1);
-                                                    }}
-                                                    title="工作区内多个 HTML 或对话中有多个 URL 时可在此切换"
+                                        <div className="preview-pane-identity">
+                                            <span className="preview-pane-kicker">Live Preview</span>
+                                            {previewArtifactOptions.length > 1 ? (
+                                                <label className="preview-artifact-picker preview-artifact-picker--merged">
+                                                    <span className="visually-hidden">切换预览产物</span>
+                                                    <select
+                                                        className="preview-artifact-select preview-artifact-select--merged"
+                                                        value={activePreviewUrl}
+                                                        onChange={(e) => {
+                                                            setPreviewUrl(e.target.value);
+                                                            setPreviewNonce((n) => n + 1);
+                                                        }}
+                                                        title="工作区内多个 HTML 或对话中有多个 URL 时可在此切换"
+                                                    >
+                                                        {previewArtifactOptions.map((o) => (
+                                                            <option key={o.url} value={o.url}>{o.label}</option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                            ) : (
+                                                <div
+                                                    className="preview-pane-target-static"
+                                                    title={activePreviewUrl || previewHeadline}
                                                 >
-                                                    {previewArtifactOptions.map((o) => (
-                                                        <option key={o.url} value={o.url}>{o.label}</option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                        ) : null}
+                                                    {previewHeadline}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                     <div className="preview-pane-actions">
                                         {publishToast ? (
@@ -2285,10 +3222,11 @@ function App() {
                                                 <button
                                                     type="button"
                                                     className="preview-publish-btn"
-                                                    title="复制当前预览链接（他人需能访问同一网络 / 服务）"
+                                                    title="将当前 create 作品发布到发现页，供其他人可见和二创"
                                                     onClick={publishPreviewLink}
+                                                    disabled={publishingProject}
                                                 >
-                                                    发布
+                                                    {publishingProject ? "发布中..." : "发布作品"}
                                                 </button>
                                                 <button type="button" className="icon-button" title="Refresh preview" onClick={refreshPreviewPane}>
                                                     <i className="fas fa-rotate-right" />
@@ -2298,6 +3236,9 @@ function App() {
                                                 </a>
                                             </>
                                         ) : null}
+                                        <button type="button" className="icon-button" title="Close preview" onClick={closePreviewPane}>
+                                            <i className="fas fa-xmark" />
+                                        </button>
                                     </div>
                                 </div>
 
@@ -2315,7 +3256,7 @@ function App() {
                                         <i className="fas fa-window-restore" aria-hidden="true" />
                                         <p>
                                             对话里出现可访问的 http(s) URL 时会自动加载；若只有本地 HTML 文件，
-                                            会在检测到 workspace 变更后尝试用「Workspace HTML 预览」打开（需已选择 git workspace）。
+                                            会在当前 thread 的默认工作区检测到变更后尝试打开 HTML 预览。
                                         </p>
                                     </div>
                                 )}
@@ -2366,24 +3307,6 @@ function App() {
                 toolContext={toolContext}
                 selectedModel={selectedModel}
                 onClose={() => setArchitectureOpen(false)}
-            />
-            <WorkspaceModal
-                open={workspaceModalOpen}
-                currentPath={activeWorkspacePath}
-                browserPath={workspaceBrowserPath}
-                browserEntries={workspaceBrowserEntries}
-                browserParent={workspaceBrowserParent}
-                isLoading={workspaceLoading}
-                draftPath={workspaceDraftPath}
-                error={workspaceError}
-                onDraftChange={setWorkspaceDraftPath}
-                onBrowse={browseWorkspace}
-                onOpenParent={() => browseWorkspace(workspaceBrowserParent)}
-                onNativePick={openNativeWorkspacePicker}
-                nativePickLabel={nativeWorkspaceLabel}
-                nativePickHelp={nativeWorkspaceHelp}
-                onClose={() => setWorkspaceModalOpen(false)}
-                onSave={saveWorkspaceSelection}
             />
         </div>
     );

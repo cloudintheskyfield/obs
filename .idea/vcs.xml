@@ -2,5 +2,15 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/agent-skills/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/computer-use/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/desktop-commander/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/e2e/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/file-manager/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/playwright-e2e/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/search/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/web-e2e/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/web-search-free/source" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/skills/web-search-free/source-exa-mcp-server" vcs="Git" />
   </component>
 </project>

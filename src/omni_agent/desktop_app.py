@@ -19,7 +19,7 @@ import traceback
 import requests
 import uvicorn
 
-from omni_agent.utils.paths import app_root, claude_skills_root
+from omni_agent.utils.paths import app_root, claude_skills_root, repo_skills_root
 
 
 APP_NAME = "OBS Code"
@@ -58,12 +58,16 @@ DESKTOP_LOG_FILE = APP_DIR / "desktop.log"
 
 
 def _desktop_log(message: str) -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    if not DESKTOP_LOG_FILE.exists():
-        DESKTOP_LOG_FILE.write_text("", encoding="utf-8")
-    with DESKTOP_LOG_FILE.open("a", encoding="utf-8") as handle:
-        handle.write(f"[{timestamp}] {message}\n")
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        if not DESKTOP_LOG_FILE.exists():
+            DESKTOP_LOG_FILE.write_text("", encoding="utf-8")
+        with DESKTOP_LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{timestamp}] {message}\n")
+    except (PermissionError, OSError):
+        # Silently ignore in sandboxed / restricted environments
+        pass
 
 
 def _resolve_gui_backend() -> str:
@@ -97,7 +101,8 @@ class BackendServer:
             return
 
         os.environ.setdefault("PYTHONPATH", str(app_root() / "src"))
-        os.environ.setdefault("SKILLS_DIR", str(claude_skills_root()))
+        root_skills = repo_skills_root()
+        os.environ.setdefault("SKILLS_DIR", str(root_skills if root_skills.exists() else claude_skills_root()))
 
         from omni_agent.api import app
 

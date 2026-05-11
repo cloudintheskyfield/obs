@@ -18,6 +18,7 @@ class SessionStorePaths:
     thread_workspace_dir: Path
     workspace_state_file: Path
     ui_sessions_dir: Path
+    published_projects_dir: Path
 
 
 class SessionStore:
@@ -35,6 +36,7 @@ class SessionStore:
         self.paths.context_cache_dir.mkdir(parents=True, exist_ok=True)
         self.paths.thread_workspace_dir.mkdir(parents=True, exist_ok=True)
         self.paths.ui_sessions_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.published_projects_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def from_config(cls, config: Any) -> "SessionStore":
@@ -51,6 +53,7 @@ class SessionStore:
                 thread_workspace_dir=base_dir / "thread_workspaces",
                 workspace_state_file=base_dir / "workspace_state.json",
                 ui_sessions_dir=base_dir / "ui_sessions",
+                published_projects_dir=base_dir / "published_projects",
             )
         )
 
@@ -69,6 +72,9 @@ class SessionStore:
 
     def ui_session_file(self, session_id: str) -> Path:
         return self.paths.ui_sessions_dir / f"{self.sanitize_session_id(session_id, max_len=80)}.json"
+
+    def published_project_file(self, project_id: str) -> Path:
+        return self.paths.published_projects_dir / f"{self.sanitize_session_id(project_id, max_len=80)}.json"
 
     def thread_runtime_dir(self, session_id: str) -> str:
         path = self.paths.thread_workspace_dir / self.sanitize_session_id(session_id)
@@ -194,6 +200,36 @@ class SessionStore:
         session_file = self.ui_session_file(session_id)
         if session_file.exists():
             session_file.unlink()
+
+    def list_published_projects(self) -> List[Dict[str, Any]]:
+        projects: List[Dict[str, Any]] = []
+        for file_path in sorted(
+            self.paths.published_projects_dir.glob("*.json"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        ):
+            try:
+                projects.append(json.loads(file_path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+        return projects
+
+    def load_published_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        project_file = self.published_project_file(project_id)
+        if not project_file.exists():
+            return None
+        return json.loads(project_file.read_text(encoding="utf-8"))
+
+    def save_published_project(self, project_id: str, payload: Dict[str, Any]) -> None:
+        self.published_project_file(project_id).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def delete_published_project(self, project_id: str) -> None:
+        project_file = self.published_project_file(project_id)
+        if project_file.exists():
+            project_file.unlink()
 
     def persist_workspace_state(self, payload: Dict[str, Any]) -> None:
         self.paths.workspace_state_file.write_text(

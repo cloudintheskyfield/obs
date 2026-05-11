@@ -9,20 +9,12 @@ function formatTokenCount(tokens) {
     return `${Math.round(value)}`;
 }
 
-const MODE_META = {
-    agent:  { label: "Agent",  icon: "fa-robot",                   tip: "全自动工具调用，直接执行任务" },
-    create: { label: "Create", icon: "fa-wand-magic-sparkles",     tip: "一句话生成可运行的前后端应用" },
-    plan:   { label: "Plan",   icon: "fa-list-check",              tip: "只生成执行计划，不实际运行工具" },
-    battle: { label: "Battle", icon: "fa-code-compare",            tip: "多模型并行对比，择优输出" },
-    review: { label: "Review", icon: "fa-magnifying-glass-chart",  tip: "通过审查引擎处理，适合代码审核" },
-};
-
 export default function RuntimePills({
-    mode, setMode,
     contextPercent, contextTokens, contextMaxTokens,
     threadContextPercent, threadContextTokens, threadTurnCount,
     githubUrl, onExport,
     previewOpen, onTogglePreview,
+    createHubOpen, onToggleCreateHub,
     fileChangeSummary, onFocusFiles,
 }) {
     const workingPct = Math.min(100, Math.max(0, Number(contextPercent) || 0));
@@ -43,20 +35,14 @@ export default function RuntimePills({
 
     return (
         <header className="unified-bar">
-            {/* ── Left: mode chips ── */}
             <div className="mode-chips">
-                {Object.entries(MODE_META).map(([value, meta]) => (
-                    <button
-                        key={value}
-                        type="button"
-                        title={meta.tip}
-                        className={`mode-chip mode-${value}${mode === value ? " active" : ""}`}
-                        onClick={() => setMode(value)}
-                    >
-                        <i className={`fas ${meta.icon}`} aria-hidden="true" />
-                        <span>{meta.label}</span>
-                    </button>
-                ))}
+                <span
+                    className="mode-chip mode-agent active"
+                    title="Unified OBS Agent: Planner -> Search Gate -> Generator -> Runner -> Evaluator harness"
+                >
+                    <i className="fas fa-robot" aria-hidden="true" />
+                    <span>Agent</span>
+                </span>
             </div>
 
             {/* ── Centre: context meter + file changes (dropdown) ── */}
@@ -82,6 +68,19 @@ export default function RuntimePills({
                         <span>Working set · {formatTokenCount(contextTokens)} · {workingPctLabel}</span>
                     </div>
                 </div>
+
+                {onToggleCreateHub ? (
+                    <button
+                        type="button"
+                        className={`create-hub-link${createHubOpen ? " active" : ""}`}
+                        title="打开 Create Hub 的发布、发现和排行榜"
+                        onClick={onToggleCreateHub}
+                        aria-expanded={Boolean(createHubOpen)}
+                    >
+                        <i className="fas fa-compass" aria-hidden="true" />
+                        <span>Create Hub</span>
+                    </button>
+                ) : null}
 
                 {fileChangeSummary?.visible ? (
                     <details className="files-changed-dropdown">

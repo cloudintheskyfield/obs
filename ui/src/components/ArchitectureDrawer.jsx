@@ -38,9 +38,9 @@ function getCopy(locale) {
         return {
             headerTitle: "项目架构",
             headerMeta: "按当前后端真实分层与运行态生成的流程图 / 数据流图。",
-            heroKicker: "Agent 核心设计",
-            heroTitle: "参考 Claude Code 的 harness 分层后，当前项目从请求入口到工具循环、再到持久化回流的真实代码路径。",
-            heroBody: "重点不是宣传文案，而是项目里真实存在的请求编排层、SessionStore 持久化层、RequestLifecycle 生命周期层、StreamingAgent 模式路由与工具循环层，以及最终的 SSE 可观测面。",
+            heroKicker: "Agent + Model + Harness",
+            heroTitle: "统一 OBS Agent 内部拆为 Planner、Search、Generator、Runner、Evaluator，Harness 负责状态、权限、证据和最终裁决。",
+            heroBody: "规划、检索、改代码、运行验证和验收判断彼此隔离：所有输入输出先进入 Harness，再由状态机、Search Gate、预算和策略决定下一步。",
             languageLabel: "语言",
             zh: "中文",
             en: "English",
@@ -50,7 +50,7 @@ function getCopy(locale) {
             eventKicker: "生命周期 / SSE 事件",
             detailRuntime: "运行时快照",
             detailSkill: "已选技能与真实工具",
-            detailRoute: "模式路由",
+            detailRoute: "Harness 策略",
             detailTrace: "观测与持久化",
             noSkills: "当前未勾选技能，因此只会保留基础 Agent 路径。",
             outputLabel: "输出对象",
@@ -61,9 +61,9 @@ function getCopy(locale) {
     return {
         headerTitle: "Project Architecture",
         headerMeta: "Flowchart / dataflow generated from the current backend layering and runtime state.",
-        heroKicker: "Agent Core Design",
-        heroTitle: "Actual code path after aligning the project to a Claude Code-style harness: ingress, routing, tool loop, and persistence replay.",
-        heroBody: "This panel is intentionally concrete. It reflects the real request harness, SessionStore persistence layer, RequestLifecycle phase layer, StreamingAgent routing/tool loop, and the final SSE observability surface.",
+        heroKicker: "Agent + Model + Harness",
+        heroTitle: "One OBS Agent is split internally into Planner, Search, Generator, Runner, and Evaluator, with the Harness owning state, permissions, evidence, and final decisions.",
+        heroBody: "Planning, research, patching, execution, and judgement are isolated. Every input and output passes through the Harness state machine, Search Gate, budgets, and policy before the next step.",
         languageLabel: "Language",
         zh: "中文",
         en: "English",
@@ -73,7 +73,7 @@ function getCopy(locale) {
         eventKicker: "Lifecycle / SSE Events",
         detailRuntime: "Runtime Snapshot",
         detailSkill: "Selected Skills and Real Tools",
-        detailRoute: "Mode Routing",
+        detailRoute: "Harness Strategy",
         detailTrace: "Observability and Persistence",
         noSkills: "No skill is selected, so only the base agent path remains active.",
         outputLabel: "Outputs",
@@ -209,6 +209,7 @@ function buildFlowModel({
     const transcriptCount = safeSession?.transcript?.length || 0;
     const logCount = safeSession?.logs?.length || 0;
     const backendArchitecture = architectureManifest?.architecture || {};
+    const harness = backendArchitecture?.harness || {};
     const backendRuntime = architectureManifest?.runtime || {};
     const runtimeSnapshot = { ...(backendRuntime || {}), ...(runtime || {}) };
     const contextValue = typeof contextPercent === "number" ? `${contextPercent}%` : "0%";
@@ -248,6 +249,19 @@ function buildFlowModel({
     });
 
     const moduleCards = [
+        ...(Array.isArray(harness.roles) ? harness.roles.map((role) => ({
+            title: role.name,
+            detail: role.goal,
+            bullets: [
+                ...(Array.isArray(role.success_criteria) ? role.success_criteria.slice(0, 3) : []),
+                role.handoff ? `${locale === "zh" ? "交接" : "Handoff"}: ${role.handoff}` : null,
+            ].filter(Boolean),
+        })) : []),
+        ...(Array.isArray(harness.layers) ? harness.layers.map((layer) => ({
+            title: layer.name,
+            detail: layer.purpose,
+            bullets: Array.isArray(layer.rules) ? layer.rules.slice(0, 3) : [],
+        })) : []),
         ...(Array.isArray(backendArchitecture.layers) ? backendArchitecture.layers.map((layer) => ({
             title: layer.module?.split(".").slice(-1)[0] || layer.id,
             detail: layer.role,
@@ -293,7 +307,7 @@ function buildFlowModel({
         {
             title: copy.detailRuntime,
             detail: locale === "zh"
-                ? `状态: ${runtimeStatus} · 工作区: ${workspace} · 运行目录: ${runtimeThreadDir} · 截图目录: ${screenshotDir} · 线程数: ${backendRuntime?.thread_count ?? sessionCount ?? 0}`
+                ? `状态: ${runtimeStatus} · Thread 工作区: ${workspace} · 运行目录: ${runtimeThreadDir} · 截图目录: ${screenshotDir} · 线程数: ${backendRuntime?.thread_count ?? sessionCount ?? 0}`
                 : `Status: ${runtimeStatus} · Workspace: ${workspace} · Runtime dir: ${runtimeThreadDir} · Screenshot dir: ${screenshotDir} · Threads: ${backendRuntime?.thread_count ?? sessionCount ?? 0}`,
         },
         {
@@ -322,7 +336,7 @@ function buildFlowModel({
         detailCards,
         eventChips,
         summaryChips: [
-            `${locale === "zh" ? "模式" : "Mode"} ${mode}`,
+            `${locale === "zh" ? "模式" : "Mode"} Agent`,
             `${locale === "zh" ? "模型" : "Model"} ${activeModel}`,
             `${locale === "zh" ? "上下文" : "Context"} ${contextValue}`,
             `${locale === "zh" ? "技能" : "Skills"} ${skills.selectedNames.length}`,

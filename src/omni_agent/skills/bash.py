@@ -4,7 +4,7 @@ from ._compat import load_claude_skill_module
 
 
 _module = load_claude_skill_module(
-    ["terminal", "bash.py"],
+    ["desktop-commander", "bash.py"],
     "omni_agent.skills._bash_impl",
 )
 

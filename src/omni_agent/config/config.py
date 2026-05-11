@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 from dotenv import load_dotenv
 
-from ..utils.paths import app_root, claude_skills_root
+from ..utils.paths import app_root, claude_skills_root, repo_skills_root
 
 
 def _runtime_data_root() -> Path:
@@ -102,7 +102,8 @@ def _resolve_file_setting(raw_value: Optional[str], fallback_relative: str, labe
 
 
 def _resolve_skills_dir(raw_value: Optional[str]) -> Optional[str]:
-    bundled_skills = claude_skills_root()
+    repo_skills = repo_skills_root()
+    bundled_skills = repo_skills if repo_skills.exists() else claude_skills_root()
     candidates: List[Path] = []
 
     if raw_value:
@@ -131,7 +132,27 @@ class VLLMConfig(BaseModel):
     base_url: str = "https://api.minimaxi.com/v1/chat/completions"
     api_key: str = "dummy_key"
     model: str = "MiniMax-M2"
-    timeout: int = 35
+    timeout: int = 60
+    max_retries: int = 3
+
+
+class GPT55Config(BaseModel):
+    """GPT-5.5配置（AceData API）"""
+    enabled: bool = False
+    base_url: str = "https://api.acedata.cloud/openai/chat/completions"
+    api_key: str = "587473ccbe934b3fa700adb9ec442955"
+    model: str = "gpt-5.5"
+    timeout: int = 60
+    max_retries: int = 3
+
+
+class VisionVLLMConfig(BaseModel):
+    """视觉专用VLLM配置（用于含图片消息的路由）"""
+    enabled: bool = False
+    base_url: str = "http://223.109.239.14:10009/v1/chat/completions"
+    api_key: str = "dummy_key"
+    model: str = "qwen35-35b-a3b-judge"
+    timeout: int = 60
     max_retries: int = 2
 
 
@@ -162,6 +183,8 @@ class AgentConfig(BaseModel):
     
     # 组件配置
     vllm: VLLMConfig = Field(default_factory=VLLMConfig)
+    gpt55: GPT55Config = Field(default_factory=GPT55Config)
+    vision_vllm: VisionVLLMConfig = Field(default_factory=VisionVLLMConfig)
     web_browsing: WebBrowsingConfig = Field(default_factory=WebBrowsingConfig)
     log: LogConfig = Field(default_factory=LogConfig)
     
@@ -193,6 +216,32 @@ class AgentConfig(BaseModel):
             config.vllm.api_key = os.getenv("VLLM_API_KEY")
         if os.getenv("VLLM_MODEL"):
             config.vllm.model = os.getenv("VLLM_MODEL")
+        if os.getenv("VLLM_TIMEOUT"):
+            config.vllm.timeout = int(os.getenv("VLLM_TIMEOUT"))
+        if os.getenv("VLLM_MAX_RETRIES"):
+            config.vllm.max_retries = int(os.getenv("VLLM_MAX_RETRIES"))
+
+        # 视觉专用VLLM配置
+        if os.getenv("VISION_VLLM_ENABLED"):
+            config.vision_vllm.enabled = os.getenv("VISION_VLLM_ENABLED").lower() == "true"
+        if os.getenv("VISION_VLLM_BASE_URL"):
+            config.vision_vllm.base_url = os.getenv("VISION_VLLM_BASE_URL")
+            config.vision_vllm.enabled = True
+        if os.getenv("VISION_VLLM_API_KEY"):
+            config.vision_vllm.api_key = os.getenv("VISION_VLLM_API_KEY")
+        if os.getenv("VISION_VLLM_MODEL"):
+            config.vision_vllm.model = os.getenv("VISION_VLLM_MODEL")
+        
+        # GPT-5.5配置
+        if os.getenv("GPT55_ENABLED"):
+            config.gpt55.enabled = os.getenv("GPT55_ENABLED").lower() == "true"
+        if os.getenv("GPT55_BASE_URL"):
+            config.gpt55.base_url = os.getenv("GPT55_BASE_URL")
+            config.gpt55.enabled = True
+        if os.getenv("GPT55_API_KEY"):
+            config.gpt55.api_key = os.getenv("GPT55_API_KEY")
+        if os.getenv("GPT55_MODEL"):
+            config.gpt55.model = os.getenv("GPT55_MODEL")
         
         # 工作目录
         if os.getenv("WORK_DIR"):

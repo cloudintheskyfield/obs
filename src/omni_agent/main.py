@@ -25,15 +25,21 @@ from .core.agent import OmniAgent
 from .config.config import load_config
 from .core.logger import start_live_logging, stop_live_logging
 from .desktop_app import run_desktop_app
-from .utils.paths import claude_skills_root, frontend_root, frontend_static_root
+from .utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
 import sys
 from pathlib import Path
 
 # Add .claude/skills to Python path for skills
 claude_skills_path = claude_skills_root()
+root_skills_path = repo_skills_root()
 if claude_skills_path.exists():
     sys.path.insert(0, str(claude_skills_path))
-os.environ.setdefault("SKILLS_DIR", str(claude_skills_path))
+if root_skills_path.exists():
+    sys.path.insert(0, str(root_skills_path))
+os.environ.setdefault(
+    "SKILLS_DIR",
+    str(root_skills_path if root_skills_path.exists() else claude_skills_path),
+)
 
 from skill_manager import SkillManager
 
@@ -209,13 +215,29 @@ def serve(
     reload: bool = typer.Option(False, "--reload", help="启用代码热重载")
 ):
     config = load_config()
+    actual_port = port or getattr(config, "api_port", 8000)
+    
+    # 输出服务启动信息
+    console.print("\n" + "="*60, style="cyan")
+    console.print("🚀 OBS Agent 服务启动中...", style="bold green")
+    console.print("="*60 + "\n", style="cyan")
+    
+    # 显示访问URL
+    if host == "0.0.0.0":
+        console.print(f"🌐 本地访问: [bold cyan]http://localhost:{actual_port}[/bold cyan]")
+        console.print(f"🌐 网络访问: [bold cyan]http://127.0.0.1:{actual_port}[/bold cyan]")
+    else:
+        console.print(f"🌐 访问地址: [bold cyan]http://{host}:{actual_port}[/bold cyan]")
+    
+    console.print(f"\n📝 模式: [yellow]{'开发模式 (热重载)' if reload else '生产模式'}[/yellow]")
+    console.print("\n" + "="*60 + "\n", style="cyan")
     
     if reload:
         # 开发模式：使用模块路径字符串以支持热重载
         uvicorn.run(
             "omni_agent.main:fastapi_app",
             host=host,
-            port=port or getattr(config, "api_port", 8000),
+            port=actual_port,
             reload=True,
             reload_dirs=["src", ".claude", "frontend", "ui"],
             log_level="info",
@@ -227,7 +249,7 @@ def serve(
         uvicorn.run(
             app_instance,
             host=host,
-            port=port or getattr(config, "api_port", 8000),
+            port=actual_port,
             log_level="warning",  # 减少健康检查日志噪音
             access_log=False,     # 禁用访问日志
         )

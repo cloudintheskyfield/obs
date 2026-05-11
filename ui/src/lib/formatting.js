@@ -262,6 +262,7 @@ export function getThinkingSummary(content, streaming) {
 }
 
 export function transcriptRole(entry) {
+    if (entry.kind === "agent_process") return "agent-process";
     if (entry.kind === "thinking_text") return "thinking";
     if (entry.kind === "tool_use") return "tool";
     if (entry.kind === "tool_result") return "tool-result";
@@ -270,6 +271,7 @@ export function transcriptRole(entry) {
 }
 
 export function entryLabel(entry) {
+    if (entry.kind === "agent_process") return "Task Progress";
     if (entry.kind === "thinking_text") return "Thinking";
     if (entry.kind === "tool_use") return `Tool · ${entry.toolName || entry.taskId || "tool"}`;
     if (entry.kind === "tool_result") return `Tool · ${entry.toolName || entry.taskId || "tool"}`;

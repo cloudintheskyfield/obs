@@ -6,6 +6,7 @@ import logging
 import json
 import asyncio
 import ipaddress
+import mimetypes
 import os
 import re
 import socket
@@ -35,12 +36,16 @@ if claude_skills_path.exists():
     sys.path.insert(0, str(claude_skills_path))
 if root_skills_path.exists():
     sys.path.insert(0, str(root_skills_path))
-os.environ.setdefault("SKILLS_DIR", str(claude_skills_path))
+os.environ.setdefault(
+    "SKILLS_DIR",
+    str(root_skills_path if root_skills_path.exists() else claude_skills_path),
+)
 
 from skill_manager import SkillManager
 from .core.vllm_client import VLLMClient
 from .agents.plan_agent import PlanAgent
 from .agents.execution_engine import ExecutionEngine
+from .agents.harness_runtime import HarnessRuntime, normalize_llm_message_content
 from .services import RequestLifecycle, SessionStore
 
 
@@ -82,6 +87,7 @@ class ChatStreamRequest(BaseModel):
 
 class WorkspaceUpdateRequest(BaseModel):
     path: str
+    session_id: Optional[str] = None
 
 class LocationUpdateRequest(BaseModel):
     session_id: str
@@ -101,6 +107,19 @@ class LocationResolveRequest(BaseModel):
 
 class PreviewResolveRequest(BaseModel):
     urls: List[str] = []
+
+
+class PublishProjectRequest(BaseModel):
+    session_id: str
+    title: str
+    prompt: Optional[str] = None
+    description: Optional[str] = None
+    preview_url: Optional[str] = None
+    preview_label: Optional[str] = None
+    workspace_path: Optional[str] = None
+    mode: Optional[str] = "create"
+    tags: Optional[List[str]] = None
+    remixable: Optional[bool] = True
 
 
 # 创建FastAPI应用
@@ -135,6 +154,7 @@ vllm_client: Optional[VLLMClient] = None
 chat_sessions: Dict[str, List[Dict[str, Any]]] = {}
 pending_plans: Dict[str, Dict[str, Any]] = {}
 session_locations: Dict[str, Dict[str, Any]] = {}
+workspace_request_lock = asyncio.Lock()
 
 # Skills real-time event bus
 _skills_event_queues: List[asyncio.Queue] = []
@@ -210,6 +230,22 @@ AVAILABLE_MODELS = [
     if model.strip()
 ]
 WEATHER_REQUEST_PATTERN = re.compile(r"(天气|温度|气温|weather|forecast)", re.IGNORECASE)
+PREVIEW_HTML_SUFFIXES = {".html", ".htm"}
+PREVIEW_SCAN_IGNORED_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    ".next",
+    ".nuxt",
+    ".vite",
+    ".pytest_cache",
+    "coverage",
+}
+PREVIEW_SCAN_MAX_FILES = 5000
+PREVIEW_SCAN_MAX_RESULTS = 120
 
 
 def _get_runtime_temporal_context() -> Dict[str, Any]:
@@ -338,7 +374,24 @@ def _preview_url_variants(raw_url: str, authoritative_host: str) -> List[str]:
         return []
 
 
-def _resolve_local_preview_file(raw_path: str) -> Optional[Path]:
+PREVIEW_REWRITABLE_ATTR_PATTERN = re.compile(
+    r"""(?P<prefix>\b(?:href|src|poster)\s*=\s*)(?P<quote>["'])(?P<value>[^"']+)(?P=quote)""",
+    re.IGNORECASE,
+)
+PREVIEW_SRCSET_ATTR_PATTERN = re.compile(
+    r"""(?P<prefix>\bsrcset\s*=\s*)(?P<quote>["'])(?P<value>[^"']+)(?P=quote)""",
+    re.IGNORECASE,
+)
+PREVIEW_CSS_URL_PATTERN = re.compile(r"""url\(\s*(?P<quote>["']?)(?P<value>[^"')]+)(?P=quote)\s*\)""", re.IGNORECASE)
+PREVIEW_ASSET_ALLOWED_SUFFIXES = {
+    ".html", ".htm", ".css", ".js", ".mjs", ".json", ".map",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico",
+    ".mp3", ".wav", ".ogg", ".mp4", ".webm",
+    ".woff", ".woff2", ".ttf", ".otf",
+}
+
+
+def _resolve_local_preview_file(raw_path: str, *, html_only: bool = True) -> Optional[Path]:
     text = (raw_path or "").strip().strip("`'\" ")
     if not text:
         return None
@@ -370,7 +423,12 @@ def _resolve_local_preview_file(raw_path: str) -> Optional[Path]:
     except Exception:
         return None
 
-    if resolved.suffix.lower() not in {".html", ".htm"} or not resolved.is_file():
+    suffix = resolved.suffix.lower()
+    if not resolved.is_file():
+        return None
+    if html_only and suffix not in {".html", ".htm"}:
+        return None
+    if not html_only and suffix not in PREVIEW_ASSET_ALLOWED_SUFFIXES:
         return None
 
     allowed_roots = [
@@ -399,6 +457,121 @@ def _local_preview_url_for_file(path: Path, request: Request) -> str:
     host_context = _resolve_public_host_context(request)
     base_url = host_context.get("authoritative_public_base_url") or str(request.base_url).rstrip("/")
     return f"{base_url.rstrip('/')}/preview/local-file?path={quote(str(path), safe='')}"
+
+
+def _is_external_preview_ref(value: str) -> bool:
+    text = (value or "").strip()
+    if not text or text.startswith("#") or text.startswith("/"):
+        return True
+    if text.startswith(("?", "data:", "blob:", "mailto:", "tel:", "javascript:")):
+        return True
+    parsed = urlsplit(text)
+    return bool(parsed.scheme or parsed.netloc)
+
+
+def _preview_asset_url_for_ref(base_dir: Path, value: str) -> str:
+    if _is_external_preview_ref(value):
+        return value
+    parsed = urlsplit(value)
+    target = (base_dir / unquote(parsed.path)).resolve()
+    rewritten = f"/preview/local-file?path={quote(str(target), safe='')}"
+    if parsed.fragment:
+        rewritten = f"{rewritten}#{parsed.fragment}"
+    return rewritten
+
+
+def _rewrite_preview_srcset(base_dir: Path, value: str) -> str:
+    rewritten_items: List[str] = []
+    for item in value.split(","):
+        segment = item.strip()
+        if not segment:
+            continue
+        parts = segment.split()
+        parts[0] = _preview_asset_url_for_ref(base_dir, parts[0])
+        rewritten_items.append(" ".join(parts))
+    return ", ".join(rewritten_items)
+
+
+def _rewrite_preview_html_assets(html: str, base_dir: Path) -> str:
+    def replace_attr(match: re.Match[str]) -> str:
+        value = match.group("value")
+        rewritten = _preview_asset_url_for_ref(base_dir, value)
+        return f"{match.group('prefix')}{match.group('quote')}{rewritten}{match.group('quote')}"
+
+    def replace_srcset(match: re.Match[str]) -> str:
+        value = match.group("value")
+        rewritten = _rewrite_preview_srcset(base_dir, value)
+        return f"{match.group('prefix')}{match.group('quote')}{rewritten}{match.group('quote')}"
+
+    html = PREVIEW_REWRITABLE_ATTR_PATTERN.sub(replace_attr, html)
+    return PREVIEW_SRCSET_ATTR_PATTERN.sub(replace_srcset, html)
+
+
+def _rewrite_preview_css_assets(css: str, base_dir: Path) -> str:
+    def replace_url(match: re.Match[str]) -> str:
+        value = match.group("value").strip()
+        rewritten = _preview_asset_url_for_ref(base_dir, value)
+        quote_char = match.group("quote") or ""
+        return f"url({quote_char}{rewritten}{quote_char})"
+
+    return PREVIEW_CSS_URL_PATTERN.sub(replace_url, css)
+
+
+def _scan_workspace_preview_files(workspace: Path) -> List[Dict[str, Any]]:
+    """Find runnable local HTML artifacts even when the workspace is not a git repo."""
+    try:
+        root = workspace.resolve()
+    except Exception:
+        return []
+    if not root.is_dir():
+        return []
+
+    preview_files: List[Dict[str, Any]] = []
+    visited_files = 0
+    for current_root, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name for name in dirnames
+            if name not in PREVIEW_SCAN_IGNORED_DIRS and not name.endswith(".egg-info")
+        ]
+        for filename in filenames:
+            visited_files += 1
+            if visited_files > PREVIEW_SCAN_MAX_FILES:
+                break
+            if Path(filename).suffix.lower() not in PREVIEW_HTML_SUFFIXES:
+                continue
+            absolute_path = (Path(current_root) / filename).resolve()
+            try:
+                relative = absolute_path.relative_to(root).as_posix()
+                stat = absolute_path.stat()
+            except Exception:
+                continue
+            insertions = 0
+            try:
+                insertions = len(absolute_path.read_text(encoding="utf-8", errors="ignore").splitlines())
+            except Exception:
+                pass
+            preview_files.append({
+                "path": relative,
+                "status": "preview",
+                "insertions": insertions,
+                "deletions": 0,
+                "mtime": stat.st_mtime,
+                "absolute_path": _runtime_to_host_path(str(absolute_path)),
+            })
+            if len(preview_files) >= PREVIEW_SCAN_MAX_RESULTS:
+                break
+        if visited_files > PREVIEW_SCAN_MAX_FILES or len(preview_files) >= PREVIEW_SCAN_MAX_RESULTS:
+            break
+
+    def _rank(item: Dict[str, Any]) -> tuple:
+        path = str(item.get("path") or "").lower()
+        name_score = 2 if path.endswith("index.html") else 1 if any(
+            token in path for token in ("game", "play", "demo", "app")
+        ) else 0
+        return (name_score, float(item.get("mtime") or 0))
+
+    preview_files.sort(key=_rank, reverse=True)
+    return preview_files
 
 
 async def _probe_preview_url(url: str) -> Optional[Dict[str, Any]]:
@@ -485,15 +658,15 @@ def _load_context_cache(session_id: str) -> Optional[Dict[str, Any]]:
     return session_store.load_context_cache(session_id)
 
 
-def _persist_context_cache(session_id: str, streaming_agent: Any) -> None:
-    if streaming_agent is None:
+def _persist_context_cache(session_id: str, runtime_agent: Any) -> None:
+    if runtime_agent is None:
         return
-    cache = getattr(streaming_agent, "session_context_cache", {}).get(session_id)
+    cache = getattr(runtime_agent, "session_context_cache", {}).get(session_id)
     session_store.persist_context_cache(session_id, cache)
 
 
-def _ensure_session_state_loaded(session_id: str, streaming_agent: Optional[Any] = None) -> None:
-    cache_store = getattr(streaming_agent, "session_context_cache", None) if streaming_agent is not None else None
+def _ensure_session_state_loaded(session_id: str, runtime_agent: Optional[Any] = None) -> None:
+    cache_store = getattr(runtime_agent, "session_context_cache", None) if runtime_agent is not None else None
     session_store.ensure_session_state_loaded(session_id, chat_sessions, cache_store if isinstance(cache_store, dict) else None)
 
 
@@ -501,6 +674,14 @@ def _resolve_workspace_path(path_str: str) -> Path:
     workspace = _host_to_runtime_path(path_str)
     if not workspace.exists():
         raise FileNotFoundError(f"Workspace does not exist: {path_str}")
+    if not workspace.is_dir():
+        raise NotADirectoryError(f"Workspace is not a directory: {path_str}")
+    return workspace
+
+
+def _resolve_or_create_workspace_path(path_str: str) -> Path:
+    workspace = _host_to_runtime_path(path_str)
+    workspace.mkdir(parents=True, exist_ok=True)
     if not workspace.is_dir():
         raise NotADirectoryError(f"Workspace is not a directory: {path_str}")
     return workspace
@@ -588,6 +769,35 @@ def _thread_workspace_for_session(session_id: str) -> str:
     return session_store.thread_runtime_dir(session_id)
 
 
+def _default_workspace_runtime() -> str:
+    return str(Path(config.work_dir).expanduser().resolve())
+
+
+def _default_workspace() -> str:
+    return _runtime_to_host_path(_default_workspace_runtime())
+
+
+def _workspace_payload_for_runtime_path(runtime_path: str) -> Dict[str, Any]:
+    runtime = str(Path(runtime_path).expanduser().resolve())
+    display = _runtime_to_host_path(runtime)
+    display_path = Path(display)
+    return {
+        "path": display,
+        "runtime_path": runtime,
+        "name": display_path.name or display,
+        "parent": str(display_path.parent) if display_path.parent != display_path else None,
+    }
+
+
+def _resolve_request_workspace(session_id: str, workspace_path: Optional[str]) -> Dict[str, Any]:
+    path_str = (workspace_path or "").strip()
+    if path_str:
+        runtime_workspace = _resolve_or_create_workspace_path(path_str)
+    else:
+        runtime_workspace = Path(_thread_workspace_for_session(session_id)).resolve()
+    return _workspace_payload_for_runtime_path(str(runtime_workspace))
+
+
 def _architecture_runtime_snapshot() -> Dict[str, Any]:
     available_tools = skill_manager.get_anthropic_tools() if skill_manager is not None else []
     return {
@@ -602,7 +812,7 @@ def _architecture_runtime_snapshot() -> Dict[str, Any]:
         "thread_count": len(chat_sessions),
         "request_harness": {
             "api": "FastAPI /chat/stream",
-            "router": "StreamingAgent.chat_stream()",
+            "router": "HarnessRuntime.chat_stream()",
             "persistence": "SessionStore",
             "phase_service": "RequestLifecycle",
         },
@@ -771,17 +981,19 @@ async def startup_event():
         "skills_dir": getattr(config, "skills_dir", None),
     }
     skill_manager = SkillManager(skills_config)
-    persisted_workspace = _load_workspace_state()
-    if persisted_workspace:
-        try:
-            skill_manager.set_workspace(persisted_workspace)
-        except Exception as exc:
-            logger.warning(f"Failed to restore persisted workspace {persisted_workspace}: {exc}")
+    try:
+        skill_manager.set_workspace(_default_workspace_runtime())
+    except Exception as exc:
+        logger.warning(f"Failed to initialize default workspace {_default_workspace_runtime()}: {exc}")
 
     asyncio.create_task(_watch_skills_dir())
     
     # 初始化VLLM客户端
-    vllm_client = VLLMClient(config.vllm)
+    vllm_client = VLLMClient(
+        config.vllm, 
+        vision_config=config.vision_vllm,
+        gpt55_config=config.gpt55
+    )
     await vllm_client.__aenter__()
     
     # 初始化Plan Agent
@@ -791,15 +1003,14 @@ async def startup_event():
     execution_engine = ExecutionEngine(vllm_client, skill_manager, plan_agent)
     app.state.execution_engine = execution_engine
     
-    from .agents.streaming_agent import StreamingAgent
-    streaming_agent = StreamingAgent(
+    harness_runtime = HarnessRuntime(
         vllm_client,
         skill_manager,
         execution_engine,
         plan_agent,
         request_lifecycle=request_lifecycle,
     )
-    app.state.streaming_agent = streaming_agent
+    app.state.harness_runtime = harness_runtime
     
     logger.info("Omni Agent API 启动完成")
     
@@ -872,8 +1083,8 @@ async def runtime_status():
             "model": config.vllm.model,
             "available_models": AVAILABLE_MODELS,
             "api_base_url": config.vllm.base_url,
-            "work_dir": _current_workspace(),
-            "runtime_work_dir": _current_workspace_runtime(),
+            "work_dir": _default_workspace(),
+            "runtime_work_dir": _default_workspace_runtime(),
             "screenshot_dir": config.screenshot_dir,
             "allow_file_operations": config.allow_file_operations,
             "allow_terminal_execution": config.allow_terminal_execution,
@@ -901,7 +1112,7 @@ async def resolve_preview_url(payload: PreviewResolveRequest, request: Request):
     any_fallback: Optional[Dict[str, Any]] = None
 
     for raw_url in (payload.urls or [])[:12]:
-        local_file = _resolve_local_preview_file(raw_url)
+        local_file = _resolve_local_preview_file(raw_url, html_only=True)
         if local_file:
             url = _local_preview_url_for_file(local_file, request)
             probe = {
@@ -941,10 +1152,25 @@ async def resolve_preview_url(payload: PreviewResolveRequest, request: Request):
 @app.get("/preview/local-file")
 async def serve_local_preview_file(path: str = Query(default="")):
     """Serve a generated local HTML file inside the live preview iframe."""
-    resolved = _resolve_local_preview_file(path)
+    resolved = _resolve_local_preview_file(path, html_only=False)
     if not resolved:
         return JSONResponse({"detail": "Preview file not found or not allowed"}, status_code=404)
-    response = FileResponse(str(resolved), media_type="text/html; charset=utf-8")
+    suffix = resolved.suffix.lower()
+    media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+    if suffix in {".html", ".htm"}:
+        html = resolved.read_text(encoding="utf-8", errors="ignore")
+        response = Response(
+            _rewrite_preview_html_assets(html, resolved.parent),
+            media_type="text/html; charset=utf-8",
+        )
+    elif suffix == ".css":
+        css = resolved.read_text(encoding="utf-8", errors="ignore")
+        response = Response(
+            _rewrite_preview_css_assets(css, resolved.parent),
+            media_type="text/css; charset=utf-8",
+        )
+    else:
+        response = FileResponse(str(resolved), media_type=media_type)
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -1251,6 +1477,19 @@ def _ui_session_file(session_id: str) -> Path:
     return session_store.ui_session_file(session_id)
 
 
+def _published_project_score(project: Dict[str, Any]) -> int:
+    leaderboard = int(project.get("leaderboard_score") or 0)
+    remixes = int(project.get("remix_count") or 0)
+    launches = int(project.get("launch_count") or 0)
+    return leaderboard + remixes * 6 + launches * 2
+
+
+def _published_project_summary(project: Dict[str, Any]) -> Dict[str, Any]:
+    summary = dict(project)
+    summary["leaderboard_score"] = _published_project_score(summary)
+    return summary
+
+
 @app.get("/ui-sessions")
 async def list_ui_sessions():
     return JSONResponse({"sessions": session_store.list_ui_sessions()})
@@ -1283,19 +1522,70 @@ async def delete_ui_session(session_id: str):
     return JSONResponse({"ok": True})
 
 
-@app.get("/workspace")
-async def get_workspace_state():
-    path_str = _current_workspace()
-    runtime_path = _current_workspace_runtime()
-    workspace = Path(path_str)
+@app.get("/published-projects")
+async def list_published_projects():
+    projects = [_published_project_summary(item) for item in session_store.list_published_projects()]
+    latest = sorted(
+        projects,
+        key=lambda item: item.get("published_at") or item.get("updated_at") or "",
+        reverse=True,
+    )
+    leaderboard = sorted(
+        projects,
+        key=lambda item: (item.get("leaderboard_score") or 0, item.get("published_at") or ""),
+        reverse=True,
+    )
     return JSONResponse({
-        "workspace": {
-            "path": path_str,
-            "runtime_path": runtime_path,
-            "name": workspace.name or path_str,
-            "parent": str(workspace.parent) if workspace.parent != workspace else None,
-        }
+        "projects": latest,
+        "discover": latest[:24],
+        "leaderboard": leaderboard[:24],
     })
+
+
+@app.post("/published-projects")
+async def publish_project(payload: PublishProjectRequest):
+    project_id = f"project_{int(datetime.now().timestamp() * 1000)}"
+    published_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    session_snapshot = session_store.load_ui_session(payload.session_id) or {}
+    transcript = session_snapshot.get("transcript") if isinstance(session_snapshot, dict) else None
+    user_prompt = payload.prompt
+    if not user_prompt and isinstance(transcript, list):
+        for entry in transcript:
+            if entry.get("role") == "user" and entry.get("content"):
+                user_prompt = str(entry.get("content"))
+                break
+    record = {
+        "id": project_id,
+        "session_id": payload.session_id,
+        "title": payload.title.strip() or "未命名作品",
+        "prompt": (user_prompt or "").strip(),
+        "description": (payload.description or "").strip(),
+        "preview_url": (payload.preview_url or "").strip(),
+        "preview_label": (payload.preview_label or "").strip(),
+        "workspace_path": (payload.workspace_path or "").strip(),
+        "mode": payload.mode or "create",
+        "tags": [str(tag).strip() for tag in (payload.tags or []) if str(tag).strip()],
+        "remixable": bool(payload.remixable),
+        "published_at": published_at,
+        "updated_at": published_at,
+        "remix_count": 0,
+        "launch_count": 0,
+        "leaderboard_score": 0,
+    }
+    session_store.save_published_project(project_id, record)
+    return JSONResponse({"ok": True, "project": _published_project_summary(record)})
+
+
+@app.delete("/published-projects/{project_id}")
+async def delete_published_project(project_id: str):
+    session_store.delete_published_project(project_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/workspace")
+async def get_workspace_state(session_id: Optional[str] = Query(default=None)):
+    runtime_path = _thread_workspace_for_session(session_id) if session_id else _default_workspace_runtime()
+    return JSONResponse({"workspace": _workspace_payload_for_runtime_path(runtime_path)})
 
 
 @app.post("/workspace")
@@ -1303,28 +1593,23 @@ async def update_workspace_state(payload: WorkspaceUpdateRequest):
     if skill_manager is None:
         return JSONResponse({"success": False, "error": "Skill manager not initialized"}, status_code=503)
     try:
-        workspace = _resolve_workspace_path(payload.path)
-        resolved = skill_manager.set_workspace(str(workspace))
-        _persist_workspace_state(payload.path)
-        display_path = _runtime_to_host_path(resolved)
+        workspace = _resolve_or_create_workspace_path(payload.path)
         return JSONResponse({
             "success": True,
-            "workspace": {
-                "path": display_path,
-                "runtime_path": resolved,
-                "name": Path(display_path).name or display_path
-            }
+            "workspace": _workspace_payload_for_runtime_path(str(workspace))
         })
     except Exception as exc:
         return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
 
 
 @app.get("/workspace/browser")
-async def browse_workspace(path: Optional[str] = Query(default=None)):
+async def browse_workspace(path: Optional[str] = Query(default=None), session_id: Optional[str] = Query(default=None)):
     try:
-        current = _resolve_workspace_path(path) if path else Path(_current_workspace_runtime()).resolve()
+        current = _resolve_workspace_path(path) if path else Path(
+            _thread_workspace_for_session(session_id) if session_id else _default_workspace_runtime()
+        ).resolve()
     except Exception:
-        current = Path(_current_workspace_runtime()).resolve()
+        current = Path(_thread_workspace_for_session(session_id) if session_id else _default_workspace_runtime()).resolve()
 
     entries = []
     try:
@@ -1354,9 +1639,9 @@ async def browse_workspace(path: Optional[str] = Query(default=None)):
 @app.get("/workspace/changes")
 async def workspace_changes(path: Optional[str] = Query(default=None)):
     try:
-        workspace = _resolve_workspace_path(path) if path else Path(_current_workspace_runtime()).resolve()
+        workspace = _resolve_workspace_path(path) if path else Path(_default_workspace_runtime()).resolve()
     except Exception:
-        workspace = Path(_current_workspace_runtime()).resolve()
+        workspace = Path(_default_workspace_runtime()).resolve()
 
     def _git(args: List[str]) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -1368,6 +1653,7 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
 
     try:
         inside = _git(["rev-parse", "--is-inside-work-tree"])
+        preview_files = _scan_workspace_preview_files(workspace)
         if inside.returncode != 0 or inside.stdout.strip() != "true":
             return JSONResponse({
                 "success": True,
@@ -1377,6 +1663,7 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "insertions": 0,
                 "deletions": 0,
                 "files": [],
+                "preview_files": preview_files,
             })
 
         status_proc = _git(["status", "--short", "--untracked-files=all", "--", "."])
@@ -1427,6 +1714,12 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "absolute_path": _runtime_to_host_path(str(absolute_path)),
             })
 
+        seen_paths = {str(file.get("absolute_path") or "") for file in files}
+        for preview_file in preview_files:
+            if str(preview_file.get("absolute_path") or "") and str(preview_file.get("absolute_path") or "") not in seen_paths:
+                files.append(preview_file)
+                seen_paths.add(str(preview_file.get("absolute_path") or ""))
+
         return JSONResponse({
             "success": True,
             "workspace": _runtime_to_host_path(str(workspace)),
@@ -1437,6 +1730,7 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
             "insertions": total_insertions,
             "deletions": total_deletions,
             "files": files[:120],
+            "preview_files": preview_files,
         })
     except Exception as exc:
         return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
@@ -1471,9 +1765,9 @@ def _pick_workspace_directory(initial_path: Optional[str]) -> Optional[str]:
 
 
 @app.post("/workspace/pick")
-async def pick_workspace_directory():
+async def pick_workspace_directory(session_id: Optional[str] = Query(default=None)):
     try:
-        initial_path = _current_workspace()
+        initial_path = _runtime_to_host_path(_thread_workspace_for_session(session_id)) if session_id else _default_workspace()
         if threading.current_thread() is threading.main_thread():
             selected = _pick_workspace_directory(initial_path)
         else:
@@ -1525,14 +1819,14 @@ async def get_session_logs(
 
 @app.get("/session/{session_id}/context")
 async def get_session_context_state(session_id: str, model: Optional[str] = Query(default=None)):
-    streaming_agent = getattr(app.state, "streaming_agent", None)
-    _ensure_session_state_loaded(session_id, streaming_agent)
+    harness_runtime = getattr(app.state, "harness_runtime", None)
+    _ensure_session_state_loaded(session_id, harness_runtime)
     messages = chat_sessions.get(session_id, [])
     context_percent = 0
     estimated_context_tokens = 0
     max_context_tokens = 128000
-    if streaming_agent is not None:
-        cache = getattr(streaming_agent, "session_context_cache", {}).get(session_id, {})
+    if harness_runtime is not None:
+        cache = getattr(harness_runtime, "session_context_cache", {}).get(session_id, {})
         if cache:
             compact_messages = [
                 {"role": "system", "content": "OBS Agent system prompt"},
@@ -1547,12 +1841,12 @@ async def get_session_context_state(session_id: str, model: Optional[str] = Quer
                     ),
                 },
             ]
-            context_percent = streaming_agent._estimate_context_percent(compact_messages)
-            estimated_context_tokens = streaming_agent._estimate_context_tokens(compact_messages)
+            context_percent = harness_runtime._estimate_context_percent(compact_messages)
+            estimated_context_tokens = harness_runtime._estimate_context_tokens(compact_messages)
         else:
-            context_percent = streaming_agent._estimate_context_percent(messages)
-            estimated_context_tokens = streaming_agent._estimate_context_tokens(messages)
-        max_context_tokens = streaming_agent._get_context_window_tokens(model)
+            context_percent = harness_runtime._estimate_context_percent(messages)
+            estimated_context_tokens = harness_runtime._estimate_context_tokens(messages)
+        max_context_tokens = harness_runtime._get_context_window_tokens(model)
     return JSONResponse({
         "session_id": session_id,
         "messages_count": len(messages),
@@ -1590,92 +1884,90 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
     temporal_context = _get_runtime_temporal_context()
     
     async def generate():
-        streaming_agent = getattr(app.state, "streaming_agent", None)
-        try:
-            _ensure_session_state_loaded(session_id, streaming_agent)
-            location = session_locations.get(session_id)
-            host_context = _resolve_public_host_context(request)
-            if location is None and WEATHER_REQUEST_PATTERN.search(message or ""):
-                try:
-                    location = await asyncio.wait_for(_resolve_location_from_ip(request), timeout=2.5)
-                except Exception as location_exc:
-                    logger.debug(f"On-demand weather location resolve failed for session {session_id}: {location_exc}")
-                    location = None
-                if location:
-                    session_locations[session_id] = location
+        harness_runtime = getattr(app.state, "harness_runtime", None)
+        async with workspace_request_lock:
+            try:
+                _ensure_session_state_loaded(session_id, harness_runtime)
+                location = session_locations.get(session_id)
+                host_context = _resolve_public_host_context(request)
+                if location is None and WEATHER_REQUEST_PATTERN.search(message or ""):
+                    try:
+                        location = await asyncio.wait_for(_resolve_location_from_ip(request), timeout=2.5)
+                    except Exception as location_exc:
+                        logger.debug(f"On-demand weather location resolve failed for session {session_id}: {location_exc}")
+                        location = None
+                    if location:
+                        session_locations[session_id] = location
 
-            if workspace_path and skill_manager is not None:
-                try:
-                    runtime_workspace = _resolve_workspace_path(workspace_path)
-                    skill_manager.set_workspace(str(runtime_workspace))
-                    _persist_workspace_state(workspace_path)
-                except Exception as workspace_exc:
-                    logger.debug(f"Ignoring workspace override for session {session_id}: {workspace_exc}")
+                request_workspace = _resolve_request_workspace(session_id, workspace_path)
+                if skill_manager is not None:
+                    skill_manager.set_workspace(request_workspace["runtime_path"])
 
-            # 添加用户消息到会话历史
-            chat_sessions[session_id].append({
-                "role": "user",
-                "content": message,
-                "message_parts": message_parts or [],
-            })
-            _persist_chat_session(session_id)
-            
-            # 使用流式引擎处理请求 (取代旧版 execution_engine 块)
-            async for chunk in streaming_agent.chat_stream(
-                session_id,
-                chat_sessions,
-                mode=mode,
-                permission_mode=permission_mode,
-                permission_confirmed=permission_confirmed,
-                context=context,
-                tool_context=tool_context,
-                enabled_skills=enabled_skills or [],
-                request_context={
+                # 添加用户消息到会话历史
+                chat_sessions[session_id].append({
+                    "role": "user",
+                    "content": message,
+                    "message_parts": message_parts or [],
+                })
+                _persist_chat_session(session_id)
+
+                # 使用流式引擎处理请求 (取代旧版 execution_engine 块)
+                async for chunk in harness_runtime.chat_stream(
+                    session_id,
+                    chat_sessions,
+                    mode=mode,
+                    permission_mode=permission_mode,
+                    permission_confirmed=permission_confirmed,
+                    context=context,
+                    tool_context=tool_context,
+                    enabled_skills=enabled_skills or [],
+                    request_context={
                     **temporal_context,
+                    "session_id": session_id,
                     "mode": mode,
                     "permission_mode": permission_mode,
                     "location": location,
-                    "workspace_display_path": _current_workspace(),
-                    "workspace_runtime_path": _current_workspace_runtime(),
-                    "thread_runtime_dir": _thread_workspace_for_session(session_id),
-                    **host_context,
-                    "message_parts": message_parts or [],
-                    "model": selected_model,
-                },
-            ):
-                if chunk.startswith("data: "):
-                    try:
-                        payload = json.loads(chunk[6:].strip())
-                        if payload.get("type") == "llm_log":
-                            _persist_llm_trace(session_id, payload)
-                        elif payload.get("type") == "plan" and payload.get("plan_id"):
-                            pending_plans[payload["plan_id"]] = {
-                                "plan_id": payload["plan_id"],
-                                "user_message": message,
-                                "session_id": session_id,
-                                "chat_history": list(chat_sessions.get(session_id, [])),
-                                "plan": payload.get("plan"),
-                                "task_graph": payload.get("task_graph"),
-                                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                            }
-                    except Exception:
-                        pass
-                yield chunk
-            
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            logger.error(f"Chat stream error: {error_detail}")
-            # Include error type and truncated traceback so the frontend can display
-            # a meaningful diagnostic message instead of a generic "failed" notice.
-            last_line = error_detail.strip().rsplit("\n", 1)[-1].strip() if error_detail else str(e)
-            yield f"data: {json.dumps({'error': str(e), 'error_type': type(e).__name__, 'error_detail': last_line, 'done': True})}\n\n"
-        finally:
-            try:
-                _persist_chat_session(session_id)
-                _persist_context_cache(session_id, streaming_agent)
-            except Exception as persist_exc:
-                logger.warning(f"Failed to persist session state for {session_id}: {persist_exc}")
+                        "workspace_display_path": request_workspace["path"],
+                        "workspace_runtime_path": request_workspace["runtime_path"],
+                        "thread_runtime_dir": _thread_workspace_for_session(session_id),
+                        **host_context,
+                        "message_parts": message_parts or [],
+                        "model": selected_model,
+                    },
+                ):
+                    if chunk.startswith("data: "):
+                        try:
+                            payload = json.loads(chunk[6:].strip())
+                            if payload.get("type") == "llm_log":
+                                _persist_llm_trace(session_id, payload)
+                            elif payload.get("type") == "plan" and payload.get("plan_id"):
+                                pending_plans[payload["plan_id"]] = {
+                                    "plan_id": payload["plan_id"],
+                                    "user_message": message,
+                                    "session_id": session_id,
+                                    "chat_history": list(chat_sessions.get(session_id, [])),
+                                    "plan": payload.get("plan"),
+                                    "task_graph": payload.get("task_graph"),
+                                    "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                                }
+                        except Exception:
+                            pass
+                    yield chunk
+
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                logger.error(f"Chat stream error: {error_detail}")
+                # Include error type and truncated traceback so the frontend can display
+                # a meaningful diagnostic message instead of a generic "failed" notice.
+                last_line = error_detail.strip().rsplit("\n", 1)[-1].strip() if error_detail else str(e)
+                yield f"data: {json.dumps({'error': str(e), 'error_type': type(e).__name__, 'error_detail': last_line, 'done': True})}\n\n"
+            finally:
+                try:
+                    _persist_chat_session(session_id)
+                    _persist_context_cache(session_id, harness_runtime)
+                except Exception as persist_exc:
+                    logger.warning(f"Failed to persist session state for {session_id}: {persist_exc}")
     
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1741,7 +2033,9 @@ async def execute_skill(request_data: SkillExecuteRequest):
             
             # 检查响应
             if "choices" in response and response["choices"]:
-                assistant_message = response["choices"][0]["message"]["content"]
+                assistant_message = normalize_llm_message_content(
+                    response["choices"][0]["message"].get("content")
+                )
                 
                 # 检查是否包含tool_call标签
                 import re
@@ -1778,7 +2072,9 @@ async def execute_skill(request_data: SkillExecuteRequest):
                         )
                         
                         if "choices" in final_response and final_response["choices"]:
-                            final_message = final_response["choices"][0]["message"]["content"]
+                            final_message = normalize_llm_message_content(
+                                final_response["choices"][0]["message"].get("content")
+                            )
                             
                             chat_sessions[session_id].append({
                                 "role": "assistant",
@@ -1950,6 +2246,90 @@ async def reject_plan(plan_id: str):
     """Reject (discard) a pending plan."""
     pending_plans.pop(plan_id, None)
     return JSONResponse({"ok": True})
+
+
+# ============================================================================
+# Creature Management API
+# ============================================================================
+
+from .core.creature_manager import creature_manager
+
+
+class CreatureStartRequest(BaseModel):
+    session_id: str
+    creature_name: str
+
+
+class CreatureStopRequest(BaseModel):
+    creature_name: str
+
+
+@app.get("/api/creatures/session/{session_id}")
+async def list_session_creatures(session_id: str):
+    """获取 session 的所有产物"""
+    try:
+        creatures = creature_manager.list_creatures(session_id)
+        return JSONResponse({
+            "success": True,
+            "session_id": session_id,
+            "creatures": creatures
+        })
+    except Exception as e:
+        logger.error(f"Error listing creatures: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.post("/api/creatures/start")
+async def start_creature(request: CreatureStartRequest):
+    """启动产物"""
+    try:
+        result = creature_manager.start_creature(
+            session_id=request.session_id,
+            creature_name=request.creature_name
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error starting creature: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.post("/api/creatures/stop")
+async def stop_creature(request: CreatureStopRequest):
+    """停止产物"""
+    try:
+        result = creature_manager.stop_creature(
+            creature_name=request.creature_name
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error stopping creature: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/creatures/status/{session_id}/{creature_name}")
+async def get_creature_status(session_id: str, creature_name: str):
+    """获取产物状态"""
+    try:
+        result = creature_manager.get_creature_status(
+            session_id=session_id,
+            creature_name=creature_name
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error getting creature status: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
 
 
 # 导出app实例
