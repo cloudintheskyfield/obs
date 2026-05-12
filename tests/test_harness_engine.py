@@ -81,9 +81,30 @@ def test_default_policy_uses_only_spec_agent_tools() -> None:
 
     assert permissions["Planner"]["tools"] == []
     assert permissions["Evaluator"]["tools"] == []
-    assert permissions["Generator"]["tools"] == ["filesystem", "file-manager"]
-    assert "playwright-e2e" in permissions["Runner"]["tools"]
-    assert "firecrawl-scraper" in permissions["Search"]["tools"]
+    assert permissions["Generator"]["tools"] == [
+        "filesystem",
+        "file-manager",
+        "desktop-commander.file_read",
+        "desktop-commander.file_write",
+        "desktop-commander.str_replace",
+    ]
+    assert permissions["Search"]["tools"] == [
+        "web-search-free",
+        "search",
+        "web-scraper-pro",
+        "firecrawl-scraper",
+        "skill-lookup",
+    ]
+    assert permissions["Search"]["optional_tools"] == ["computer-use"]
+    assert permissions["Search"]["can_use_browser"] is True
+    assert permissions["Runner"]["tools"] == [
+        "desktop-commander.terminal",
+        "Skill Management = python runtime",
+        "playwright-e2e",
+        "web-testing-playwright-e2e",
+        "e2e",
+        "computer-use",
+    ]
     assert "weather" not in permissions["Search"]["tools"]
     assert "code-sandbox" not in permissions["Runner"]["tools"]
 
@@ -102,9 +123,18 @@ def test_persisted_harness_policy_matches_md_permission_matrix() -> None:
         "firecrawl-scraper",
         "skill-lookup",
     ]
-    assert permissions["Generator"]["tools"] == ["filesystem", "file-manager"]
+    assert permissions["Search"]["optional_tools"] == ["computer-use"]
+    assert permissions["Search"]["can_use_browser"] is True
+    assert permissions["Generator"]["tools"] == [
+        "filesystem",
+        "file-manager",
+        "desktop-commander.file_read",
+        "desktop-commander.file_write",
+        "desktop-commander.str_replace",
+    ]
     assert permissions["Runner"]["tools"] == [
-        "desktop-commander",
+        "desktop-commander.terminal",
+        "Skill Management = python runtime",
         "playwright-e2e",
         "web-testing-playwright-e2e",
         "e2e",

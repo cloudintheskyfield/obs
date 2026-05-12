@@ -67,7 +67,7 @@ Runner does not route the workflow.
 Runner may use these tools when permitted by Harness:
 
 - `desktop-commander.terminal`
-- `Skill Management` / Python runtime
+- `Skill Management = python runtime`
 - `playwright-e2e`
 - `web-testing-playwright-e2e`
 - `e2e`

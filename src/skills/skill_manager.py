@@ -63,8 +63,17 @@ class SkillManager:
         "advanced_web_search": "web-search-free",
         "web_search": "web-search-free",
         "bash": "desktop-commander",
+        "desktop-commander.terminal": "desktop-commander",
+        "desktop-commander.file_read": "filesystem",
+        "desktop-commander.file_write": "filesystem",
+        "desktop-commander.str_replace": "file-manager",
+        "Skill Management = python runtime": "desktop-commander",
         "str_replace_editor": "file-manager",
         "computer": "computer-use",
+    }
+
+    PUBLIC_TOOL_NAMES = {
+        "desktop-commander": "desktop-commander.terminal",
     }
 
     def __init__(self, config: Dict[str, Any]):
@@ -190,7 +199,14 @@ class SkillManager:
         if tool_name in self.skill_loader.skills:
             return tool_name
 
+        public_map = {value: key for key, value in self.PUBLIC_TOOL_NAMES.items()}
+        if tool_name in public_map:
+            return public_map[tool_name]
+
         return None
+
+    def public_tool_name_for_skill(self, skill_name: str) -> str:
+        return self.PUBLIC_TOOL_NAMES.get(skill_name, skill_name)
     
     def list_skills(self) -> List[Dict[str, Any]]:
         """列出所有Skills"""
@@ -449,14 +465,17 @@ class SkillManager:
         for skill_name, skill in self.get_enabled_skills().items():
             try:
                 tool_def = skill.to_anthropic_tool()
-                tool_name = tool_def.get("name")
+                tool_name = self.public_tool_name_for_skill(skill_name)
+                tool_def["name"] = tool_name
+                tool_def.setdefault("metadata", {})
+                tool_def["metadata"]["skill_name"] = skill_name
+                tool_def["metadata"]["runtime_tool_name"] = getattr(skill, "name", skill_name)
                 if tool_name in seen_tool_names:
                     logger.debug(f"Skipping duplicate tool definition: {tool_name}")
                     continue
 
                 tools.append(tool_def)
-                if tool_name:
-                    seen_tool_names.add(tool_name)
+                seen_tool_names.add(tool_name)
                 
                 if skill.skill_definition:
                     logger.debug(f"Generated tool from SKILL.md: {skill.skill_definition.name}")
@@ -589,7 +608,7 @@ class SkillManager:
         tool_map: Dict[str, List[str]] = {}
 
         for skill_name, skill in self.get_enabled_skills().items():
-            tool_name = getattr(skill, "name", skill_name)
+            tool_name = self.public_tool_name_for_skill(skill_name)
             tool_map.setdefault(skill_name, []).append(tool_name)
 
         for skill_name, metadata in metadata_map.items():

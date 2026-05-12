@@ -42,7 +42,7 @@ start() {
     mkdir -p "$PID_DIR"
 
     echo "Starting backend..."
-    start_detached "$SCRIPT_DIR" "$BACKEND_LOG" "$BACKEND_PID" env PYTHONPATH="$SCRIPT_DIR/src" uv run uvicorn api:app --host 0.0.0.0 --port 8000
+    start_detached "$SCRIPT_DIR" "$BACKEND_LOG" "$BACKEND_PID" env PYTHONPATH="$SCRIPT_DIR/src" uv run uvicorn api:app --host 0.0.0.0 --port 8213
     echo "  Backend PID: $(cat "$BACKEND_PID")  (log: $BACKEND_LOG)"
 
     echo "Starting frontend..."
@@ -53,10 +53,10 @@ start() {
     echo "Waiting for services..."
     sleep 5
 
-    if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-        echo "  Backend:  http://localhost:8000  ✓"
+    if curl -sf http://localhost:8213/health > /dev/null 2>&1; then
+        echo "  Backend:  http://localhost:8213  ✓"
     else
-        echo "  Backend:  http://localhost:8000  ✗ (check $BACKEND_LOG)"
+        echo "  Backend:  http://localhost:8213  ✗ (check $BACKEND_LOG)"
     fi
 
     if curl -sf http://localhost:5173/static/ > /dev/null 2>&1; then
@@ -112,7 +112,7 @@ stop() {
 
     # fallback: kill by port in case pid files are stale or only child
     # processes survived the process-group stop.
-    kill_stale_port "backend" 8000
+    kill_stale_port "backend" 8213
     kill_stale_port "frontend" 5173
 
     return 0

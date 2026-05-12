@@ -36,10 +36,13 @@
         "firecrawl-scraper",
         "skill-lookup"
       ],
+      "optional_tools": [
+        "computer-use"
+      ],
       "can_read_files": false,
       "can_write_files": false,
       "can_run_commands": false,
-      "can_use_browser": false,
+      "can_use_browser": true,
       "can_use_search": true,
       "can_scrape_web": true,
       "allowed_write_paths": [
@@ -62,7 +65,10 @@
     "Generator": {
       "tools": [
         "filesystem",
-        "file-manager"
+        "file-manager",
+        "desktop-commander.file_read",
+        "desktop-commander.file_write",
+        "desktop-commander.str_replace"
       ],
       "can_read_files": true,
       "can_write_files": true,
@@ -91,7 +97,8 @@
     },
     "Runner": {
       "tools": [
-        "desktop-commander",
+        "desktop-commander.terminal",
+        "Skill Management = python runtime",
         "playwright-e2e",
         "web-testing-playwright-e2e",
         "e2e",

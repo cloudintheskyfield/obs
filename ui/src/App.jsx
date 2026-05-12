@@ -49,12 +49,12 @@ const CREATE_SCRIPT_REQUEST_PATTERN = /(脚本|script|cli|工具|tool|自动化|
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
     if ((hostname === "localhost" || hostname === "127.0.0.1") && window.location.port === "5173") {
-        return `${protocol}//${hostname}:8000`;
+        return `${protocol}//${hostname}:8213`;
     }
     if ((protocol === "http:" || protocol === "https:") && hostname) {
         return origin;
     }
-    return "http://127.0.0.1:8000";
+    return "http://127.0.0.1:8213";
 }
 
 function nowIso() {

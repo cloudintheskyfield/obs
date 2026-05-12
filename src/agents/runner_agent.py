@@ -458,11 +458,18 @@ class RunnerAgent:
                 except Exception:
                     tool_args = {}
 
-                if tool_name == "bash":
+                resolved_tool_name = (
+                    self.skill_manager.resolve_skill_name_for_tool(tool_name)
+                    or tool_name
+                )
+                if resolved_tool_name == "desktop-commander":
                     command = str(tool_args.get("command") or "").strip()
-                    if not self.harness.command_allowed(command, runner_input_commands=allowed_commands):
+                    if not self.harness.command_allowed(
+                        command,
+                        runner_input_commands=allowed_commands,
+                    ):
                         tool_args = {}
-                        tool_name = "bash"
+                        tool_name = tool_name or "desktop-commander.terminal"
                         tool_result = f"Blocked command outside Runner input contract: {command}"
                         yield self._sse(
                             {
@@ -501,13 +508,9 @@ class RunnerAgent:
                 tool_result = ""
                 success = False
                 try:
-                    if tool_name in (self.skill_manager.skills or {}):
-                        skill = self.skill_manager.skills[tool_name]
-                        result = await skill.execute(**tool_args)
-                        tool_result = str(result.content) if result.success else f"Error: {result.error}"
-                        success = result.success
-                    else:
-                        tool_result = f"Tool {tool_name!r} not available for Runner"
+                    result = await self.skill_manager.execute_skill(tool_name, **tool_args)
+                    tool_result = str(result.content) if result.success else f"Error: {result.error}"
+                    success = result.success
                 except Exception as exc:
                     tool_result = str(exc)
 

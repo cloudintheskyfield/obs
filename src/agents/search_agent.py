@@ -243,13 +243,16 @@ class SearchAgent:
                 tool_result = ""
                 success = False
                 try:
-                    if tool_name in (self.skill_manager.skills or {}):
-                        skill = self.skill_manager.skills[tool_name]
-                        result = await skill.execute(**tool_args)
-                        tool_result = str(result.content) if result.success else f"Error: {result.error}"
-                        success = result.success
-                    else:
-                        tool_result = f"Tool {tool_name!r} not available for Search"
+                    result = await self.skill_manager.execute_skill(
+                        tool_name,
+                        **tool_args,
+                    )
+                    tool_result = (
+                        str(result.content)
+                        if result.success
+                        else f"Error: {result.error}"
+                    )
+                    success = result.success
                 except Exception as exc:
                     tool_result = str(exc)
 

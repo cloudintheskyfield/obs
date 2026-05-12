@@ -81,6 +81,10 @@ Search Agent may use these tools when permitted by Harness:
 - `firecrawl-scraper`
 - `skill-lookup`
 
+Optional tool, only when Harness explicitly allows page capture or browser-assisted scraping:
+
+- `computer-use`
+
 Use tools only for external research requested by Harness.
 
 ---

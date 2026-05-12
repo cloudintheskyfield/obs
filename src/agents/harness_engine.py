@@ -253,10 +253,11 @@ class HarnessEngine:
                     "firecrawl-scraper",
                     "skill-lookup",
                 ],
+                "optional_tools": ["computer-use"],
                 "can_read_files": False,
                 "can_write_files": False,
                 "can_run_commands": False,
-                "can_use_browser": False,
+                "can_use_browser": True,
                 "can_use_search": True,
                 "can_scrape_web": True,
                 "allowed_write_paths": [".harness/search/**"],
@@ -275,7 +276,13 @@ class HarnessEngine:
                 "max_pages_to_scrape": 3,
             },
             "Generator": {
-                "tools": ["filesystem", "file-manager"],
+                "tools": [
+                    "filesystem",
+                    "file-manager",
+                    "desktop-commander.file_read",
+                    "desktop-commander.file_write",
+                    "desktop-commander.str_replace",
+                ],
                 "can_read_files": True,
                 "can_write_files": True,
                 "can_run_commands": False,
@@ -303,7 +310,8 @@ class HarnessEngine:
             },
             "Runner": {
                 "tools": [
-                    "desktop-commander",
+                    "desktop-commander.terminal",
+                    "Skill Management = python runtime",
                     "playwright-e2e",
                     "web-testing-playwright-e2e",
                     "e2e",
@@ -619,8 +627,10 @@ class HarnessEngine:
             "web-scraper-pro",
             "firecrawl-scraper",
             "skill-lookup",
+            "computer-use",
             "web_search",
             "advanced_web_search",
+            "computer",
         },
         "Generator": {
             "filesystem",
@@ -631,6 +641,8 @@ class HarnessEngine:
             "str_replace_editor",
         },
         "Runner": {
+            "desktop-commander.terminal",
+            "Skill Management = python runtime",
             "desktop-commander",
             "playwright-e2e",
             "web-testing-playwright-e2e",
@@ -1327,10 +1339,20 @@ class HarnessEngine:
     def _friendly_tool_title(tool: str, *, running: bool) -> str:
         mapping = {
             "bash": "正在运行命令" if running else "命令执行完成",
+            "desktop-commander": "正在运行命令" if running else "命令执行完成",
+            "desktop-commander.terminal": "正在运行命令" if running else "命令执行完成",
             "computer": "正在验证页面" if running else "页面验证完成",
+            "computer-use": "正在验证页面" if running else "页面验证完成",
             "str_replace_editor": "正在修改文件" if running else "文件修改完成",
+            "file-manager": "正在修改文件" if running else "文件修改完成",
+            "filesystem": "正在修改文件" if running else "文件修改完成",
             "web_search": "正在检索资料" if running else "资料检索完成",
             "advanced_web_search": "正在检索资料" if running else "资料检索完成",
+            "web-search-free": "正在检索资料" if running else "资料检索完成",
+            "search": "正在检索资料" if running else "资料检索完成",
+            "web-scraper-pro": "正在检索资料" if running else "资料检索完成",
+            "firecrawl-scraper": "正在检索资料" if running else "资料检索完成",
+            "skill-lookup": "正在检索资料" if running else "资料检索完成",
         }
         return mapping.get(tool, "正在处理" if running else "步骤已完成")
 

@@ -909,7 +909,18 @@ async def _execute_tool_call(tool_name: str, tool_input: Dict[str, Any], session
         return "工具管理器未初始化"
     
     try:
-        if tool_name == "web_search" and session_id:
+        resolved_name = (
+            skill_manager.resolve_skill_name_for_tool(tool_name)
+            or tool_name
+        )
+        search_skills = {
+            "web-search-free",
+            "search",
+            "web-scraper-pro",
+            "firecrawl-scraper",
+            "skill-lookup",
+        }
+        if resolved_name in search_skills and session_id:
             loc = session_locations.get(session_id)
             if loc and isinstance(loc, dict):
                 for k in ["lat", "lon", "city", "region", "country_name"]:
