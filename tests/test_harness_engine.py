@@ -83,7 +83,6 @@ def test_default_policy_uses_only_spec_agent_tools() -> None:
     assert permissions["Evaluator"]["tools"] == []
     assert permissions["Generator"]["tools"] == ["filesystem", "file-manager"]
     assert "playwright-e2e" in permissions["Runner"]["tools"]
-    assert "Skill Management = python runtime" in permissions["Runner"]["tools"]
     assert "firecrawl-scraper" in permissions["Search"]["tools"]
     assert "weather" not in permissions["Search"]["tools"]
     assert "code-sandbox" not in permissions["Runner"]["tools"]
@@ -106,7 +105,6 @@ def test_persisted_harness_policy_matches_md_permission_matrix() -> None:
     assert permissions["Generator"]["tools"] == ["filesystem", "file-manager"]
     assert permissions["Runner"]["tools"] == [
         "desktop-commander",
-        "Skill Management = python runtime",
         "playwright-e2e",
         "web-testing-playwright-e2e",
         "e2e",

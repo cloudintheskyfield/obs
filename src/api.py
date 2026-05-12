@@ -25,21 +25,15 @@ from loguru import logger
 import httpx
 
 from config.config import load_config
-from utils.paths import claude_skills_root, frontend_root, frontend_static_root, repo_skills_root
+from utils.paths import frontend_root, frontend_static_root, src_skills_root
 import sys
 from pathlib import Path
 
-# Add .claude/skills and root skills to Python path for skills
-claude_skills_path = claude_skills_root()
-root_skills_path = repo_skills_root()
-if claude_skills_path.exists():
-    sys.path.insert(0, str(claude_skills_path))
-if root_skills_path.exists():
-    sys.path.insert(0, str(root_skills_path))
-os.environ.setdefault(
-    "SKILLS_DIR",
-    str(root_skills_path if root_skills_path.exists() else claude_skills_path),
-)
+# Add src/skills to Python path for skills
+skills_path = src_skills_root()
+if skills_path.exists():
+    sys.path.insert(0, str(skills_path))
+os.environ.setdefault("SKILLS_DIR", str(skills_path))
 
 from skills.skill_manager import SkillManager
 from core.vllm_client import VLLMClient

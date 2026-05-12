@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 from dotenv import load_dotenv
 
-from utils.paths import app_root, claude_skills_root, repo_skills_root
+from utils.paths import app_root, src_skills_root
 
 
 def _runtime_data_root() -> Path:
@@ -102,8 +102,7 @@ def _resolve_file_setting(raw_value: Optional[str], fallback_relative: str, labe
 
 
 def _resolve_skills_dir(raw_value: Optional[str]) -> Optional[str]:
-    repo_skills = repo_skills_root()
-    bundled_skills = repo_skills if repo_skills.exists() else claude_skills_root()
+    bundled_skills = src_skills_root()
     candidates: List[Path] = []
 
     if raw_value:
@@ -114,9 +113,9 @@ def _resolve_skills_dir(raw_value: Optional[str]) -> Optional[str]:
 
     candidates.extend(
         [
-            Path.cwd() / ".claude" / "skills",
+            Path.cwd() / "src" / "skills",
             bundled_skills,
-            _runtime_data_root() / ".claude" / "skills",
+            _runtime_data_root() / "src" / "skills",
         ]
     )
 

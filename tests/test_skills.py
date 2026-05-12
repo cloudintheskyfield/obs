@@ -6,13 +6,17 @@ from pathlib import Path
 from skills import SkillManager
 
 
-def test_skills_are_source_backed_instruction_tools() -> None:
+SKILLS_ROOT = Path(__file__).resolve().parents[1] / "src" / "skills"
+
+
+def test_skills_are_loaded_from_src_skills_runtime() -> None:
     manager = SkillManager({
         "work_dir": "workspace",
         "screenshot_dir": "screenshots",
         "enable_text_editor": True,
         "enable_bash": True,
         "enable_computer_use": True,
+        "skills_dir": str(SKILLS_ROOT),
     })
 
     catalog_names = {item["name"] for item in manager.get_skill_catalog()}
@@ -22,16 +26,17 @@ def test_skills_are_source_backed_instruction_tools() -> None:
     assert "desktop-commander" in manager.skills
     assert "file-manager" in manager.skills
     assert "computer-use" in manager.skills
-    tool_names = {tool["name"] for tool in manager.get_anthropic_tools()}
-    assert "desktop-commander" in tool_names
-    assert "file-manager" in tool_names
-    assert "bash" not in tool_names
-    assert "str_replace_editor" not in tool_names
 
-    skills_root = Path(__file__).resolve().parents[1] / "skills"
-    assert (skills_root / "desktop-commander" / "source" / "src" / "server.ts").exists()
-    assert (skills_root / "file-manager" / "source" / "main.py").exists()
-    assert (skills_root / "computer-use" / "source" / "src" / "server.ts").exists()
+    tool_names = {tool["name"] for tool in manager.get_anthropic_tools()}
+    assert "bash" in tool_names
+    assert "str_replace_editor" in tool_names
+    assert "computer" in tool_names
+    assert "desktop-commander" not in tool_names
+    assert "file-manager" not in tool_names
+
+    assert (SKILLS_ROOT / "desktop-commander" / "SKILL.md").exists()
+    assert (SKILLS_ROOT / "file-manager" / "SKILL.md").exists()
+    assert (SKILLS_ROOT / "computer-use" / "SKILL.md").exists()
 
     async def run_health_check() -> None:
         health = await manager.health_check()

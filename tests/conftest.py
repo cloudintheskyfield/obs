@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
-SKILLS_DIR = ROOT / "skills"
+SKILLS_DIR = SRC_DIR / "skills"
 
 for path in [str(SRC_DIR), str(SKILLS_DIR)]:
     if path not in sys.path:

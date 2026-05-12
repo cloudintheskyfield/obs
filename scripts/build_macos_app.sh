@@ -19,7 +19,7 @@ set -a
 set +a
 
 export PYTHONPATH="$ROOT_DIR/src"
-export SKILLS_DIR="${SKILLS_DIR:-$ROOT_DIR/.claude/skills}"
+export SKILLS_DIR="${SKILLS_DIR:-$ROOT_DIR/src/skills}"
 
 ENV_DATA_ARGS=()
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -66,7 +66,7 @@ python -m PyInstaller \
   --name "$APP_NAME" \
   --icon "$ICON_ICNS" \
   --paths "$ROOT_DIR/src" \
-  --paths "$ROOT_DIR/.claude/skills" \
+  --paths "$ROOT_DIR/src/skills" \
   --hidden-import api \
   --hidden-import skill_manager \
   --hidden-import skill_loader \
@@ -88,9 +88,8 @@ python -m PyInstaller \
   --exclude-module pandas \
   --exclude-module scipy \
   "${ENV_DATA_ARGS[@]}" \
-  --add-data "$ROOT_DIR/.claude/skills:.claude/skills" \
+  --add-data "$ROOT_DIR/src/skills:src/skills" \
   --add-data "$ROOT_DIR/frontend:frontend" \
-  --add-data "$ROOT_DIR/skills:skills" \
   "$ROOT_DIR/src/desktop_app.py"
 
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"

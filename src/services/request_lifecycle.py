@@ -142,7 +142,7 @@ class RequestLifecycle:
                     "title_zh": "执行命令、页面冒烟测试与证据采集",
                     "title_en": "Command execution, browser smoke tests, and evidence collection",
                     "module": "src/agents/runner_agent.py + harness_runtime.py",
-                    "entrypoints": ["RunnerAgent.run()", "desktop-commander", "Skill Management = python runtime", "playwright-e2e", "web-testing-playwright-e2e", "e2e", "computer-use"],
+                    "entrypoints": ["RunnerAgent.run()", "desktop-commander", "playwright-e2e", "web-testing-playwright-e2e", "e2e", "computer-use"],
                     "role_zh": "只运行 Harness 指定的命令和浏览器检查，把 stdout/stderr、截图、控制台和错误分类写入 RunReport。",
                     "role_en": "Runs only Harness-provided commands and browser checks, then records stdout/stderr, screenshots, console output, and classified errors in RunReport.",
                     "inputs": ["PlanContract", "PatchResult", "SearchReport optional", "artifact_info"],

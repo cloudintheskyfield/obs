@@ -92,7 +92,6 @@
     "Runner": {
       "tools": [
         "desktop-commander",
-        "Skill Management = python runtime",
         "playwright-e2e",
         "web-testing-playwright-e2e",
         "e2e",

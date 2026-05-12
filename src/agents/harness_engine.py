@@ -304,7 +304,6 @@ class HarnessEngine:
             "Runner": {
                 "tools": [
                     "desktop-commander",
-                    "Skill Management = python runtime",
                     "playwright-e2e",
                     "web-testing-playwright-e2e",
                     "e2e",
@@ -633,13 +632,11 @@ class HarnessEngine:
         },
         "Runner": {
             "desktop-commander",
-            "Skill Management = python runtime",
             "playwright-e2e",
             "web-testing-playwright-e2e",
             "e2e",
             "computer-use",
             "bash",
-            "code_sandbox",
             "computer",
         },
         "Evaluator": set(),
@@ -1331,7 +1328,6 @@ class HarnessEngine:
         mapping = {
             "bash": "正在运行命令" if running else "命令执行完成",
             "computer": "正在验证页面" if running else "页面验证完成",
-            "code_sandbox": "正在运行隔离检查" if running else "隔离检查完成",
             "str_replace_editor": "正在修改文件" if running else "文件修改完成",
             "web_search": "正在检索资料" if running else "资料检索完成",
             "advanced_web_search": "正在检索资料" if running else "资料检索完成",

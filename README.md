@@ -10,7 +10,7 @@ OBS Code 是一套面向真实任务的本地 AI 控制台。它不是单纯的�
 
 ## 当前版本能做什么
 
-- 在指定工作区内执行真实任务：读写文件、运行终端命令、调用 Python / 沙箱、搜索实时信息、控制浏览器。
+- 在指定工作区内执行真实任务：读写文件、运行终端命令、调用受控搜索能力、控制浏览器并采集验证证据。
 - 在同一套 UI 里切换 `Agent / Plan / Battle / Review` 四种模式。
 - 用 `Skills` 面板约束模型能力，只开放当前需要的工具。
 - 用 `Logs` 查看完整 LLM request / response、工具执行和运行阶段。
@@ -188,12 +188,12 @@ python -m pip install pyinstaller pywebview pillow pythonnet
 - `今日热点新闻`
 - `使用 python 画一个折线图`
 
-如果你希望模型只在有限能力内工作，可以先打开 `Skills` 抽屉，只保留：
+如果你希望模型只在有限能力内工作，可以先打开 `Skills` 抽屉，只保留当前任务真正需要的技能，例如：
 
-- `Terminal`
-- `File`
-- `Python`
-- `Web Search`
+- `desktop-commander`
+- `file-manager`
+- `computer-use`
+- `web-search-free`
 
 ## 模式说明
 
@@ -293,7 +293,7 @@ obs/
 │   ├── services/
 │   │   ├── session_store.py      # 会话、trace、UI 状态、本地持久化
 │   │   └── request_lifecycle.py  # 请求生命周期整理
-│   ├── skills/                   # 项目内部对 FindSkills/Claude skill 的兼容加载层
+│   ├── skills/                   # 当前唯一生效的运行时技能根目录（src/skills）
 │   └── utils/
 │       └── paths.py              # 源码/打包环境下的资源路径解析
 ├── ui/src/
@@ -345,12 +345,11 @@ obs/
 
 ## 已经落地的真实能力
 
-- `terminal`：列目录、执行命令、读项目文件
-- `file-operations`：查看和修改文本文件
-- `weather`：查询实时天气
-- `web-search`：热点新闻、实时搜索、信息汇总
-- `code-sandbox`：隔离执行代码
+- `desktop-commander`：执行命令、查看工作区文件、为 Runner 提供受控终端能力
+- `file-manager / filesystem`：查看和修改文本文件，供 Generator 在允许路径内产出补丁
 - `computer-use`：打开页面、截图、识别界面
+- `playwright-e2e / web-testing-playwright-e2e / e2e / web-e2e`：浏览器验证、页面 smoke test、证据采集
+- `web-search-free / search / web-scraper-pro / firecrawl-scraper / skill-lookup`：Search Gate 打开后使用的外部检索与网页抓取能力
 - `workspace`：切换工作区并在新目录继续任务
 - `context compaction`：长会话自动压缩并继续回答
 - `image paste`：粘贴图片后保留预览和上下文
@@ -457,7 +456,7 @@ SessionStore 持久化 traces / sessions / compacted context
 - `Planner` 和 `Evaluator` 无工具权限。
 - `Generator` 只能使用文件工具，不能运行命令、浏览器或搜索。
 - `Runner` 不能修改业务文件，只写 `.harness/`、日志、截图和临时证据。
-- `Search` 只能在 Search Gate 打开后使用 FindSkills/GitHub 来源的检索能力。
+- `Search` 只能在 Search Gate 打开后使用 `web-search-free`、`search`、`web-scraper-pro`、`firecrawl-scraper`、`skill-lookup` 这组检索能力。
 - 根目录 `workflow_*` 和 `workflow_game_tests` 这类临时测试项目被禁止作为 Generator 输出目录。
 - `test_commands` 必须是真实可执行 shell 命令，浏览器描述必须进入 `smoke_tests`。
 
@@ -489,11 +488,12 @@ cd C:\Users\wangshuang\PycharmProjects\obs\obs
 
 ## Learn Claude Code
 
-本项目仍保留了 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的结构和教学内容，可作为 Agent Harness / Skills 设计学习材料：
+本项目仍保留了 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的部分结构和教学内容，可作为 Agent Harness / Skills 设计学习材料：
 
 - `agents/`：多阶段课程代码
 - `docs/zh/`：中文教程
-- `skills/`：技能说明和工具样例
+
+当前生产运行时不再使用仓库根目录 `skills/` 或 `.claude/skills/`；实际生效的技能根目录是 `src/skills/`。
 
 ## 说明
 

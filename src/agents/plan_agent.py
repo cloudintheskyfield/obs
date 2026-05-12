@@ -58,7 +58,6 @@ class PlanAgent:
             "str_replace_editor": "查看、创建、编辑文本文件，支持多种格式",
             "web_search": "搜索互联网获取实时信息，如天气、新闻、股价等",
             "computer": "通过视觉界面与计算机交互，截图、点击、输入等",
-            "code_sandbox": "在Docker容器中安全执行代码，支持Python/JS/Go等语言"
         }
     
     async def create_plan(self, user_input: str, context: List[Dict[str, Any]] = None) -> ExecutionPlan:

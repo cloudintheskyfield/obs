@@ -9,7 +9,7 @@ set -a
 set +a
 
 export PYTHONPATH="$ROOT_DIR/src"
-export SKILLS_DIR="${SKILLS_DIR:-$ROOT_DIR/.claude/skills}"
+export SKILLS_DIR="${SKILLS_DIR:-$ROOT_DIR/src/skills}"
 export OBS_DESKTOP_MIRROR_WEB="${OBS_DESKTOP_MIRROR_WEB:-1}"
 export OBS_DESKTOP_GUI="${OBS_DESKTOP_GUI:-cocoa}"
 

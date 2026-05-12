@@ -11,7 +11,7 @@ services:
       - ./config:/app/config:rw,cached
       - ./scripts:/app/scripts:rw,cached
       - ./.claude:/app/.claude:rw,cached
-      - ./skills:/app/skills:rw,cached
+      - ./src/skills:/app/src/skills:rw,cached
       - ./frontend:/app/frontend:rw,cached
       - ./pyproject.toml:/app/pyproject.toml:ro
       - ./uv.lock:/app/uv.lock:ro
@@ -32,7 +32,7 @@ services:
       - ENABLE_COMPUTER_USE=true
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true
-      - SKILLS_DIR=${SKILLS_DIR:-/app/.claude/skills}
+      - SKILLS_DIR=${SKILLS_DIR:-/app/src/skills}
       - DEV_MODE=true
       - PYTHONUNBUFFERED=1
     healthcheck:

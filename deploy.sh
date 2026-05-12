@@ -49,7 +49,7 @@ case $MODE in
         echo ""
         echo -e "${YELLOW}代码修改自动生效:${NC}"
         echo "  ✅ 修改 src/ 目录下的Python代码会自动重载"
-        echo "  ✅ 修改 .claude/skills/ 目录下的技能会自动重载"
+        echo "  ✅ 修改 src/skills/ 目录下的技能会自动重载"
         echo "  ✅ 修改 frontend/ 目录下的前端代码会立即生效"
         ;;
         

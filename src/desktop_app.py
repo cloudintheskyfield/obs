@@ -19,7 +19,7 @@ import traceback
 import requests
 import uvicorn
 
-from utils.paths import app_root, claude_skills_root, repo_skills_root
+from utils.paths import app_root, src_skills_root
 
 
 APP_NAME = "OBS Code"
@@ -101,8 +101,8 @@ class BackendServer:
             return
 
         os.environ.setdefault("PYTHONPATH", str(app_root() / "src"))
-        root_skills = repo_skills_root()
-        os.environ.setdefault("SKILLS_DIR", str(root_skills if root_skills.exists() else claude_skills_root()))
+        skills_root = src_skills_root()
+        os.environ.setdefault("SKILLS_DIR", str(skills_root))
 
         from api import app
 

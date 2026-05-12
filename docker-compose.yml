@@ -12,7 +12,7 @@ services:
       - ./config:/app/config:rw
       - ./scripts:/app/scripts:rw
       - ./.claude:/app/.claude:rw
-      - ./skills:/app/skills:rw
+      - ./src/skills:/app/src/skills:rw
       - ./frontend:/app/frontend:rw
       - ./pyproject.toml:/app/pyproject.toml:rw
       - ./uv.lock:/app/uv.lock:rw
@@ -41,7 +41,7 @@ services:
       - ENABLE_COMPUTER_USE=true
       - ENABLE_TEXT_EDITOR=true
       - ENABLE_BASH=true
-      - SKILLS_DIR=${SKILLS_DIR:-/app/.claude/skills}
+      - SKILLS_DIR=${SKILLS_DIR:-/app/src/skills}
       - PYTHONPATH=/app/src
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
@@ -53,7 +53,7 @@ services:
     networks:
       - omni-network
     restart: unless-stopped
-    command: ["/app/.venv/bin/python", "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src", "--reload-dir", "/app/.claude", "--reload-dir", "/app/frontend", "--reload-delay", "0.1"]
+    command: ["/app/.venv/bin/python", "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src", "--reload-dir", "/app/src/skills", "--reload-dir", "/app/frontend", "--reload-delay", "0.1"]
 
   redis:
     image: redis:7-alpine

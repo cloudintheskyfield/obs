@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('/Users/wangshuang/PycharmProjects/obs/obs/.env', '.'), ('/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills', '.claude/skills'), ('/Users/wangshuang/PycharmProjects/obs/obs/frontend', 'frontend'), ('/Users/wangshuang/PycharmProjects/obs/obs/skills', 'skills')]
+datas = [('/Users/wangshuang/PycharmProjects/obs/obs/.env', '.'), ('/Users/wangshuang/PycharmProjects/obs/obs/src/skills', 'src/skills'), ('/Users/wangshuang/PycharmProjects/obs/obs/frontend', 'frontend')]
 binaries = []
 hiddenimports = ['api', 'skill_manager', 'skill_loader', 'base_skill', 'webview', 'objc', 'AppKit', 'Foundation', 'WebKit', 'PyObjCTools', 'PyObjCTools.AppHelper', 'webview.platforms.cocoa']
 tmp_ret = collect_all('webview')
@@ -10,7 +10,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['/Users/wangshuang/PycharmProjects/obs/obs/src/desktop_app.py'],
-    pathex=['/Users/wangshuang/PycharmProjects/obs/obs/src', '/Users/wangshuang/PycharmProjects/obs/obs/.claude/skills'],
+    pathex=['/Users/wangshuang/PycharmProjects/obs/obs/src', '/Users/wangshuang/PycharmProjects/obs/obs/src/skills'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
