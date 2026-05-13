@@ -1121,6 +1121,67 @@ class HarnessEngine:
             )
         return []
 
+    def apply_patch_envelope(
+        self,
+        patch_envelope: Mapping[str, Any],
+        plan: Mapping[str, Any],
+        *,
+        workspace: str | Path,
+        policy: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, List[str]]:
+        self.validate_patch_envelope(patch_envelope, plan, workspace=workspace, policy=policy)
+        workspace_root = Path(workspace).expanduser().resolve()
+        applied = {"changed_files": [], "created_files": [], "deleted_files": []}
+        operations = list(patch_envelope.get("operations") or [])
+        for operation in operations:
+            if not isinstance(operation, Mapping):
+                raise HarnessPolicyViolation("PatchEnvelope operations must be objects.")
+            raw_path = str(operation.get("path") or "").strip()
+            normalized_path = self._normalize_workspace_path(raw_path)
+            if not normalized_path:
+                raise HarnessPolicyViolation("PatchEnvelope operation missing valid path.")
+            target_path = (workspace_root / normalized_path).resolve(strict=False)
+            try:
+                target_path.relative_to(workspace_root)
+            except ValueError as exc:
+                raise HarnessPolicyViolation("PatchEnvelope path escapes workspace.") from exc
+            op_name = str(operation.get("op") or patch_envelope.get("patch_type") or "").strip() or "file_replacement"
+            existed_before = target_path.exists()
+            if op_name == "file_replacement":
+                if operation.get("content") is None:
+                    if existed_before and target_path.is_file():
+                        continue
+                    raise HarnessPolicyViolation(f"file_replacement operation missing content for {normalized_path}.")
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(str(operation.get("content") or ""), encoding="utf-8")
+                if existed_before:
+                    applied["changed_files"].append(normalized_path)
+                else:
+                    applied["created_files"].append(normalized_path)
+                continue
+            if op_name == "str_replace":
+                if not existed_before or not target_path.is_file():
+                    raise HarnessPolicyViolation(f"str_replace target does not exist: {normalized_path}")
+                old_text = operation.get("old_text")
+                new_text = operation.get("new_text")
+                if old_text is None or new_text is None:
+                    raise HarnessPolicyViolation(f"str_replace operation missing old_text/new_text for {normalized_path}.")
+                original_text = target_path.read_text(encoding="utf-8")
+                match_count = original_text.count(str(old_text))
+                if match_count != 1:
+                    raise HarnessPolicyViolation(
+                        f"str_replace requires exactly one match in {normalized_path}; found {match_count}."
+                    )
+                target_path.write_text(original_text.replace(str(old_text), str(new_text), 1), encoding="utf-8")
+                applied["changed_files"].append(normalized_path)
+                continue
+            if op_name == "unified_diff":
+                raise HarnessPolicyViolation("unified_diff patch application is not supported by Harness runtime.")
+            raise HarnessPolicyViolation(f"Unsupported PatchEnvelope operation: {op_name}")
+        for key in applied:
+            applied[key] = list(dict.fromkeys(applied[key]))
+        return applied
+
     def command_allowed(
         self,
         command: str,

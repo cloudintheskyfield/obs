@@ -411,3 +411,108 @@ def test_runtime_retries_generator_when_patch_envelope_is_empty(tmp_path: Path) 
     assert (tmp_path / "index.html").exists()
     assert second_run_report["status"] == "PASSED"
     assert all("在浏览器" not in command["cmd"] for command in plan_contract["test_commands"])
+
+
+def test_runtime_applies_generator_patch_envelope_without_direct_tool_write(tmp_path: Path) -> None:
+    class _PatchEnvelopeOnlyVllm:
+        async def chat_completion(self, *, messages, tools=None, temperature=0.1, max_tokens=1600, stream=True, model=None):
+            system_prompt = str(messages[0].get("content") or "")
+            if "Planner Agent" in system_prompt:
+                payload = {
+                    "task_id": "task_patch_envelope_apply",
+                    "goal": "生成 index.html 页面",
+                    "assumptions": [],
+                    "implementation_strategy": "只通过 PatchEnvelope 交给 Harness 落盘。",
+                    "allowed_files": ["index.html"],
+                    "forbidden_files": [".env", ".env.*", ".git/**", "node_modules/**", "dist/**", "build/**", ".harness/**", "package.json"],
+                    "required_files_to_inspect": [],
+                    "implementation_steps": [{"id": "S1", "title": "创建 index.html", "description": "写入完整 HTML。"}],
+                    "test_commands": [{"name": "file_check", "cmd": "python -c \"from pathlib import Path; print(Path('index.html').exists())\"", "timeout_sec": 30, "required": True}],
+                    "dev_server": {"enabled": False, "start_cmd": "", "url": "", "ready_patterns": [], "timeout_sec": 0},
+                    "smoke_tests": [],
+                    "acceptance_criteria": ["index.html 被创建"],
+                    "repair_policy": {"max_repair_rounds": 1, "repair_scope": "minimal_patch", "do_not_rewrite_whole_project": True, "if_same_error_repeats": "REPLAN"},
+                    "rollback_policy": {"snapshot_before_patch": True, "rollback_on_invalid_patch": True, "preserve_harness_artifacts": True},
+                    "external_research": {"required": False, "reason": "", "queries": [], "allowed_domains": []},
+                    "package_json_policy": {"allow_modify": False, "allow_add_scripts": False, "allow_add_dependencies": False, "requires_approval": True},
+                    "risks": [],
+                }
+            elif "Generator Agent" in system_prompt:
+                payload = {
+                    "schema_version": "1.0",
+                    "task_id": "task_patch_envelope_apply",
+                    "round_id": 1,
+                    "mode": "initial",
+                    "changed_files": [],
+                    "created_files": ["index.html"],
+                    "deleted_files": [],
+                    "summary": "Prepared patch envelope for index.html.",
+                    "implementation_notes": [],
+                    "commands_to_run": [],
+                    "risk_points": [],
+                    "patch_envelope": {
+                        "schema_version": "1.0",
+                        "task_id": "task_patch_envelope_apply",
+                        "round_id": 1,
+                        "patch_type": "file_replacement",
+                        "operations": [
+                            {
+                                "op": "file_replacement",
+                                "path": "index.html",
+                                "content": "<!doctype html><html><body><h1>ready</h1></body></html>",
+                            }
+                        ],
+                        "changed_files": ["index.html"],
+                    },
+                    "needs_replan": False,
+                    "replan_reason": "",
+                }
+            elif "Evaluator Agent" in system_prompt:
+                payload = {
+                    "schema_version": "1.0",
+                    "task_id": "task_patch_envelope_apply",
+                    "round_id": 1,
+                    "verdict": "PASS",
+                    "score": 1.0,
+                    "passed_criteria": ["index.html 被创建"],
+                    "failed_criteria": [],
+                    "evidence": ["RunReport status PASSED"],
+                    "root_cause": "",
+                    "repair_instruction": "",
+                    "needs_search": False,
+                    "search_questions": [],
+                    "next_agent": "None",
+                    "confidence": 0.95,
+                    "stop_reason": "All checks passed.",
+                }
+            else:
+                payload = {}
+
+            async def stream_response():
+                yield {"choices": [{"delta": {"content": json.dumps(payload, ensure_ascii=False)}}]}
+
+            return stream_response()
+
+    runtime = HarnessRuntime(vllm_client=_PatchEnvelopeOnlyVllm(), skill_manager=_DummySkillManager(tmp_path))
+
+    async def collect_events() -> list[dict]:
+        events = []
+        async for chunk in runtime.chat_stream(
+            session_id="runtime-patch-envelope-apply",
+            chat_sessions={"runtime-patch-envelope-apply": [{"role": "user", "content": "生成 index.html 页面"}]},
+            mode="agent",
+            request_context={"workspace_runtime_path": str(tmp_path)},
+        ):
+            if chunk.startswith("data: "):
+                events.append(json.loads(chunk.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    decisions = [event["decision"] for event in events if event.get("type") == "harness_decision"]
+    patch_result = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "output" / "patch_result.json").read_text(encoding="utf-8"))
+
+    assert decisions[-1]["decision"] == "PASS"
+    assert (tmp_path / "index.html").exists()
+    assert "<h1>ready</h1>" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert patch_result["created_files"] == ["index.html"]
+    assert patch_result["patch_envelope"]["operations"][0]["content"].startswith("<!doctype html>")

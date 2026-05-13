@@ -922,11 +922,34 @@ class HarnessRuntime:
                     last_patch_result = generator.last_patch_result
                     self.harness_engine.validate_schema(last_patch_result, "PatchResult")
                     self.harness_engine.validate_patch_policy(last_patch_result, plan_contract, workspace=workspace)
-                    self.harness_engine.validate_patch_envelope(
+                    patch_application = self.harness_engine.apply_patch_envelope(
                         last_patch_result.get("patch_envelope") or {},
                         plan_contract,
                         workspace=workspace,
                     )
+                    if any(patch_application.values()):
+                        last_patch_result["changed_files"] = list(
+                            dict.fromkeys(
+                                [str(item) for item in last_patch_result.get("changed_files", []) or []]
+                                + list(patch_application.get("changed_files") or [])
+                            )
+                        )
+                        last_patch_result["created_files"] = list(
+                            dict.fromkeys(
+                                [str(item) for item in last_patch_result.get("created_files", []) or []]
+                                + list(patch_application.get("created_files") or [])
+                            )
+                        )
+                        last_patch_result["deleted_files"] = list(
+                            dict.fromkeys(
+                                [str(item) for item in last_patch_result.get("deleted_files", []) or []]
+                                + list(patch_application.get("deleted_files") or [])
+                            )
+                        )
+                        last_patch_result["display_summary"] = self.harness_engine.display_summary_for_output(
+                            "Generator",
+                            last_patch_result,
+                        )
                     self._write_json_file(workspace, f"{run_root}/output/patch_result.json", last_patch_result)
                     yield self._agent_summary_event(
                         role="Generator",

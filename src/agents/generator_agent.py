@@ -84,6 +84,29 @@ def _normalize_string_list(value: Any) -> List[str]:
     return []
 
 
+def _unique_paths(*groups: List[str]) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    for group in groups:
+        for item in group:
+            path = str(item).strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            ordered.append(path)
+    return ordered
+
+
+def _normalize_patch_operations(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    operations: List[Dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            operations.append(dict(item))
+    return operations
+
+
 def _normalize_command_specs(value: Any) -> List[Dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -118,6 +141,34 @@ def _parse_tool_arguments(raw_args: str) -> Tuple[Dict[str, Any], Optional[str]]
     if not isinstance(parsed, Mapping):
         return {}, "Malformed tool arguments: expected a JSON object."
     return dict(parsed), None
+
+
+def _invalid_tool_call_feedback(error: str, *, force_patch_envelope: bool = False) -> str:
+    base = (
+        f"{error} Retry the file tool with one valid JSON object only. "
+        "Use workspace-relative paths like 'index.html' or 'src/App.tsx', never absolute paths, "
+        "and escape embedded quotes or newlines inside content/file_text. "
+        "If you need to inspect the workspace, use command='view' with path='.'."
+    )
+    if not force_patch_envelope:
+        return base
+    return (
+        base
+        + " Do not call the file tool again for this file if JSON escaping keeps failing. "
+        "Instead, return the final PatchResult now with patch_envelope.patch_type='file_replacement' and "
+        "include complete operation content for every remaining file that still needs to be created or updated."
+    )
+
+
+def _is_invalid_tool_arguments_api_error(error: Exception) -> bool:
+    text = str(error)
+    return "invalid function arguments json string" in text.lower()
+
+
+def _provider_invalid_tool_feedback(error: Exception) -> str:
+    return _invalid_tool_call_feedback(
+        "Provider rejected the previous tool call before execution because the tool arguments were not valid JSON."
+    )
 
 
 def _harness_file_tool_schema(name: str) -> Dict[str, Any]:
@@ -208,19 +259,33 @@ class GeneratorAgent:
         plan_contract: Dict[str, Any] = dict(plan_contract_raw) if isinstance(plan_contract_raw, Mapping) else {}
         before_files = set(before_snapshot)
         after_files = set(after_snapshot)
-        created_files = sorted(after_files - before_files)
-        deleted_files = sorted(before_files - after_files)
-        changed_files = sorted(
+        actual_created_files = sorted(after_files - before_files)
+        actual_deleted_files = sorted(before_files - after_files)
+        actual_changed_files = sorted(
             path for path in before_files & after_files if before_snapshot.get(path) != after_snapshot.get(path)
         )
-        touched_files = created_files + changed_files
         source = raw_obj or {}
+        source_created_files = _normalize_string_list(source.get("created_files"))
+        source_changed_files = _normalize_string_list(source.get("changed_files"))
+        source_deleted_files = _normalize_string_list(source.get("deleted_files"))
+        created_files = _unique_paths(actual_created_files, source_created_files)
+        changed_files = _unique_paths(actual_changed_files, source_changed_files)
+        deleted_files = _unique_paths(actual_deleted_files, source_deleted_files)
+        touched_files = _unique_paths(created_files, changed_files)
+        patch_envelope_raw = source.get("patch_envelope") if isinstance(source.get("patch_envelope"), Mapping) else {}
+        patch_operations = _normalize_patch_operations(patch_envelope_raw.get("operations"))
+        envelope_changed_files = _normalize_string_list(patch_envelope_raw.get("changed_files"))
+        envelope_changed_files = _unique_paths(
+            touched_files,
+            envelope_changed_files,
+            [str(op.get("path") or "").strip() for op in patch_operations if isinstance(op, Mapping)],
+        )
         patch_result = {
             "schema_version": str(source.get("schema_version") or "1.0"),
             "task_id": str(source.get("task_id") or plan_contract.get("task_id") or "task_runtime_001"),
             "round_id": int(source.get("round_id") or generator_input.get("round_id") or 1),
             "mode": str(source.get("mode") or generator_input.get("mode") or ("repair" if int(generator_input.get("round_id") or 1) > 1 else "initial")),
-            "changed_files": touched_files,
+            "changed_files": changed_files,
             "created_files": created_files,
             "deleted_files": deleted_files,
             "summary": str(
@@ -232,12 +297,12 @@ class GeneratorAgent:
             or _normalize_command_specs(plan_contract.get("test_commands")),
             "risk_points": _normalize_string_list(source.get("risk_points")),
             "patch_envelope": {
-                "schema_version": "1.0",
-                "task_id": str(source.get("task_id") or plan_contract.get("task_id") or "task_runtime_001"),
-                "round_id": int(source.get("round_id") or generator_input.get("round_id") or 1),
-                "patch_type": "file_replacement",
-                "operations": [{"op": "file_replacement", "path": path} for path in touched_files],
-                "changed_files": touched_files,
+                "schema_version": str(patch_envelope_raw.get("schema_version") or source.get("schema_version") or "1.0"),
+                "task_id": str(patch_envelope_raw.get("task_id") or source.get("task_id") or plan_contract.get("task_id") or "task_runtime_001"),
+                "round_id": int(patch_envelope_raw.get("round_id") or source.get("round_id") or generator_input.get("round_id") or 1),
+                "patch_type": str(patch_envelope_raw.get("patch_type") or "file_replacement"),
+                "operations": patch_operations or [{"op": "file_replacement", "path": path} for path in touched_files],
+                "changed_files": envelope_changed_files,
             },
             "needs_replan": bool(source.get("needs_replan", False)),
             "replan_reason": str(source.get("replan_reason") or ""),
@@ -262,40 +327,78 @@ class GeneratorAgent:
         return [existing[name] for name in sorted(existing) if name]
 
     def _path_policy(self, generator_input: Mapping[str, Any]) -> Tuple[List[str], List[str]]:
-        plan_contract = generator_input.get("plan_contract") if isinstance(generator_input.get("plan_contract"), Mapping) else {}
-        constraints = generator_input.get("harness_constraints") if isinstance(generator_input.get("harness_constraints"), Mapping) else {}
+        plan_contract_raw = generator_input.get("plan_contract")
+        constraints_raw = generator_input.get("harness_constraints")
+        plan_contract = dict(plan_contract_raw) if isinstance(plan_contract_raw, Mapping) else {}
+        constraints = dict(constraints_raw) if isinstance(constraints_raw, Mapping) else {}
         allowed = list(plan_contract.get("allowed_files") or constraints.get("allowed_write_paths") or [])
         forbidden = list(plan_contract.get("forbidden_files") or constraints.get("forbidden_write_paths") or [])
         return [str(item) for item in allowed], [str(item) for item in forbidden]
 
-    def _safe_workspace_file(self, raw_path: str, generator_input: Mapping[str, Any], *, writing: bool) -> Tuple[Optional[Path], Optional[str]]:
+    def _render_directory_view(self, full_path: Path, *, workspace: Path) -> str:
+        target = "." if full_path == workspace else str(full_path.relative_to(workspace)).replace("\\", "/")
+        entries: List[str] = []
+        try:
+            for child in sorted(full_path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+                rel = str(child.relative_to(workspace)).replace("\\", "/")
+                if any(rel == prefix[:-1] or rel.startswith(prefix) for prefix in _SKIP_PREFIXES):
+                    continue
+                suffix = "/" if child.is_dir() else ""
+                entries.append(f"- {rel}{suffix}")
+                if len(entries) >= 80:
+                    break
+        except Exception as exc:
+            return f"Failed to inspect directory {target}: {exc}"
+        if not entries:
+            return f"Directory listing for {target}:\n(empty)"
+        return f"Directory listing for {target}:\n" + "\n".join(entries)
+
+    def _safe_workspace_file(
+        self,
+        raw_path: str,
+        generator_input: Mapping[str, Any],
+        *,
+        writing: bool,
+    ) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
         path_text = str(raw_path or "").strip()
         if not path_text:
-            return None, "Missing path."
-        if Path(path_text).is_absolute():
-            return None, "Path must be workspace-relative."
+            return None, None, "Missing path. Use a workspace-relative file path such as 'index.html'."
         workspace = self._workspace_path()
+        candidate = Path(path_text).expanduser()
+        if candidate.is_absolute():
+            resolved_candidate = candidate.resolve(strict=False)
+            try:
+                path_text = str(resolved_candidate.relative_to(workspace)).replace("\\", "/") or "."
+            except ValueError:
+                return None, None, "Path must be workspace-relative. Use a path like 'index.html', not an absolute path."
+        else:
+            path_text = str(Path(path_text)).replace("\\", "/") or "."
+        if writing and path_text == ".":
+            return None, None, "Path must point to a file, not the workspace root '.'."
         allowed, forbidden = self._path_policy(generator_input)
         if writing and not self.harness.is_path_allowed(path_text, allowed, forbidden, workspace):
-            return None, f"Path is outside Generator allowed_files or forbidden by policy: {path_text}"
+            return None, None, f"Path is outside Generator allowed_files or forbidden by policy: {path_text}"
         full_path = (workspace / path_text).resolve(strict=False)
         try:
             full_path.relative_to(workspace)
         except ValueError:
-            return None, "Path escapes workspace."
-        return full_path, None
+            return None, None, "Path escapes workspace."
+        normalized_path = "." if full_path == workspace else str(full_path.relative_to(workspace)).replace("\\", "/")
+        return full_path, normalized_path, None
 
     async def _execute_harness_file_tool(self, tool_args: Mapping[str, Any], generator_input: Mapping[str, Any]) -> Tuple[bool, str]:
         command = str(tool_args.get("command") or "").strip().lower()
         raw_path = str(tool_args.get("path") or tool_args.get("file_path") or "").strip()
         writing = command in {"create", "write", "write_file", "str_replace", "insert"}
-        full_path, error = self._safe_workspace_file(raw_path, generator_input, writing=writing)
-        if error or full_path is None:
+        full_path, normalized_path, error = self._safe_workspace_file(raw_path, generator_input, writing=writing)
+        if error or full_path is None or normalized_path is None:
             return False, error or "Invalid path."
 
         if command in {"view", "read", "read_file"}:
+            if full_path.exists() and full_path.is_dir():
+                return True, self._render_directory_view(full_path, workspace=self._workspace_path())
             if not full_path.exists() or not full_path.is_file():
-                return False, f"File does not exist: {raw_path}"
+                return False, f"File does not exist: {normalized_path}"
             text = full_path.read_text(encoding="utf-8")
             view_range = tool_args.get("view_range")
             if isinstance(view_range, list) and len(view_range) == 2:
@@ -309,11 +412,11 @@ class GeneratorAgent:
             content = str(tool_args.get("file_text") if tool_args.get("file_text") is not None else tool_args.get("content") or "")
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding="utf-8")
-            return True, f"Wrote {raw_path} ({len(content)} chars)."
+            return True, f"Wrote {normalized_path} ({len(content)} chars)."
 
         if command == "str_replace":
             if not full_path.exists() or not full_path.is_file():
-                return False, f"File does not exist: {raw_path}"
+                return False, f"File does not exist: {normalized_path}"
             old_str = str(tool_args.get("old_str") or "")
             new_str = str(tool_args.get("new_str") or "")
             if not old_str:
@@ -323,18 +426,18 @@ class GeneratorAgent:
             if occurrences != 1:
                 return False, f"old_str must match exactly once; found {occurrences} matches."
             full_path.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
-            return True, f"Replaced text in {raw_path}."
+            return True, f"Replaced text in {normalized_path}."
 
         if command == "insert":
             if not full_path.exists() or not full_path.is_file():
-                return False, f"File does not exist: {raw_path}"
+                return False, f"File does not exist: {normalized_path}"
             insert_line = int(tool_args.get("insert_line") or 0)
             new_str = str(tool_args.get("new_str") or tool_args.get("content") or tool_args.get("file_text") or "")
             lines = full_path.read_text(encoding="utf-8").splitlines()
             index = max(0, min(insert_line, len(lines)))
             lines[index:index] = new_str.splitlines()
             full_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return True, f"Inserted text into {raw_path}."
+            return True, f"Inserted text into {normalized_path}."
 
         return False, f"Unsupported file command: {command}"
 
@@ -368,6 +471,8 @@ class GeneratorAgent:
         raw_content = ""
         tool_step = 0
         raw_obj: Optional[Dict[str, Any]] = None
+        invalid_tool_call_count = 0
+        incomplete_json_retry_count = 0
 
         for iteration in range(max_iterations):
             assistant_message: Dict[str, Any] = {"role": "assistant", "content": ""}
@@ -377,7 +482,7 @@ class GeneratorAgent:
                     messages=messages,
                     tools=generator_tools if generator_tools else None,
                     temperature=0.1,
-                    max_tokens=2400,
+                    max_tokens=8000,
                     stream=True,
                     model=model,
                 )
@@ -413,14 +518,57 @@ class GeneratorAgent:
                                     tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
             except Exception as exc:
                 logger.warning(f"GeneratorAgent iteration {iteration} model error: {exc}")
+                if _is_invalid_tool_arguments_api_error(exc):
+                    invalid_tool_call_count += 1
+                    feedback = _invalid_tool_call_feedback(
+                        "Provider rejected the previous tool call before execution because the tool arguments were not valid JSON.",
+                        force_patch_envelope=invalid_tool_call_count >= 2,
+                    )
+                    yield self._sse(
+                        {
+                            "type": "agent_step",
+                            "role": "Generator",
+                            "status": "error",
+                            "title": "验证遇到问题",
+                            "detail": feedback,
+                            "session_id": session_id,
+                        }
+                    )
+                    if assistant_message.get("content"):
+                        messages.append({"role": "assistant", "content": assistant_message["content"]})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Harness rejected the previous response before tool execution. {feedback}",
+                        }
+                    )
+                    continue
                 break
 
             if not tool_calls:
                 raw_obj = _find_first_json_object(assistant_message["content"])
+                if raw_obj is not None:
+                    break
+                if assistant_message.get("content"):
+                    incomplete_json_retry_count += 1
+                    messages.append({"role": "assistant", "content": assistant_message["content"]})
+                    if incomplete_json_retry_count < 3:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "The previous response was not a complete valid JSON PatchResult object. "
+                                    "Return the full PatchResult again as one complete JSON object only, with all braces closed. "
+                                    "Do not call tools unless you still need to write missing files."
+                                ),
+                            }
+                        )
+                        continue
                 break
 
-            assistant_message["tool_calls"] = tool_calls
-            messages.append(dict(assistant_message))
+            sanitized_tool_calls: List[Dict[str, Any]] = []
+            tool_messages: List[Dict[str, Any]] = []
+            correction_messages: List[Dict[str, str]] = []
 
             for tc in tool_calls:
                 tool_name = tc["function"]["name"]
@@ -444,7 +592,17 @@ class GeneratorAgent:
                 tool_result = ""
                 success = False
                 if parse_error:
-                    tool_result = parse_error
+                    invalid_tool_call_count += 1
+                    tool_result = _invalid_tool_call_feedback(
+                        parse_error,
+                        force_patch_envelope=invalid_tool_call_count >= 2,
+                    )
+                    correction_messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Harness rejected the previous {tool_name} tool call. {tool_result}",
+                        }
+                    )
                 else:
                     try:
                         if resolved_tool_name in {"filesystem", "file-manager"}:
@@ -455,6 +613,24 @@ class GeneratorAgent:
                             success = result.success
                     except Exception as exc:
                         tool_result = str(exc)
+                    sanitized_tool_calls.append(
+                        {
+                            "id": tc.get("id", "unknown"),
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args, ensure_ascii=False),
+                            },
+                        }
+                    )
+                    tool_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", "unknown"),
+                            "name": tool_name,
+                            "content": tool_result[:8000],
+                        }
+                    )
 
                 yield self._sse(
                     {
@@ -466,14 +642,17 @@ class GeneratorAgent:
                         "session_id": session_id,
                     }
                 )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", "unknown"),
-                        "name": tool_name,
-                        "content": tool_result[:8000],
-                    }
-                )
+
+            if sanitized_tool_calls:
+                history_message = dict(assistant_message)
+                history_message["tool_calls"] = sanitized_tool_calls
+                messages.append(history_message)
+                messages.extend(tool_messages)
+            elif assistant_message.get("content"):
+                messages.append({"role": "assistant", "content": assistant_message["content"]})
+
+            if correction_messages:
+                messages.extend(correction_messages)
 
         after_snapshot = self._snapshot_workspace_state()
         self.last_patch_result = self._build_patch_result(before_snapshot, after_snapshot, generator_input, raw_obj)

@@ -96,6 +96,8 @@ sed -n
 
 Do not use shell to build, test, install, run servers, or modify files.
 
+If file-tool JSON escaping fails repeatedly for a large file, stop retrying the tool call and return the final `PatchResult` with a `patch_envelope` that includes full `file_replacement` content for the remaining file(s).
+
 ---
 
 ## Input: Initial Mode
@@ -236,6 +238,7 @@ Rules:
 - `old_text` must be exact enough for Harness to locate one target
 - Do not use vague or partial text that may match multiple places
 - Keep replacement small when possible
+- If repeated tool-call JSON escaping keeps failing, stop using the tool and switch to a final `file_replacement` patch with full file content instead of more broken retries
 
 ---
 
