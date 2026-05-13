@@ -87,37 +87,34 @@
   color: #6b7280;
 }
 
-/* 暗色主题支持 */
-@media (prefers-color-scheme: dark) {
-  .todo-strip {
-    background: #1f2937;
-    border-color: #374151;
-  }
+html[data-theme="dark"] .todo-strip {
+  background: #1f2937;
+  border-color: #374151;
+}
 
-  .todo-strip-header {
-    background: #111827;
-    border-color: #374151;
-  }
+html[data-theme="dark"] .todo-strip-header {
+  background: #111827;
+  border-color: #374151;
+}
 
-  .todo-strip-progress {
-    color: #9ca3af;
-  }
+html[data-theme="dark"] .todo-strip-progress {
+  color: #9ca3af;
+}
 
-  .todo-strip-item {
-    border-color: #374151;
-  }
+html[data-theme="dark"] .todo-strip-item {
+  border-color: #374151;
+}
 
-  .todo-strip-item.done {
-    background: rgba(16, 185, 129, 0.15);
-  }
+html[data-theme="dark"] .todo-strip-item.done {
+  background: rgba(16, 185, 129, 0.15);
+}
 
-  .todo-checkbox {
-    border-color: #4b5563;
-  }
+html[data-theme="dark"] .todo-checkbox {
+  border-color: #4b5563;
+}
 
-  .todo-strip-item.done .todo-item-text {
-    color: #9ca3af;
-  }
+html[data-theme="dark"] .todo-strip-item.done .todo-item-text {
+  color: #9ca3af;
 }
 
 /* ============================================================================
@@ -1130,31 +1127,28 @@
   background: #5568d3;
 }
 
-/* 暗色主题 */
-@media (prefers-color-scheme: dark) {
-  .creature-list {
-    background: #1f2937;
-  }
+html[data-theme="dark"] .creature-list {
+  background: #1f2937;
+}
 
-  .creature-list-header {
-    background: #111827;
-    border-color: #374151;
-  }
+html[data-theme="dark"] .creature-list-header {
+  background: #111827;
+  border-color: #374151;
+}
 
-  .creature-item {
-    background: #1f2937;
-    border-color: #374151;
-  }
+html[data-theme="dark"] .creature-item {
+  background: #1f2937;
+  border-color: #374151;
+}
 
-  .creature-item:hover {
-    border-color: #667eea;
-  }
+html[data-theme="dark"] .creature-item:hover {
+  border-color: #667eea;
+}
 
-  .creature-description {
-    color: #9ca3af;
-  }
+html[data-theme="dark"] .creature-description {
+  color: #9ca3af;
+}
 
-  .creature-port {
-    color: #9ca3af;
-  }
+html[data-theme="dark"] .creature-port {
+  color: #9ca3af;
 }

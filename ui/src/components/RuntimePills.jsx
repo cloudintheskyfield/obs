@@ -16,6 +16,7 @@ export default function RuntimePills({
     previewOpen, onTogglePreview,
     createHubOpen, onToggleCreateHub,
     fileChangeSummary, onFocusFiles,
+    themeMode, effectiveTheme, onThemeToggle,
 }) {
     const workingPct = Math.min(100, Math.max(0, Number(contextPercent) || 0));
     const threadPct = Math.min(100, Math.max(0, Number(threadContextPercent) || 0));
@@ -32,6 +33,14 @@ export default function RuntimePills({
     const threadPctLabel = threadPct < 0.1 ? "<0.1%" : `${threadPct.toFixed(threadPct >= 10 ? 0 : 1)}%`;
     const workingPctLabel = workingPct < 0.1 ? "<0.1%" : `${workingPct.toFixed(workingPct >= 10 ? 0 : 1)}%`;
     const roundsLabel = threadTurnCount === 1 ? "1 round" : `${threadTurnCount || 0} rounds`;
+    const themeIcon = themeMode === "system"
+        ? "fa-circle-half-stroke"
+        : effectiveTheme === "light"
+        ? "fa-sun"
+        : "fa-moon";
+    const themeLabel = themeMode === "system"
+        ? `主题：跟随系统（当前${effectiveTheme === "light" ? "浅色" : "深色"}）`
+        : `主题：${effectiveTheme === "light" ? "浅色" : "深色"}`;
 
     return (
         <header className="unified-bar">
@@ -134,6 +143,17 @@ export default function RuntimePills({
 
             {/* ── Right: icon actions ── */}
             <div className="unified-bar-actions">
+                {onThemeToggle ? (
+                    <button
+                        className={`icon-button theme-toggle-button${themeMode !== "system" ? " active" : ""}`}
+                        type="button"
+                        title={`${themeLabel} · 点击切换 system / light / dark`}
+                        onClick={onThemeToggle}
+                        aria-label={themeLabel}
+                    >
+                        <i className={`fas ${themeIcon}`} />
+                    </button>
+                ) : null}
                 {githubUrl && (
                     <a className="icon-button" href={githubUrl} target="_blank" rel="noreferrer noopener" title="Open GitHub repository">
                         <i className="fab fa-github" />

@@ -39,6 +39,7 @@ const MODEL_CONTEXT_WINDOWS = {
     "MiniMax-M2": 200000,
 };
 const VALID_PERMISSION_MODES = ["ask", "auto"];
+const VALID_THEME_MODES = ["system", "light", "dark"];
 const CREATE_GUIDED_TIMEOUT_MS = 5000;
 const CREATE_GUIDED_FLOW_ENABLED = false;
 const CREATE_GAME_REQUEST_PATTERN = /(game|游戏|僵尸|zombie|迷宫|maze|射击|shoot|fps|生存|boss|关卡|穿越火线|cf)/i;
@@ -63,6 +64,33 @@ function nowIso() {
 
 function normalizePermissionMode(value) {
     return VALID_PERMISSION_MODES.includes(value) ? value : "ask";
+}
+
+function normalizeThemeMode(value) {
+    return VALID_THEME_MODES.includes(value) ? value : "system";
+}
+
+function getSystemTheme() {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+        return "dark";
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function resolveEffectiveTheme(themeMode, systemTheme) {
+    const normalizedMode = normalizeThemeMode(themeMode);
+    return normalizedMode === "system" ? systemTheme : normalizedMode;
+}
+
+function applyDocumentTheme(themeMode, systemTheme) {
+    if (typeof document === "undefined") {
+        return;
+    }
+    const normalizedMode = normalizeThemeMode(themeMode);
+    const effectiveTheme = resolveEffectiveTheme(normalizedMode, systemTheme);
+    document.documentElement.dataset.themeMode = normalizedMode;
+    document.documentElement.dataset.theme = effectiveTheme;
+    document.documentElement.style.colorScheme = effectiveTheme;
 }
 
 function filterHarnessSkills(skills) {
@@ -903,11 +931,13 @@ function App() {
     const [settings, setSettings] = useState({
         apiUrl: resolveDefaultApiBaseUrl(),
         autoSave: true,
-        theme: "dark",
+        theme: "system",
         permissionMode: "ask",
         thinkingMode: true,
         toolContext: "workspace"
     });
+    const [themeMode, setThemeMode] = useState("system");
+    const [systemTheme, setSystemTheme] = useState(() => getSystemTheme());
     const [mode, setMode] = useState("agent");
     const [runtime, setRuntime] = useState(null);
     const [runtimeStatus, setRuntimeStatus] = useState("Checking runtime");
@@ -981,6 +1011,8 @@ function App() {
     const initialLoadDoneRef = useRef(false);
     const abortControllerRef = useRef(null);
 
+    const effectiveTheme = resolveEffectiveTheme(themeMode, systemTheme);
+
     useEffect(() => {
         settingsRef.current = settings;
     }, [settings]);
@@ -992,6 +1024,27 @@ function App() {
     useEffect(() => {
         currentSessionIdRef.current = currentSessionId;
     }, [currentSessionId]);
+
+    useEffect(() => {
+        if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+            return undefined;
+        }
+        const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+        const handleChange = (event) => {
+            setSystemTheme(event.matches ? "dark" : "light");
+        };
+        setSystemTheme(mediaQuery.matches ? "dark" : "light");
+        if (typeof mediaQuery.addEventListener === "function") {
+            mediaQuery.addEventListener("change", handleChange);
+            return () => mediaQuery.removeEventListener("change", handleChange);
+        }
+        mediaQuery.addListener(handleChange);
+        return () => mediaQuery.removeListener(handleChange);
+    }, []);
+
+    useEffect(() => {
+        applyDocumentTheme(themeMode, systemTheme);
+    }, [themeMode, systemTheme]);
 
     // Keep the sidebar activity badge in sync for the currently generating thread,
     // whether or not the user is looking at that thread right now.
@@ -1026,6 +1079,9 @@ function App() {
                 }
                 if (stored.permissionMode) {
                     setPermissionMode(normalizePermissionMode(stored.permissionMode));
+                }
+                if (stored.theme) {
+                    setThemeMode(normalizeThemeMode(stored.theme));
                 }
                 if (stored.toolContext) {
                     setToolContext(stored.toolContext);
@@ -1071,13 +1127,14 @@ function App() {
     useEffect(() => {
         setSettings((current) => ({
             ...current,
+            theme: themeMode,
             permissionMode,
             thinkingMode,
             toolContext,
             selectedSkills,
             selectedModel
         }));
-    }, [permissionMode, thinkingMode, toolContext, selectedSkills, selectedModel]);
+    }, [themeMode, permissionMode, thinkingMode, toolContext, selectedSkills, selectedModel]);
 
     useEffect(() => {
         if (!currentSessionId || !selectedModel) return;
@@ -1929,6 +1986,14 @@ function App() {
             if (Number.isFinite(fromMs) && ts < fromMs) return false;
             if (Number.isFinite(toMs) && ts > toMs) return false;
             return true;
+        });
+    }
+
+    function cycleThemeMode() {
+        setThemeMode((current) => {
+            const order = ["system", "light", "dark"];
+            const currentIndex = order.indexOf(normalizeThemeMode(current));
+            return order[(currentIndex + 1) % order.length];
         });
     }
 
@@ -3018,6 +3083,9 @@ function App() {
                     onToggleCreateHub={toggleCreateHub}
                     fileChangeSummary={fileChangeSummary}
                     onFocusFiles={focusFilesChanged}
+                    themeMode={themeMode}
+                    effectiveTheme={effectiveTheme}
+                    onThemeToggle={cycleThemeMode}
                 />
 
                 <section className={`create-hub-dropdown${createHubOpen ? " open" : ""}`} aria-hidden={!createHubOpen}>

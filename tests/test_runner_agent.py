@@ -158,3 +158,56 @@ def test_runner_starts_dev_server_and_executes_smoke_tests(tmp_path: Path) -> No
     assert report["browser_tests"][0]["passed"] is True
     assert report["cleanup"]["dev_server_stopped"] is True
     assert (tmp_path / report["dev_server"]["log"]).exists()
+
+
+def test_runner_supports_deterministic_evaluate_smoke_test(tmp_path: Path) -> None:
+    port = _free_port()
+    (tmp_path / "index.html").write_text(
+        "<html><body><h1>runner ok</h1></body></html>", encoding="utf-8"
+    )
+    runner = RunnerAgent(vllm_client=None, skill_manager=None)
+    runner_input = {
+        "schema_version": "1.0",
+        "task_id": "task_runner_evaluate",
+        "round_id": 1,
+        "workspace": str(tmp_path),
+        "run_dir": ".harness/runs/run_001",
+        "plan_contract": {"task_id": "task_runner_evaluate"},
+        "patch_result": {"changed_files": ["index.html"]},
+        "test_commands": [],
+        "dev_server": {
+            "enabled": True,
+            "start_cmd": f"python -m http.server {port} --bind 127.0.0.1",
+            "url": f"http://127.0.0.1:{port}",
+            "ready_patterns": ["Serving HTTP on"],
+            "timeout_sec": 20,
+        },
+        "smoke_tests": [
+            {
+                "id": "content_visible",
+                "type": "browser",
+                "action": "evaluate",
+                "target": "document.body.innerText.length > 0",
+                "expect": {"result": True},
+                "timeout_sec": 10,
+                "required": True,
+            }
+        ],
+        "runner_limits": {
+            "dev_server_timeout_sec": 20,
+            "browser_test_timeout_sec": 10,
+        },
+        "permissions": {},
+        "search_reports": [],
+    }
+
+    async def collect() -> None:
+        async for _ in runner.run("runner-session", runner_input, tools=[]):
+            pass
+
+    asyncio.run(collect())
+
+    report = runner.last_run_report
+    assert report["status"] == "PASSED"
+    assert report["browser_tests"][0]["status"] == "PASSED"
+    assert report["browser_tests"][0]["evaluation_result"] is True

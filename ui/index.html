@@ -4,6 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OBS Claude-style Console</title>
+    <script>
+      (function () {
+        var STORAGE_KEY = "obs-agent-settings";
+        var VALID_THEME_MODES = { system: true, light: true, dark: true };
+        function normalizeThemeMode(value) {
+          return VALID_THEME_MODES[value] ? value : "system";
+        }
+        function getSystemTheme() {
+          return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        }
+        try {
+          var stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+          var themeMode = normalizeThemeMode(stored && stored.theme);
+          var effectiveTheme = themeMode === "system" ? getSystemTheme() : themeMode;
+          document.documentElement.dataset.themeMode = themeMode;
+          document.documentElement.dataset.theme = effectiveTheme;
+          document.documentElement.style.colorScheme = effectiveTheme;
+        } catch (error) {
+          var fallbackTheme = getSystemTheme();
+          document.documentElement.dataset.themeMode = "system";
+          document.documentElement.dataset.theme = fallbackTheme;
+          document.documentElement.style.colorScheme = fallbackTheme;
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />

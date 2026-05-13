@@ -95,11 +95,13 @@ PLANNER_SYSTEM_PROMPT = (
 
     "smoke_tests item schema:\n"
     "- Each smoke_tests item must include id, type, action, expect, timeout_sec, and required.\n"
-    "- Browser/page-load/click/keyboard checks must go in smoke_tests, not in test_commands.\n"
+    "- Browser/page-load/click/keyboard/evaluate checks must go in smoke_tests, not in test_commands.\n"
+    "- Allowed smoke test actions are goto, click, keyboard, and evaluate.\n"
     "- If action is goto, include target.\n"
     "- If action is click, include selector_candidates.\n"
     "- If action is keyboard, include key.\n"
-    "- expect must be an object describing observable checks such as page_loaded, text_contains_any, no_fatal_console_error, visual_change.\n"
+    "- If action is evaluate, target must be a JavaScript expression to evaluate in the loaded page context.\n"
+    "- expect must be an object describing observable checks such as page_loaded, text_contains_any, no_fatal_console_error, visual_change, result, canvas_present, or canvas_nonblank.\n"
     "- timeout_sec must be a positive integer.\n"
     "- required must be a boolean.\n\n"
 
@@ -119,6 +121,7 @@ PLANNER_SYSTEM_PROMPT = (
     "- Do not over-plan. Keep implementation_steps focused and practical.\n"
     "- Do not claim the task is completed or verified. Only define how Generator and Runner should implement and verify it.\n"
     "- For web, UI, frontend, or game requests, include build checks and browser smoke tests when the project supports them.\n"
+    "- For game or highly interactive UI requests, prefer a sequence that covers page_load plus at least one interaction or state-observation check.\n"
     "- For backend or Python requests, include appropriate tests such as pytest, python -m pytest, python -m compileall, or a minimal smoke command when available.\n\n"
 
     "package_json_policy rules:\n"
@@ -440,6 +443,93 @@ def _default_file_output_commands(allowed_files: List[str]) -> List[Dict[str, An
     ]
 
 
+_GAME_REQUEST_RE = re.compile(
+    r"(game|小游戏|游戏|跑酷|忍者|platformer|arcade|canvas|playable|interactive)",
+    re.IGNORECASE,
+)
+
+
+def _is_game_or_interactive_request(user_message: str) -> bool:
+    return bool(_GAME_REQUEST_RE.search(str(user_message or "")))
+
+
+def _ensure_game_smoke_tests(
+    goal: str, smoke_tests: List[Dict[str, Any]], allowed_files: List[str]
+) -> List[Dict[str, Any]]:
+    if not _is_game_or_interactive_request(goal):
+        return smoke_tests
+
+    tests = [dict(item) for item in smoke_tests]
+    ids = {str(item.get("id") or "").strip() for item in tests}
+    actions = {str(item.get("action") or "").strip() for item in tests}
+    default_target = "index.html" if "index.html" in allowed_files else "http://localhost:5173"
+
+    if "page_load" not in ids:
+        tests.insert(
+            0,
+            {
+                "id": "page_load",
+                "type": "browser",
+                "action": "goto",
+                "target": default_target,
+                "expect": {
+                    "page_loaded": True,
+                    "no_fatal_console_error": True,
+                },
+                "timeout_sec": 15,
+                "required": True,
+            },
+        )
+
+    if "evaluate" not in actions:
+        tests.append(
+            {
+                "id": "game_surface_visible",
+                "type": "browser",
+                "action": "evaluate",
+                "target": "(document.body.innerText || '').trim().length > 0 || document.querySelector('canvas') !== null",
+                "expect": {"result": True},
+                "timeout_sec": 10,
+                "required": True,
+            }
+        )
+
+    if "click" not in actions:
+        tests.append(
+            {
+                "id": "primary_action_click",
+                "type": "browser",
+                "action": "click",
+                "selector_candidates": [
+                    "button[data-testid='start']",
+                    "#start",
+                    ".start",
+                    "button",
+                    "[role='button']",
+                    "canvas",
+                ],
+                "expect": {"no_fatal_console_error": True},
+                "timeout_sec": 10,
+                "required": False,
+            }
+        )
+
+    if "keyboard" not in actions:
+        tests.append(
+            {
+                "id": "primary_action_key",
+                "type": "browser",
+                "action": "keyboard",
+                "key": "Space",
+                "expect": {"no_fatal_console_error": True},
+                "timeout_sec": 10,
+                "required": False,
+            }
+        )
+
+    return tests
+
+
 def _default_smoke_tests(existing_files: Optional[List[str]]) -> List[Dict[str, Any]]:
     files = existing_files or []
     if "index.html" in files or any(path.startswith("src/") for path in files):
@@ -658,10 +748,14 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
 
     browser_descriptions = _browser_descriptions_from_commands(source.get("test_commands"))
     converted_smoke_tests = _browser_smoke_tests_from_descriptions(browser_descriptions, contract["allowed_files"])
-    contract["smoke_tests"] = [
-        *(_normalize_smoke_tests(source.get("smoke_tests")) or base["smoke_tests"]),
-        *converted_smoke_tests,
-    ]
+    contract["smoke_tests"] = _ensure_game_smoke_tests(
+        contract["goal"],
+        [
+            *(_normalize_smoke_tests(source.get("smoke_tests")) or base["smoke_tests"]),
+            *converted_smoke_tests,
+        ],
+        contract["allowed_files"],
+    )
     contract["implementation_steps"] = _normalize_steps(source.get("implementation_steps")) or _derive_implementation_steps(
         contract["goal"],
         existing_files,
