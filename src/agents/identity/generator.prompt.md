@@ -124,7 +124,7 @@ Initial mode rules:
 - Inspect only files listed in `required_files_to_inspect` or provided in `project_files_snapshot`
 - Implement the minimal runnable version
 - Do not add features beyond the plan
-- Prefer editing existing files over creating many new files
+- Prefer editing existing files for bug fixes or refactors, BUT for new creative iterations or versions (like a new game or page), create a new file instead of overwriting the existing main artifact to preserve history.
 - Prefer existing dependencies and scripts
 
 ---

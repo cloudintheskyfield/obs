@@ -417,16 +417,61 @@ class GeneratorAgent:
         if command == "str_replace":
             if not full_path.exists() or not full_path.is_file():
                 return False, f"File does not exist: {normalized_path}"
-            old_str = str(tool_args.get("old_str") or "")
-            new_str = str(tool_args.get("new_str") or "")
+            old_str_val = tool_args.get("old_str") if tool_args.get("old_str") is not None else tool_args.get("old_text")
+            new_str_val = tool_args.get("new_str") if tool_args.get("new_str") is not None else tool_args.get("new_text")
+            old_str = str(old_str_val or "")
+            new_str = str(new_str_val or "")
             if not old_str:
                 return False, "old_str is required for str_replace."
             text = full_path.read_text(encoding="utf-8")
             occurrences = text.count(old_str)
-            if occurrences != 1:
-                return False, f"old_str must match exactly once; found {occurrences} matches."
-            full_path.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
-            return True, f"Replaced text in {normalized_path}."
+            if occurrences == 1:
+                full_path.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
+                return True, f"Replaced text in {normalized_path}."
+            if occurrences == 0:
+                import re
+                tokens = re.split(r'(\s+)', old_str)
+                pattern_parts = []
+                for t in tokens:
+                    if not t:
+                        continue
+                    if t.isspace():
+                        pattern_parts.append(r'\s+')
+                    else:
+                        pattern_parts.append(re.escape(t))
+                pattern = ''.join(pattern_parts)
+                try:
+                    matches = list(re.finditer(pattern, text))
+                    if len(matches) == 1:
+                        m = matches[0]
+                        new_content = text[:m.start()] + new_str + text[m.end():]
+                        full_path.write_text(new_content, encoding="utf-8")
+                        return True, f"Replaced text in {normalized_path} (using fuzzy whitespace match)."
+                    else:
+                        if getattr(self, "vllm_client", None) is not None:
+                            logger.info(f"Fuzzy match failed for {normalized_path}, attempting LLM extraction fallback.")
+                            messages = [
+                                {"role": "system", "content": "You are a precise code patch tool. Given the original file content and the intended old/new text snippet, return the COMPLETELY MODIFIED file content. Return ONLY the new file content. Do not output markdown backticks, explanations, or any other text."},
+                                {"role": "user", "content": f"=== ORIGINAL FILE ===\n{text}\n\n=== INTENDED OLD TEXT TO REPLACE ===\n{old_str}\n\n=== REPLACEMENT TEXT ===\n{new_str}\n\nReturn the fully updated file content directly without any backticks or formatting. It must be valid code."}
+                            ]
+                            try:
+                                response = await self.vllm_client.chat_completion(messages, temperature=0.1)
+                                if isinstance(response, dict) and response.get("choices"):
+                                    new_content = response["choices"][0]["message"]["content"]
+                                    if new_content.startswith("```"):
+                                        lines = new_content.splitlines()
+                                        if lines and lines[0].startswith("```"): lines = lines[1:]
+                                        if lines and lines[-1].startswith("```"): lines = lines[:-1]
+                                        new_content = "\n".join(lines) + "\n"
+                                    full_path.write_text(new_content, encoding="utf-8")
+                                    return True, f"Replaced text in {normalized_path} (using LLM extraction fallback)."
+                            except Exception as llm_exc:
+                                logger.warning(f"LLM extraction fallback failed: {llm_exc}")
+                        
+                        return False, f"old_str must match exactly once; found 0 exact and {len(matches)} fuzzy matches."
+                except Exception:
+                    pass
+            return False, f"old_str must match exactly once; found {occurrences} matches."
 
         if command == "insert":
             if not full_path.exists() or not full_path.is_file():

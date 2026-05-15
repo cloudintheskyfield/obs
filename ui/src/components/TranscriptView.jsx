@@ -218,14 +218,6 @@ function renderAgentProcess(entry, { workingTimerLabel, completedLabel } = {}) {
   if (!process) {
     return null
   }
-  const roles = ['Planner', 'Search', 'Generator', 'Runner', 'Evaluator']
-  const iconFor = {
-    Planner: 'fa-list-check',
-    Search: 'fa-magnifying-glass',
-    Generator: 'fa-code',
-    Runner: 'fa-terminal',
-    Evaluator: 'fa-vial-circle-check'
-  }
   const nameFor = {
     Planner: '制定计划',
     Search: '检索资料',
@@ -233,149 +225,99 @@ function renderAgentProcess(entry, { workingTimerLabel, completedLabel } = {}) {
     Runner: '运行验证',
     Evaluator: '检查结果'
   }
-  const activeEvent = [...(process.events || [])].reverse().find(event => event.status === 'running') || [...(process.events || [])].reverse().find(event => event.status === 'error') || [...(process.events || [])].reverse()[0]
-  const completedCount = roles.filter(role => process.roles?.[role]?.status === 'success').length
+  
   const issueEvent = process.currentIssue || [...(process.events || [])].reverse().find(event => event.status === 'error')
-  const latestSummary = process.latestSummary || null
-  const decision = process.decision || null
-  const timelineEvents = (process.events || []).slice(-5)
-  const statusCopy = processStatusCopy(process, activeEvent, issueEvent, decision)
+  const timelineEvents = process.events || []
   const timeLabel = entry.streaming ? workingTimerLabel : entry.elapsedLabel || completedLabel || null
-  const currentStageTitle = HARNESS_STAGE_META[activeEvent?.role]?.title || '准备中'
-  const toneMeta = PROCESS_TONE_META[statusCopy.tone] || PROCESS_TONE_META.planning
-  const headline = issueEvent
-    ? '任务暂时卡住'
-    : decision?.decision === 'PASS'
+  const decision = process.decision || null
+  const latestSummary = process.latestSummary || null
+
+  const isPass = decision?.decision === 'PASS' || process.status === 'done' || (!entry.streaming && !issueEvent)
+  const isBlocked = !!issueEvent
+  const headline = isBlocked
+    ? '任务遇到阻塞'
+    : isPass
       ? '任务已完成'
-      : latestSummary?.title || process.statusLine || activeEvent?.title || 'Harness 正在处理任务'
-  const summary = issueEvent
-    ? issueEvent.detail || '正在等待处理当前问题后继续。'
-    : latestSummary?.summary || activeEvent?.detail || statusCopy.detail
-  const stageItems = roles.map(role => {
-    const state = process.roles?.[role] || { status: 'pending' }
-    const meta = HARNESS_STAGE_META[role]
-    const isCurrent = activeEvent?.role === role && state.status !== 'success'
-    const detail = state.detail || state.title || (state.status === 'pending' ? meta.waiting : meta.summary)
-    return {
-      role,
-      icon: iconFor[role],
-      title: meta.title,
-      summary: detail,
-      status: state.status || 'pending',
-      label: isCurrent ? `当前${statusChipLabel(state.status || 'running')}` : statusChipLabel(state.status),
-      current: isCurrent
-    }
-  })
-  const nextSteps = splitActionSteps(process.nextAction)
-  const compactHighlights = (latestSummary?.highlights || [])
+      : entry.streaming 
+        ? '系统正在处理任务...'
+        : '执行完成'
+
+  const issueTitle = issueEvent ? friendlyIssueTitle(issueEvent) : ''
+  const issueDetail = issueEvent ? friendlyDetail(issueEvent.detail || issueEvent.evidence || '') : ''
+
+  const rawHighlights = latestSummary?.highlights;
+  const safeHighlights = Array.isArray(rawHighlights) ? rawHighlights : (typeof rawHighlights === 'string' ? [rawHighlights] : []);
+  const compactHighlights = safeHighlights
     .map(friendlyHighlight)
     .filter(item => item && !/^验证命令\s+cmd_\d+/i.test(item))
     .slice(0, 4)
-  const repairBudget = decision?.budgetRemaining?.repair_rounds ?? decision?.budgetRemaining?.repair_rounds_left ?? '--'
-  const topStatus = `${statusCopy.label}${process.roundId ? ` · 第 ${process.roundId} 轮` : ''} · 当前阶段：${currentStageTitle}${repairBudget !== '--' ? ` · 还可修复 ${repairBudget} 次` : ''}`
-  const issueTitle = issueEvent ? friendlyIssueTitle(issueEvent) : ''
-  const issueDetail = issueEvent ? friendlyDetail(issueEvent.detail || issueEvent.evidence || '') : ''
+
   return (
-    <div className="agent-process-card" aria-live="polite">
+    <div className="agent-process-card codex-style-card" aria-live="polite">
       <div className="agent-process-head">
         <div className="agent-process-head-copy">
-          <span className="agent-process-kicker">Harness Timeline</span>
+          <span className="agent-process-kicker">任务进度</span>
           <strong>{headline}</strong>
-          {summary ? <p className="agent-process-summary">{friendlyDetail(summary)}</p> : null}
         </div>
         <div className="agent-process-head-meta">
           {timeLabel ? <span className="agent-process-time-badge">{timeLabel}</span> : null}
-          <span className={`agent-process-live ${statusCopy.tone}`}>{toneMeta.live}</span>
+          {entry.streaming ? <span className="agent-process-live executing">●</span> : null}
         </div>
       </div>
-      <div className={`agent-process-statusbar ${statusCopy.tone}`}>
-        <span className={`agent-process-status-dot ${statusCopy.tone}`} aria-hidden="true" />
-        <strong>{topStatus}</strong>
-        <span>{statusCopy.detail}</span>
-      </div>
-      <div className="harness-workbench">
-        <section className="harness-main-timeline" aria-label="任务进度">
-          <div className="harness-panel-heading">
-            <span>任务进度</span>
-            <em>已完成 {completedCount} / {roles.length}</em>
-          </div>
-          <ol className="harness-user-timeline">
-            {stageItems.map((item, index) => (
-              <li key={item.role} className={`harness-user-stage ${item.status} ${item.current ? 'current' : ''}`.trim()}>
-                <span className="harness-user-stage-index">{index + 1}</span>
-                <div className="harness-user-stage-body">
-                  <div className="harness-user-stage-top">
-                    <div className="harness-user-stage-titleline">
-                      <i className={`fas ${item.icon}`} aria-hidden="true" />
-                      <strong>{item.title}</strong>
+      
+      <div className="codex-process-body" style={{ padding: '0', display: 'flex', flexDirection: 'column' }}>
+        
+        <div className="harness-realtime-timeline" style={{ padding: '16px', maxHeight: '300px', overflowY: 'auto', background: 'var(--bg-inset)', fontSize: '14px' }}>
+          {timelineEvents.length ? (
+            <ul className="agent-process-timeline" style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {timelineEvents.map((event, index) => {
+                const isError = event.status === 'error' || event.status === 'FAILED'
+                const isRunning = event.status === 'running'
+                const roleName = nameFor[event.role] || event.role || '系统'
+                // Codex spec: "✅ 制定实现计划" / "⚠️ 运行验证" / "⏸ 等待处理"
+                const icon = isError ? '⚠️' : isRunning ? '🔄' : '✅'
+                
+                return (
+                  <li key={`${event.timestamp}_${index}`} style={{ display: 'flex', flexDirection: 'column', gap: '4px', opacity: isRunning ? 1 : 0.85, color: isError ? 'var(--text-error)' : 'inherit' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                      <span>{icon}</span>
+                      <span>{roleName}</span>
+                      <span style={{ opacity: 0.5, fontWeight: 400, fontSize: '12px', marginLeft: 'auto' }}>
+                         {new Date(event.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
                     </div>
-                    <span className={`harness-user-stage-status ${item.status}`}>{item.label}</span>
-                  </div>
-                  <p>{compactStageSummary(item)}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-        <section className="harness-side-panel" aria-label="当前结果">
-          {issueEvent ? (
-            <div className="harness-issue-card">
-              <div className="harness-card-eyebrow">当前问题</div>
-              <strong>{issueTitle}</strong>
-              {issueDetail ? <p>{issueDetail}</p> : null}
-              <span className="harness-issue-note">优先根据证据做最小修复，不把内部日志直接当结论。</span>
-            </div>
+                    <div style={{ paddingLeft: '24px', opacity: 0.9 }}>
+                      {friendlyDetail(event.title || event.detail || '')}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
           ) : (
-            <div className="harness-next-step-card">
-              <div className="harness-card-eyebrow">当前状态</div>
-              <strong>{statusCopy.label}</strong>
-              <p>{statusCopy.detail}</p>
-            </div>
+            <div style={{ opacity: 0.5, fontStyle: 'italic' }}>正在准备执行...</div>
           )}
-          <div className="harness-next-step-card">
-            <div className="harness-card-eyebrow">下一步</div>
-            <strong>{decision?.nextAgent && decision.nextAgent !== 'None' ? `准备交由 ${nameFor[decision.nextAgent] || decision.nextAgent}` : '继续当前流程'}</strong>
-            <p>{friendlyDetail(process.nextAction) || '等待 Harness 根据当前证据决定下一步。'}</p>
-            {nextSteps.length > 1 ? (
-              <ol className="harness-next-step-list">
-                {nextSteps.map((item, index) => (
-                  <li key={`${item}_${index}`}>{friendlyDetail(item)}</li>
-                ))}
-              </ol>
-            ) : null}
+        </div>
+
+        {compactHighlights.length > 0 && !issueEvent ? (
+          <div className="harness-highlights-card" style={{ margin: '0', padding: '16px', borderTop: '1px solid var(--border-light)' }}>
+            <div className="harness-card-eyebrow" style={{ marginBottom: '8px' }}>阶段总结</div>
+            <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px' }}>
+              {compactHighlights.map((item, index) => (
+                <li key={`${item}_${index}`}>{item}</li>
+              ))}
+            </ul>
           </div>
-          {compactHighlights.length ? (
-            <div className="harness-highlights-card">
-              <div className="harness-card-eyebrow">证据摘要</div>
-              <ul>
-                {compactHighlights.map((item, index) => (
-                  <li key={`${item}_${index}`}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </section>
+        ) : null}
+
+        {issueEvent ? (
+          <div className="harness-issue-card" style={{ margin: '0', padding: '16px', borderTop: '1px solid var(--border-light)', background: 'var(--bg-error-light, #fef2f2)' }}>
+            <div className="harness-card-eyebrow" style={{ color: 'var(--text-error)' }}>阻塞原因</div>
+            <strong style={{ color: 'var(--text-error)' }}>{issueTitle}</strong>
+            {issueDetail ? <p style={{marginTop: '8px', fontSize: '13px', color: 'var(--text-error)'}}>{issueDetail}</p> : null}
+          </div>
+        ) : null}
+
       </div>
-      <details className="harness-debug-details">
-        <summary>最近内部更新</summary>
-        {timelineEvents.length ? (
-          <ol className="agent-process-timeline compact">
-            {timelineEvents.map((event, index) => (
-              <li key={`${event.timestamp}_${event.role}_${index}`} className={event.status || 'running'}>
-                <span className="agent-process-time">{new Date(event.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                <span className="agent-process-role">{nameFor[event.role] || event.role}</span>
-                <div className="agent-process-copy">
-                  <span className="agent-process-title">{event.title}</span>
-                  {event.detail ? <span className="agent-process-detail">{friendlyDetail(event.detail)}</span> : null}
-                </div>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <div className="harness-timeline-empty">Harness 已接管任务，正在等待第一条进度更新。</div>
-        )}
-        {issueEvent?.evidence ? <pre>{issueEvent.evidence}</pre> : null}
-      </details>
     </div>
   )
 }

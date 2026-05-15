@@ -116,6 +116,13 @@ class PublishProjectRequest(BaseModel):
     remixable: Optional[bool] = True
 
 
+class TitleSuggestionRequest(BaseModel):
+    prompt: str
+    model: Optional[str] = None
+    session_id: Optional[str] = None
+    mode: Optional[str] = None
+
+
 # 创建FastAPI应用
 config = load_config()
 app = FastAPI(
@@ -225,6 +232,12 @@ AVAILABLE_MODELS = [
 ]
 WEATHER_REQUEST_PATTERN = re.compile(r"(天气|温度|气温|weather|forecast)", re.IGNORECASE)
 PREVIEW_HTML_SUFFIXES = {".html", ".htm"}
+PREVIEW_SWITCHABLE_SUFFIXES = {
+    ".html", ".htm",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg",
+    ".mp4", ".webm", ".mp3", ".wav", ".ogg",
+    ".json", ".pdf",
+}
 PREVIEW_SCAN_IGNORED_DIRS = {
     ".git",
     ".hg",
@@ -379,7 +392,7 @@ PREVIEW_SRCSET_ATTR_PATTERN = re.compile(
 PREVIEW_CSS_URL_PATTERN = re.compile(r"""url\(\s*(?P<quote>["']?)(?P<value>[^"')]+)(?P=quote)\s*\)""", re.IGNORECASE)
 PREVIEW_ASSET_ALLOWED_SUFFIXES = {
     ".html", ".htm", ".css", ".js", ".mjs", ".json", ".map",
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".pdf",
     ".mp3", ".wav", ".ogg", ".mp4", ".webm",
     ".woff", ".woff2", ".ttf", ".otf",
 }
@@ -512,7 +525,6 @@ def _rewrite_preview_css_assets(css: str, base_dir: Path) -> str:
 
 
 def _scan_workspace_preview_files(workspace: Path) -> List[Dict[str, Any]]:
-    """Find runnable local HTML artifacts even when the workspace is not a git repo."""
     try:
         root = workspace.resolve()
     except Exception:
@@ -531,7 +543,8 @@ def _scan_workspace_preview_files(workspace: Path) -> List[Dict[str, Any]]:
             visited_files += 1
             if visited_files > PREVIEW_SCAN_MAX_FILES:
                 break
-            if Path(filename).suffix.lower() not in PREVIEW_HTML_SUFFIXES:
+            suffix = Path(filename).suffix.lower()
+            if suffix not in PREVIEW_SWITCHABLE_SUFFIXES:
                 continue
             absolute_path = (Path(current_root) / filename).resolve()
             try:
@@ -540,16 +553,18 @@ def _scan_workspace_preview_files(workspace: Path) -> List[Dict[str, Any]]:
             except Exception:
                 continue
             insertions = 0
-            try:
-                insertions = len(absolute_path.read_text(encoding="utf-8", errors="ignore").splitlines())
-            except Exception:
-                pass
+            if suffix in {".html", ".htm", ".json"}:
+                try:
+                    insertions = len(absolute_path.read_text(encoding="utf-8", errors="ignore").splitlines())
+                except Exception:
+                    pass
             preview_files.append({
                 "path": relative,
                 "status": "preview",
                 "insertions": insertions,
                 "deletions": 0,
                 "mtime": stat.st_mtime,
+                "kind": suffix.lstrip("."),
                 "absolute_path": _runtime_to_host_path(str(absolute_path)),
             })
             if len(preview_files) >= PREVIEW_SCAN_MAX_RESULTS:
@@ -559,10 +574,29 @@ def _scan_workspace_preview_files(workspace: Path) -> List[Dict[str, Any]]:
 
     def _rank(item: Dict[str, Any]) -> tuple:
         path = str(item.get("path") or "").lower()
+        suffix = Path(path).suffix.lower()
+        kind_score = {
+            ".html": 6,
+            ".htm": 6,
+            ".svg": 5,
+            ".png": 4,
+            ".jpg": 4,
+            ".jpeg": 4,
+            ".webp": 4,
+            ".gif": 4,
+            ".avif": 4,
+            ".pdf": 3,
+            ".mp4": 3,
+            ".webm": 3,
+            ".json": 2,
+            ".mp3": 1,
+            ".wav": 1,
+            ".ogg": 1,
+        }.get(suffix, 0)
         name_score = 2 if path.endswith("index.html") else 1 if any(
-            token in path for token in ("game", "play", "demo", "app")
+            token in path for token in ("game", "play", "demo", "app", "preview", "result", "output")
         ) else 0
-        return (name_score, float(item.get("mtime") or 0))
+        return (kind_score, name_score, float(item.get("mtime") or 0))
 
     preview_files.sort(key=_rank, reverse=True)
     return preview_files
@@ -1509,6 +1543,58 @@ async def get_ui_session(session_id: str):
         return JSONResponse(data)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+def _fallback_title_from_prompt(prompt: str) -> str:
+    cleaned = (prompt or "").strip()
+    cleaned = re.sub(r"^(请|帮我|帮忙|麻烦)?\s*(创建|生成|做|实现|制作|写|建|开发)\s*", "", cleaned)
+    cleaned = re.sub(r"^(一个|一款|一个像|一个类似|类似)\s*", "", cleaned)
+    cleaned = re.sub(r"^(网页|浏览器|web|html5|小游戏|游戏|页面|应用)\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"[：:]", " ", cleaned)
+    cleaned = re.sub(r"[，,。！!？?].*$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:12].strip()
+
+
+@app.post("/ui/title-suggestion")
+async def suggest_ui_title(payload: TitleSuggestionRequest):
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        return JSONResponse({"error": "prompt is required"}, status_code=400)
+    fallback_title = _fallback_title_from_prompt(prompt)
+    if vllm_client is None:
+        return JSONResponse({"title": fallback_title, "fallback": True})
+    title_prompt = (
+        "你是一个作品命名助手。请根据下面的创建需求，为即将生成的作品起一个简短、自然、面向用户的中文标题。\n"
+        "要求：\n"
+        "1. 标题长度 4 到 12 个汉字优先。\n"
+        "2. 不要使用引号、书名号、句号、冒号。\n"
+        "3. 不要出现‘生成一个’‘帮我做’‘网页游戏’这类命令式前缀。\n"
+        "4. 禁止输出思考过程、解释、列表或 markdown。\n"
+        "5. 只返回标题本身。\n\n"
+        f"创建需求：{prompt}"
+    )
+    try:
+        title = await vllm_client.generate_text(title_prompt, model=payload.model, temperature=0.2, max_tokens=32)
+        raw = str(title or "")
+        cleaned = re.sub(r"<think>[\s\S]*?<\/think>", "", raw, flags=re.I).strip()
+        cleaned = cleaned.replace("\r", "\n")
+        lines = [re.sub(r"^[#*\-\d.\s]+", "", line).strip() for line in cleaned.split("\n") if line.strip()]
+        picked = ""
+        for candidate in reversed(lines):
+            candidate = candidate.strip('"“”「」[]()《》')
+            candidate = candidate.replace("**", "").replace("`", "").strip()
+            if candidate and not re.search(r"创建需求|要求|标题|解释|思考", candidate):
+                picked = candidate
+                break
+        final_title = re.sub(r"\s+", " ", picked or cleaned).strip()
+        final_title = final_title.strip('"“”「」[]()《》')
+        final_title = re.sub(r"^[#*\-\d.\s]+", "", final_title)
+        final_title = final_title[:24].strip() or fallback_title
+        return JSONResponse({"title": final_title, "fallback": final_title == fallback_title})
+    except Exception as exc:
+        logger.warning(f"Failed to generate UI title suggestion: {exc}")
+        return JSONResponse({"title": fallback_title, "fallback": True})
 
 
 @app.put("/ui-sessions/{session_id}")

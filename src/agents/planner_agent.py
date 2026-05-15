@@ -300,6 +300,10 @@ def _normalize_smoke_tests(value: Any) -> List[Dict[str, Any]]:
             test = dict(item)
             test.setdefault("id", f"smoke_{index}")
             test.setdefault("type", "browser")
+            action = str(test.get("action") or "goto").strip().lower()
+            if action not in {"goto", "click", "keyboard", "evaluate"}:
+                action = "evaluate"
+            test["action"] = action
             test.setdefault("timeout_sec", 15)
             test.setdefault("required", True)
             tests.append(test)
@@ -487,7 +491,7 @@ def _ensure_game_smoke_tests(
                 "id": "game_surface_visible",
                 "type": "browser",
                 "action": "evaluate",
-                "target": "(document.body.innerText || '').trim().length > 0 || document.querySelector('canvas') !== null",
+                "target": "((document.body.innerText || '').trim().length > 0 || document.querySelector('canvas') !== null)",
                 "expect": {"result": True},
                 "timeout_sec": 10,
                 "required": True,
@@ -573,11 +577,12 @@ def _browser_smoke_tests_from_descriptions(descriptions: List[str], allowed_file
 def _default_dev_server(existing_files: Optional[List[str]]) -> Dict[str, Any]:
     files = existing_files or []
     if "package.json" in files:
+        # Avoid 5173 to prevent clashing with host UI
         return {
             "enabled": True,
-            "start_cmd": "npm run dev -- --host 0.0.0.0",
-            "url": "http://localhost:5173",
-            "ready_patterns": ["Local:", "ready in", "localhost"],
+            "start_cmd": "npm run dev -- --host 0.0.0.0 --port 8080",
+            "url": "http://localhost:8080",
+            "ready_patterns": ["Local:", "ready in", "localhost", "8080"],
             "timeout_sec": 60,
         }
     return {

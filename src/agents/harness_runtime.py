@@ -93,6 +93,36 @@ class HarnessRuntime:
             }
         )
 
+    async def _humanize_harness_decision(self, decision: Dict[str, Any], model: Optional[str] = None) -> None:
+        """Use LLM to generate a user-friendly summary of what happens next."""
+        if decision.get("decision") == "PASS":
+            decision["humanized_next_action"] = "任务已圆满完成，所有验收标准均已通过。"
+            return
+
+        reason = decision.get("reason") or ""
+        next_agent = decision.get("next_agent") or ""
+        next_state = decision.get("next_state") or ""
+        
+        prompt = (
+            f"You are a helpful project manager. Harness just made a decision about the next step in a coding task.\n"
+            f"Decision: {decision.get('decision')}\n"
+            f"Reason: {reason}\n"
+            f"Next Agent: {next_agent}\n"
+            f"Next Phase: {next_state}\n\n"
+            f"Translate this technical transition into a short, friendly, single-sentence summary for the user "
+            f"explaining what you (the AI) are going to do next to fulfill their request. "
+            f"Speak in first person ('I will...'). Do not mention internal agent names like 'Generator' or 'Planner'. "
+            f"Respond in Chinese."
+        )
+        
+        try:
+            # Quick call with low temperature
+            humanized = await self.vllm_client.generate_text(prompt, model=model, temperature=0.3)
+            decision["humanized_next_action"] = humanized.strip().strip('"')
+        except Exception as e:
+            logger.warning(f"Failed to humanize harness decision: {e}")
+            decision["humanized_next_action"] = ""
+
     def _harness_decision_event(self, decision: Mapping[str, Any]) -> str:
         return self._sse(
             {
@@ -922,10 +952,12 @@ class HarnessRuntime:
                     last_patch_result = generator.last_patch_result
                     self.harness_engine.validate_schema(last_patch_result, "PatchResult")
                     self.harness_engine.validate_patch_policy(last_patch_result, plan_contract, workspace=workspace)
-                    patch_application = self.harness_engine.apply_patch_envelope(
+                    patch_application = await self.harness_engine.apply_patch_envelope(
                         last_patch_result.get("patch_envelope") or {},
                         plan_contract,
                         workspace=workspace,
+                        vllm_client=self.vllm_client,
+                        model=selected_model,
                     )
                     if any(patch_application.values()):
                         last_patch_result["changed_files"] = list(
@@ -1221,6 +1253,7 @@ class HarnessRuntime:
                     session_id=session_id,
                     evaluation_input=evaluation_input,
                     model=selected_model,
+                    workspace=workspace,
                 ):
                     yield self._forward_chunk(chunk)
                 final_verdict = evaluator.last_verdict
@@ -1247,6 +1280,7 @@ class HarnessRuntime:
                     same_error_repeated=repeated_root_cause,
                     budgets=budgets,
                 )
+                await self._humanize_harness_decision(decision, model=selected_model)
                 self._write_json_file(workspace, f"{run_root}/output/harness_decision.json", decision)
                 yield self._harness_decision_event(decision)
                 self.session_context_cache[session_id].update(

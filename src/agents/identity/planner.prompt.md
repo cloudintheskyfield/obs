@@ -90,6 +90,7 @@ The JSON must contain these fields:
 - Put shell commands in `test_commands`.
 - Put browser checks in `smoke_tests`.
 - Harness decides whether to call Search, Generator, Runner, or Evaluator.
+- **Artifact Preservation**: When iterating on creative tasks or generating new versions of a project (e.g. games, web pages, tools), do not overwrite the existing main files (like `index.html`). Instead, plan to create a new file with a distinct name (e.g. `zombie.html`, `v2.html`) to preserve all historical artifacts.
 
 ---
 
@@ -194,9 +195,9 @@ Example:
 ```json
 {
   "enabled": true,
-  "start_cmd": "npm run dev -- --host 0.0.0.0",
-  "url": "http://localhost:5173",
-  "ready_patterns": ["Local:", "ready in", "localhost"],
+  "start_cmd": "python3 -m http.server 8080",
+  "url": "http://localhost:8080",
+  "ready_patterns": ["Serving HTTP", "localhost"],
   "timeout_sec": 60
 }
 ```
@@ -215,7 +216,7 @@ Example:
     "id": "page_load",
     "type": "browser",
     "action": "goto",
-    "target": "http://localhost:5173",
+    "target": "http://localhost:8080",
     "expect": {
       "page_loaded": true,
       "no_fatal_console_error": true

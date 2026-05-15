@@ -55,38 +55,58 @@ export default function Composer({
     statusItems,
     inputRef
 }) {
-    // 构建模型+thinking组合选项
-    const modelOptions = [
-        { value: "minimax-m2-thinking", label: "MiniMax-M2 (thinking)" },
-        { value: "minimax-m2", label: "MiniMax-M2" },
-        { value: "gpt-5.5", label: "GPT-5.5" }
-    ];
+    // 动态构建模型选项
+    const modelOptions = [];
+    (availableModels || []).forEach(model => {
+        // 对于MiniMax-M2我们额外提供一个thinking选项
+        if (model.toLowerCase().includes("minimax")) {
+            modelOptions.push({ value: `${model}-thinking`, label: `${model} (thinking)` });
+            modelOptions.push({ value: model, label: model });
+        } else {
+            modelOptions.push({ value: model, label: model });
+        }
+    });
+
+    // 如果没有任何可用模型，给一个默认的选项防止崩溃
+    if (modelOptions.length === 0) {
+        modelOptions.push({ value: "minimax-m2", label: "MiniMax-M2" });
+        if (selectedModel === "minimax-m2") {
+            modelOptions.push({ value: "minimax-m2-thinking", label: "MiniMax-M2 (thinking)" });
+        }
+    }
     
     // 根据当前模型和thinking状态确定选中的选项
     const getCurrentOption = () => {
-        if (selectedModel === "gpt-5.5") {
-            return "gpt-5.5";
+        if (!selectedModel) return modelOptions[0]?.value || "minimax-m2";
+        
+        // 如果当前选中的模型支持thinking并且开启了thinking，找到对应的选项
+        if (thinkingMode && selectedModel.toLowerCase().includes("minimax")) {
+            const thinkingOpt = `${selectedModel}-thinking`;
+            if (modelOptions.some(opt => opt.value === thinkingOpt)) {
+                return thinkingOpt;
+            }
         }
-        return thinkingMode ? "minimax-m2-thinking" : "minimax-m2";
+        
+        // 否则返回原模型名称
+        if (modelOptions.some(opt => opt.value === selectedModel)) {
+            return selectedModel;
+        }
+        
+        return modelOptions[0]?.value || "minimax-m2";
     };
     
     // 处理选项变化
     const handleOptionChange = (value) => {
-        if (value === "gpt-5.5") {
-            onModelChange("gpt-5.5");
-            if (thinkingMode) {
-                onThinkingToggle(); // 关闭thinking
-            }
-        } else if (value === "minimax-m2-thinking") {
-            onModelChange("minimax-m2");
-            if (!thinkingMode) {
-                onThinkingToggle(); // 开启thinking
-            }
-        } else { // minimax-m2
-            onModelChange("minimax-m2");
-            if (thinkingMode) {
-                onThinkingToggle(); // 关闭thinking
-            }
+        // 判断是否是 thinking 组合项
+        const isThinkingVariant = value.endsWith("-thinking");
+        const actualModel = isThinkingVariant ? value.replace("-thinking", "") : value;
+        
+        onModelChange(actualModel);
+        
+        if (isThinkingVariant) {
+            if (!thinkingMode) onThinkingToggle();
+        } else {
+            if (thinkingMode) onThinkingToggle();
         }
     };
     

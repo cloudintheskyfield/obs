@@ -113,10 +113,10 @@ def _heuristic_verdict(payload: Mapping[str, Any], harness: HarnessEngine) -> Di
         verdict_name = "INFRA"
         next_agent = "Search"
         repair_instruction = ""
-    elif error_type == "PRODUCT_REQUIREMENT_MISS":
+    elif error_type == "PRODUCT_REQUIREMENT_MISS" or error_type in {"RUNNER_PORT_ERROR", "RUNNER_CONFIG_ERROR"}:
         verdict_name = "REPLAN"
         next_agent = "Planner"
-        repair_instruction = ""
+        repair_instruction = f"Plan configuration error: {message}. Please adjust the dev_server port or smoke_test parameters."
     elif error_type.startswith("PRODUCT_"):
         verdict_name = "FIXABLE"
         next_agent = "Generator"
@@ -195,6 +195,7 @@ class EvaluatorAgent:
         evaluation_input: Mapping[str, Any],
         *,
         model: Optional[str] = None,
+        workspace: Optional[Any] = None,
     ) -> AsyncGenerator[str, None]:
         yield self._sse(
             {
@@ -207,9 +208,47 @@ class EvaluatorAgent:
             }
         )
 
+        user_content_parts = [
+            {"type": "text", "text": json.dumps(dict(evaluation_input), ensure_ascii=False, indent=2)}
+        ]
+
+        if workspace:
+            import base64
+            from pathlib import Path
+            workspace_path = Path(workspace)
+            
+            # 1. Load diff.patch content so the model can see the actual file changes
+            diff_summary = evaluation_input.get("git_diff_summary") or {}
+            diff_path_str = diff_summary.get("diff_path")
+            if diff_path_str:
+                diff_file = workspace_path / diff_path_str
+                if diff_file.exists() and diff_file.is_file():
+                    try:
+                        diff_text = diff_file.read_text(encoding="utf-8")
+                        user_content_parts.append({
+                            "type": "text", 
+                            "text": f"=== SOURCE CODE CHANGES (diff.patch) ===\n{diff_text}"
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to load diff.patch at {diff_file}: {e}")
+            
+            # 2. Load screenshots
+            for screenshot in evaluation_input.get("screenshots", []):
+                img_path = workspace_path / str(screenshot)
+                if img_path.exists() and img_path.is_file():
+                    try:
+                        with open(img_path, "rb") as f:
+                            b64 = base64.b64encode(f.read()).decode("utf-8")
+                        user_content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64}"}
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to load screenshot {img_path}: {e}")
+
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": json.dumps(dict(evaluation_input), ensure_ascii=False, indent=2)},
+            {"role": "user", "content": user_content_parts},
         ]
 
         raw_content = ""
@@ -218,7 +257,7 @@ class EvaluatorAgent:
                 messages=messages,
                 tools=None,
                 temperature=0.1,
-                max_tokens=1600,
+                max_tokens=1000,
                 stream=True,
                 model=model,
             )

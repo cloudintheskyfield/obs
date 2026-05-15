@@ -440,6 +440,9 @@ async def _check_browser_expectations(
         return "Canvas was present but appeared blank."
 
     if expect.get("no_fatal_console_error") and console_errors:
+        for err in console_errors:
+            if "HOST_LEAK_DETECTED" in str(err):
+                return f"HOST_LEAK_DETECTED: {err}"
         return f"Console errors detected: {console_errors[0]}"
 
     if "result" in expect:
@@ -1009,19 +1012,33 @@ class RunnerAgent:
 
         def _on_console(message: Any) -> None:
             try:
+                text = str(getattr(message, "text", ""))[:500]
                 entry = {
                     "type": getattr(message, "type", ""),
-                    "text": str(getattr(message, "text", ""))[:500],
+                    "text": text,
                 }
                 console_entries.append(entry)
                 if entry["type"] == "error":
-                    console_errors.append(entry["text"])
+                    # Filter out host-side React hydration errors or minor warnings
+                    lower_text = text.lower()
+                    if "hydration error" in lower_text or "cannot be a descendant of" in lower_text:
+                        if "app-shell" in lower_text or "sidebar" in lower_text or "history-panel" in lower_text:
+                            # This is a strong indicator we hit the host UI
+                            console_errors.append(f"HOST_LEAK_DETECTED: {text}")
+                            return
+                    console_errors.append(text)
             except Exception:
                 pass
 
         def _on_page_error(error: Any) -> None:
             text = str(error)[:500]
             console_entries.append({"type": "pageerror", "text": text})
+            # Filter out host-side React hydration errors
+            lower_text = text.lower()
+            if "hydration error" in lower_text or "cannot be a descendant of" in lower_text:
+                if "app-shell" in lower_text or "sidebar" in lower_text or "history-panel" in lower_text:
+                    console_errors.append(f"HOST_LEAK_DETECTED: {text}")
+                    return
             console_errors.append(text)
 
         try:
@@ -1207,11 +1224,20 @@ class RunnerAgent:
                         if failed_reason:
                             result["status"] = "FAILED"
                             result["error"] = failed_reason
-                            result["error_type"] = "PRODUCT_UI_ERROR"
-                            result["root_category"] = "PRODUCT"
+                            if "HOST_LEAK_DETECTED" in failed_reason:
+                                result["error_type"] = "RUNNER_PORT_ERROR"
+                                result["root_category"] = "RUNNER"
+                            else:
+                                result["error_type"] = "PRODUCT_UI_ERROR"
+                                result["root_category"] = "PRODUCT"
                         else:
                             result["status"] = "PASSED"
                             result["passed"] = True
+                    except ValueError as exc:
+                        result["status"] = "FAILED"
+                        result["error"] = str(exc)
+                        result["error_type"] = "RUNNER_CONFIG_ERROR"
+                        result["root_category"] = "RUNNER"
                     except Exception as exc:
                         result["status"] = "FAILED"
                         result["error"] = str(exc)

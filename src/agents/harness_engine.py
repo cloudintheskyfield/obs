@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+from loguru import logger
+
 
 class HarnessPolicyViolation(ValueError):
     """Raised when an agent output violates Harness policy."""
@@ -97,7 +99,8 @@ class HarnessEngine:
         "RUNNER_SCRIPT_ERROR": "Harness or Runner",
         "RUNNER_TIMEOUT": "Runner or Harness",
         "RUNNER_BROWSER_ERROR": "Runner or Harness",
-        "RUNNER_PORT_ERROR": "Runner or Harness",
+        "RUNNER_PORT_ERROR": "Planner",
+        "RUNNER_CONFIG_ERROR": "Planner",
         "INFRA_DEPENDENCY_MISSING": "Harness",
         "INFRA_INSTALL_FORBIDDEN": "Harness",
         "INFRA_NETWORK_FORBIDDEN": "Harness",
@@ -1121,12 +1124,14 @@ class HarnessEngine:
             )
         return []
 
-    def apply_patch_envelope(
+    async def apply_patch_envelope(
         self,
         patch_envelope: Mapping[str, Any],
         plan: Mapping[str, Any],
         *,
         workspace: str | Path,
+        vllm_client: Optional[Any] = None,
+        model: Optional[str] = None,
         policy: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, List[str]]:
         self.validate_patch_envelope(patch_envelope, plan, workspace=workspace, policy=policy)
@@ -1162,19 +1167,74 @@ class HarnessEngine:
             if op_name == "str_replace":
                 if not existed_before or not target_path.is_file():
                     raise HarnessPolicyViolation(f"str_replace target does not exist: {normalized_path}")
-                old_text = operation.get("old_text")
-                new_text = operation.get("new_text")
+                old_text = operation.get("old_text") if operation.get("old_text") is not None else operation.get("old_str")
+                new_text = operation.get("new_text") if operation.get("new_text") is not None else operation.get("new_str")
                 if old_text is None or new_text is None:
                     raise HarnessPolicyViolation(f"str_replace operation missing old_text/new_text for {normalized_path}.")
                 original_text = target_path.read_text(encoding="utf-8")
-                match_count = original_text.count(str(old_text))
-                if match_count != 1:
-                    raise HarnessPolicyViolation(
-                        f"str_replace requires exactly one match in {normalized_path}; found {match_count}."
-                    )
-                target_path.write_text(original_text.replace(str(old_text), str(new_text), 1), encoding="utf-8")
-                applied["changed_files"].append(normalized_path)
-                continue
+                old_str_val = str(old_text)
+                new_str_val = str(new_text)
+
+                match_count = original_text.count(old_str_val)
+                if match_count == 1:
+                    target_path.write_text(original_text.replace(old_str_val, new_str_val, 1), encoding="utf-8")
+                    applied["changed_files"].append(normalized_path)
+                    continue
+
+                if match_count == 0:
+                    import re
+                    tokens = re.split(r'(\s+)', old_str_val)
+                    pattern_parts = []
+                    for t in tokens:
+                        if not t:
+                            continue
+                        if t.isspace():
+                            pattern_parts.append(r'\s+')
+                        else:
+                            pattern_parts.append(re.escape(t))
+                    pattern = ''.join(pattern_parts)
+                    try:
+                        matches = list(re.finditer(pattern, original_text))
+                        if len(matches) == 1:
+                            m = matches[0]
+                            new_content = original_text[:m.start()] + new_str_val + original_text[m.end():]
+                            target_path.write_text(new_content, encoding="utf-8")
+                            applied["changed_files"].append(normalized_path)
+                            continue
+                        else:
+                            if vllm_client is not None:
+                                logger.info(f"Fuzzy match failed for {normalized_path}, attempting LLM extraction fallback.")
+                                messages = [
+                                    {"role": "system", "content": "You are a precise code patch tool. Given the original file content and the intended old/new text snippet, return the COMPLETELY MODIFIED file content. Return ONLY the new file content. Do not output markdown backticks, explanations, or any other text."},
+                                    {"role": "user", "content": f"=== ORIGINAL FILE ===\n{original_text}\n\n=== INTENDED OLD TEXT TO REPLACE ===\n{old_str_val}\n\n=== REPLACEMENT TEXT ===\n{new_str_val}\n\nReturn the fully updated file content directly without any backticks or formatting. It must be valid code."}
+                                ]
+                                try:
+                                    response = await vllm_client.chat_completion(messages, model=model, temperature=0.1)
+                                    if isinstance(response, dict) and response.get("choices"):
+                                        new_content = response["choices"][0]["message"]["content"]
+                                        if new_content.startswith("```"):
+                                            lines = new_content.splitlines()
+                                            if lines and lines[0].startswith("```"): lines = lines[1:]
+                                            if lines and lines[-1].startswith("```"): lines = lines[:-1]
+                                            new_content = "\n".join(lines) + "\n"
+                                        target_path.write_text(new_content, encoding="utf-8")
+                                        applied["changed_files"].append(normalized_path)
+                                        continue
+                                except Exception as llm_exc:
+                                    logger.warning(f"LLM extraction fallback failed: {llm_exc}")
+                            
+                            raise HarnessPolicyViolation(
+                                f"str_replace requires exactly one match in {normalized_path}; found 0 exact and {len(matches)} fuzzy matches."
+                            )
+                    except Exception as exc:
+                        if isinstance(exc, HarnessPolicyViolation):
+                            raise
+                        # Ignore regex compile errors or other unexpected issues and fallback to original error
+                        pass
+
+                raise HarnessPolicyViolation(
+                    f"str_replace requires exactly one match in {normalized_path}; found {match_count}."
+                )
             if op_name == "unified_diff":
                 raise HarnessPolicyViolation("unified_diff patch application is not supported by Harness runtime.")
             raise HarnessPolicyViolation(f"Unsupported PatchEnvelope operation: {op_name}")

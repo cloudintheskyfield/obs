@@ -846,6 +846,14 @@ select {
     border: 0;
 }
 
+.preview-pane-switcher {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
 .preview-artifact-picker {
     display: block;
     margin-top: 6px;
@@ -855,6 +863,22 @@ select {
     margin-top: 0;
     width: 100%;
     min-width: 0;
+}
+
+.preview-switch-button {
+    flex: 0 0 auto;
+}
+
+.preview-switch-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.preview-artifact-count {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
 }
 
 .preview-artifact-select {

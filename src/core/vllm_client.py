@@ -78,28 +78,17 @@ class VLLMClient:
 
     def _pick_config(self, messages: List[Dict[str, Any]], model: Optional[str] = None) -> VLLMConfig:
         """根据消息内容和指定模型选择配置。
-        
+
         优先级：
         1. 如果指定了 gpt-5.5 模型，使用 GPT-5.5 配置
-        2. 如果消息含图片且视觉路由已启用，使用视觉配置
-        3. 否则使用主配置（MiniMax-M2）
+        2. 否则使用主配置（即当前选择的模型）
         """
         # 检查是否指定了 GPT-5.5
         if model == "gpt-5.5" and self.gpt55_config is not None and self.gpt55_config.enabled:
             logger.debug(f"Routing to GPT-5.5: {self.gpt55_config.model} @ {self.gpt55_config.base_url}")
             return self.gpt55_config
-        
-        # 检查是否需要视觉模型
-        if (
-            self.vision_config is not None
-            and self.vision_config.enabled
-            and self._has_images(messages)
-        ):
-            logger.debug(f"Routing to vision model: {self.vision_config.model} @ {self.vision_config.base_url}")
-            return self.vision_config
-        
-        return self.config
 
+        return self.config
     @staticmethod
     def _retry_delay(attempt: int) -> float:
         """Short delay for transient network / server errors."""
@@ -162,8 +151,6 @@ class VLLMClient:
         # 确定最终使用的模型名称
         if is_gpt55_request:
             model = active_cfg.model
-        elif is_vision_request:
-            model = active_cfg.model
         else:
             model = requested_model or self.config.model
             
@@ -171,7 +158,6 @@ class VLLMClient:
             "model": model,
             "messages": messages,
             "temperature": kwargs.get("temperature", 0.7),
-            "max_tokens": kwargs.get("max_tokens", 4000),
             "stream": stream
         }
         

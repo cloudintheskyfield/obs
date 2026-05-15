@@ -177,6 +177,7 @@ function normalizeHarnessDecision(decision) {
         reason: String(decision.reason || "").trim(),
         nextState: String(decision.next_state || "").trim(),
         nextAgent: String(decision.next_agent || "").trim(),
+        humanizedNextAction: String(decision.humanized_next_action || "").trim(),
         roundId: Number(decision.round_id) || 0,
         budgetRemaining: decision.budget_remaining && typeof decision.budget_remaining === "object"
             ? { ...decision.budget_remaining }
@@ -807,21 +808,142 @@ function detectPreviewUrls(session) {
     return urls;
 }
 
-function scoreWorkspaceHtmlFile(f) {
-    const p = String(f.path || "").toLowerCase();
-    const ins = Number(f.insertions) || 0;
-    const mtime = Number(f.mtime) || 0;
-    if (p.endsWith("index.html")) {
-        return 1_000_000 + ins + mtime / 1_000_000;
+const PREVIEW_KIND_META = {
+    html: { label: "HTML", rank: 6 },
+    htm: { label: "HTML", rank: 6 },
+    svg: { label: "SVG", rank: 5 },
+    png: { label: "Image", rank: 4 },
+    jpg: { label: "Image", rank: 4 },
+    jpeg: { label: "Image", rank: 4 },
+    gif: { label: "Image", rank: 4 },
+    webp: { label: "Image", rank: 4 },
+    avif: { label: "Image", rank: 4 },
+    pdf: { label: "PDF", rank: 3 },
+    mp4: { label: "Video", rank: 3 },
+    webm: { label: "Video", rank: 3 },
+    json: { label: "JSON", rank: 2 },
+    mp3: { label: "Audio", rank: 1 },
+    wav: { label: "Audio", rank: 1 },
+    ogg: { label: "Audio", rank: 1 },
+};
+
+const USER_VISIBLE_PREVIEW_KINDS = new Set([
+    "html", "htm", "svg", "png", "jpg", "jpeg", "gif", "webp", "avif",
+    "pdf", "mp4", "webm", "mp3", "wav", "ogg",
+]);
+
+function inferPreviewKind(source) {
+    const value = String(source || "").trim();
+    if (!value) {
+        return "artifact";
     }
-    if (p.includes("jump") || p.includes("game") || p.includes("play")) {
-        return 500_000 + ins + mtime / 1_000_000;
+    let pathLike = value;
+    try {
+        if (value.includes("/preview/local-file")) {
+            pathLike = new URL(value, "http://_").searchParams.get("path") || value;
+        } else if (/^https?:\/\//i.test(value)) {
+            pathLike = new URL(value).pathname || value;
+        }
+    } catch {
+        pathLike = value;
     }
-    return ins + mtime / 1_000_000;
+    const match = pathLike.toLowerCase().match(/\.([a-z0-9]+)(?:$|[?#])/i);
+    const kind = match?.[1] || "artifact";
+    return PREVIEW_KIND_META[kind] ? kind : "artifact";
 }
 
-/** All workspace .html/.htm entries as /preview/local-file URLs, best-first (for multi-artifact picker). */
-function buildWorkspaceHtmlPreviewEntries(workspaceChanges, apiBase) {
+function previewKindLabel(kind) {
+    return PREVIEW_KIND_META[kind]?.label || "Artifact";
+}
+
+function scoreWorkspacePreviewFile(file) {
+    const path = String(file.path || "").toLowerCase();
+    const insertions = Number(file.insertions) || 0;
+    const mtime = Number(file.mtime) || 0;
+    const kind = String(file.kind || inferPreviewKind(path));
+    const kindRank = PREVIEW_KIND_META[kind]?.rank || 0;
+    const nameRank = path.endsWith("index.html")
+        ? 4
+        : /(game|play|demo|app|preview|result|output)/.test(path)
+        ? 2
+        : 0;
+    return kindRank * 1_000_000 + nameRank * 100_000 + insertions + mtime / 1_000_000;
+}
+
+function latestUserPrompt(session) {
+    const transcript = Array.isArray(session?.transcript) ? [...session.transcript] : [];
+    const entry = transcript.reverse().find((item) => item?.role === "user" && typeof item.content === "string" && item.content.trim());
+    return entry?.content?.trim() || "";
+}
+
+function cleanSessionArtifactTitle(session) {
+    const raw = String(session?.title || latestUserPrompt(session) || "").trim();
+    if (!raw || raw === "New thread") {
+        return "作品";
+    }
+    return raw
+        .replace(/<think>[\s\S]*?<\/think>/giu, "")
+        .replace(/[*_`#]+/g, "")
+        .replace(/^(请|帮我|帮忙|麻烦)?\s*(创建|生成|做|实现|制作|写|建|开发|继续)\s*/u, "")
+        .replace(/^(一个|一款|一个像|一个类似|类似|重新)\s*/u, "")
+        .replace(/^(网页|浏览器|web|html5|小游戏|游戏|页面|应用)\s*/iu, "")
+        .replace(/[：:]/g, " ")
+        .replace(/[，,].*$/u, "")
+        .replace(/[。！!？?].*$/u, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 12) || "作品";
+}
+
+function humanizeArtifactRole(path, kind) {
+    const lowerPath = String(path || "").toLowerCase();
+    const fileName = lowerPath.split("/").filter(Boolean).pop() || lowerPath;
+    const stem = fileName.replace(/\.[a-z0-9]+$/i, "").replace(/^\d+[_-]*/u, "");
+    if (fileName === "index.html" || /(^|\/)(index|app|preview|result)\.html$/i.test(lowerPath)) {
+        return "主程序";
+    }
+    if (kind === "pdf") return "文档";
+    if (kind === "mp4" || kind === "webm") return "视频";
+    if (kind === "mp3" || kind === "wav" || kind === "ogg") return "音频";
+    return stem
+        .replace(/[_-]+/g, " ")
+        .replace(/\b(html|image|video|audio|preview|result|output)\b/gi, "")
+        .replace(/\s+/g, " ")
+        .trim() || `${previewKindLabel(kind)}`;
+}
+
+function isUserFacingPreviewFile(file) {
+    const path = String(file.path || "").trim();
+    const hostPath = String(file.absolute_path || "").trim();
+    const kind = String(file.kind || inferPreviewKind(path));
+    const lowerPath = path.toLowerCase();
+    if (!hostPath || !USER_VISIBLE_PREVIEW_KINDS.has(kind)) {
+        return false;
+    }
+    // 完全过滤掉 .harness 目录下的内部文件（包括运行截图等）
+    if (lowerPath.startsWith(".harness/")) {
+        return false;
+    }
+    if (/(^|\/)(logs|stdout|stderr|traces)(\/|$)/i.test(lowerPath)) {
+        return false;
+    }
+    // 过滤掉项目根目录的 README.md，它不是要预览的“创意产物”
+    if (lowerPath === "readme.md") {
+        return false;
+    }
+    return true;
+}
+
+function previewSemanticKey(file) {
+    const path = String(file.path || "").trim().toLowerCase();
+    const kind = String(file.kind || inferPreviewKind(path));
+    if (path.includes("/screenshots/")) {
+        return `shot:${humanizeArtifactRole(path, kind)}`;
+    }
+    return `file:${path}`;
+}
+
+function buildWorkspacePreviewEntries(workspaceChanges, apiBase, session) {
     if (!workspaceChanges || !apiBase) {
         return [];
     }
@@ -829,66 +951,91 @@ function buildWorkspaceHtmlPreviewEntries(workspaceChanges, apiBase) {
         ...(Array.isArray(workspaceChanges.previewFiles) ? workspaceChanges.previewFiles : []),
         ...(Array.isArray(workspaceChanges.files) ? workspaceChanges.files : []),
     ];
-    const seenPaths = new Set();
-    const htmlFiles = candidates.filter((f) => {
-        const path = String(f.path || "");
-        const hostPath = String(f.absolute_path || "");
-        const key = hostPath || path;
-        if (!/\.html?$/i.test(path) || !hostPath || seenPaths.has(key)) {
-            return false;
-        }
-        seenPaths.add(key);
-        return true;
-    });
-    if (!htmlFiles.length) {
-        return [];
-    }
-    const sorted = [...htmlFiles].sort((a, b) => scoreWorkspaceHtmlFile(b) - scoreWorkspaceHtmlFile(a));
-    const base = String(apiBase || "").replace(/\/$/, "");
-    return sorted
-        .map((f) => {
-            const hostPath = String(f.absolute_path || "").trim();
-            if (!hostPath) {
-                return null;
-            }
-            return {
-                path: String(f.path || ""),
-                url: `${base}/preview/local-file?path=${encodeURIComponent(hostPath)}`,
-            };
-        })
-        .filter(Boolean);
-}
-
-function shortPreviewLabel(url) {
-    const u = String(url || "");
-    if (!u) {
-        return "";
-    }
-    if (u.includes("/preview/local-file")) {
-        try {
-            const q = new URL(u, "http://_").searchParams.get("path") || "";
-            const base = q.split(/[/\\]/).filter(Boolean).pop() || q;
-            return base || "local HTML";
-        } catch {
-            return "local HTML";
-        }
-    }
-    return u.replace(/^https?:\/\//i, "").replace(/\/$/, "").slice(0, 56) || u;
-}
-
-function buildPreviewArtifactOptions(detectedUrls, workspaceChanges, apiBase) {
-    const out = [];
-    const seen = new Set();
-    const push = (label, url) => {
-        if (!url || seen.has(url)) {
+    const deduped = new Map();
+    candidates.forEach((file) => {
+        if (!isUserFacingPreviewFile(file)) {
             return;
         }
-        seen.add(url);
-        out.push({ label: label || shortPreviewLabel(url), url });
+        const key = previewSemanticKey(file);
+        const existing = deduped.get(key);
+        if (!existing || scoreWorkspacePreviewFile(file) > scoreWorkspacePreviewFile(existing)) {
+            deduped.set(key, file);
+        }
+    });
+    const previewableFiles = [...deduped.values()];
+    if (!previewableFiles.length) {
+        return [];
+    }
+    const projectTitle = cleanSessionArtifactTitle(session);
+    const base = String(apiBase || "").replace(/\/$/, "");
+    return [...previewableFiles]
+        .sort((left, right) => scoreWorkspacePreviewFile(right) - scoreWorkspacePreviewFile(left))
+        .map((file) => {
+            const hostPath = String(file.absolute_path || "").trim();
+            const path = String(file.path || "").trim();
+            const kind = String(file.kind || inferPreviewKind(path));
+            const roleLabel = humanizeArtifactRole(path, kind);
+            const displayName = `${projectTitle} · ${roleLabel}`;
+            return {
+                source: "workspace",
+                kind,
+                path,
+                name: displayName,
+                label: displayName,
+                headline: `${roleLabel} · ${projectTitle}`,
+                url: `${base}/preview/local-file?path=${encodeURIComponent(hostPath)}`,
+            };
+        });
+}
+
+function shortPreviewLabel(url, fallbackKind = "artifact") {
+    const value = String(url || "");
+    if (!value) {
+        return "";
+    }
+    if (value.includes("/preview/local-file")) {
+        try {
+            const path = new URL(value, "http://_").searchParams.get("path") || "";
+            const base = path.split(/[/\\]/).filter(Boolean).pop() || path;
+            return base || `local ${previewKindLabel(fallbackKind).toLowerCase()}`;
+        } catch {
+            return `local ${previewKindLabel(fallbackKind).toLowerCase()}`;
+        }
+    }
+    return value.replace(/^https?:\/\//i, "").replace(/\/$/, "").slice(0, 56) || value;
+}
+
+function buildPreviewArtifactOptions(detectedUrls, workspaceChanges, apiBase, session) {
+    const options = [];
+    const seen = new Set();
+    const projectTitle = cleanSessionArtifactTitle(session);
+    const push = (option) => {
+        if (!option?.url || seen.has(option.url)) {
+            return;
+        }
+        seen.add(option.url);
+        options.push(option);
     };
-    (detectedUrls || []).forEach((u) => push(shortPreviewLabel(u), u));
-    buildWorkspaceHtmlPreviewEntries(workspaceChanges, apiBase).forEach((e) => push(e.path, e.url));
-    return out;
+    (detectedUrls || []).forEach((url) => {
+        const kind = inferPreviewKind(url);
+        if (!USER_VISIBLE_PREVIEW_KINDS.has(kind) && kind !== "artifact") {
+            return;
+        }
+        const rawName = shortPreviewLabel(url, kind);
+        const displayName = projectTitle === "未命名作品"
+            ? rawName
+            : `${projectTitle} · 在线预览`;
+        push({
+            source: "url",
+            kind,
+            name: displayName,
+            label: displayName,
+            headline: `在线预览 · ${projectTitle}`,
+            url,
+        });
+    });
+    buildWorkspacePreviewEntries(workspaceChanges, apiBase, session).forEach(push);
+    return options;
 }
 
 function firstUserPrompt(session) {
@@ -1163,14 +1310,12 @@ function App() {
         detectedPreviewUrls,
         workspaceChanges,
         settings.apiUrl,
+        currentSession,
     );
     const previewAutoOpenKey = `${currentSessionId || ""}:${previewArtifactOptions.map((option) => option.url).join("|")}`;
     const activePreviewUrl = previewUrl || previewArtifactOptions[0]?.url || "";
-    const previewHeadline = activePreviewUrl
-        ? (activePreviewUrl.includes("/preview/local-file")
-            ? `Workspace HTML · ${shortPreviewLabel(activePreviewUrl)}`
-            : `URL · ${shortPreviewLabel(activePreviewUrl)}`)
-        : "Preview waiting for a runnable URL";
+    const activePreviewOption = previewArtifactOptions.find((option) => option.url === activePreviewUrl) || null;
+    const previewHeadline = activePreviewOption?.headline || activePreviewOption?.name || "等待可预览的作品产物";
     const recallableUserInputs = (currentSession?.transcript || [])
         .filter((entry) => entry?.role === "user" && typeof entry.content === "string" && entry.content.trim())
         .map((entry) => entry.content);
@@ -1351,6 +1496,7 @@ function App() {
             detectedPreviewUrls,
             workspaceChanges,
             settingsRef.current.apiUrl,
+            currentSession,
         );
         setPreviewUrl((prev) => {
             if (prev && options.some((o) => o.url === prev)) {
@@ -1360,7 +1506,7 @@ function App() {
         });
     }, [currentSessionId, detectedPreviewUrls, workspaceChanges]);
 
-    // 自动打开 Preview 面板当检测到 URL 或工作区 HTML 时
+    // 自动打开 Preview 面板当检测到 URL 或工作区可预览产物时
     useEffect(() => {
         if (
             previewArtifactOptions.length > 0
@@ -1371,7 +1517,8 @@ function App() {
         }
     }, [previewArtifactOptions, previewAutoOpenKey, previewOpen]);
 
-    useEffect(() => {
+    async function refreshWorkspaceChanges(options = {}) {
+        const { silent = false } = options;
         if (!activeWorkspacePath) {
             setWorkspaceChanges({
                 isGit: false,
@@ -1383,33 +1530,37 @@ function App() {
             });
             return;
         }
-
-        let cancelled = false;
-        const refreshChanges = async () => {
-            try {
-                const params = new URLSearchParams({ path: activeWorkspacePath });
-                const response = await fetch(`${settingsRef.current.apiUrl}/workspace/changes?${params.toString()}`);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                const payload = await response.json();
-                if (cancelled) return;
-                setWorkspaceChanges({
-                    isGit: Boolean(payload.is_git),
-                    changedFiles: payload.changed_files || 0,
-                    insertions: payload.insertions || 0,
-                    deletions: payload.deletions || 0,
-                    files: payload.files || [],
-                    previewFiles: payload.preview_files || [],
-                });
-            } catch (error) {
-                if (!cancelled) {
-                    console.debug("Failed to load workspace changes", error);
-                }
+        try {
+            const params = new URLSearchParams({ path: activeWorkspacePath });
+            const response = await fetch(`${settingsRef.current.apiUrl}/workspace/changes?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
-        };
+            const payload = await response.json();
+            setWorkspaceChanges({
+                isGit: Boolean(payload.is_git),
+                changedFiles: payload.changed_files || 0,
+                insertions: payload.insertions || 0,
+                deletions: payload.deletions || 0,
+                files: payload.files || [],
+                previewFiles: payload.preview_files || [],
+            });
+        } catch (error) {
+            if (!silent) {
+                console.debug("Failed to load workspace changes", error);
+            }
+        }
+    }
 
-        refreshChanges();
+    useEffect(() => {
+        let cancelled = false;
+        const run = async () => {
+            if (cancelled) {
+                return;
+            }
+            await refreshWorkspaceChanges({ silent: true });
+        };
+        run();
         return () => {
             cancelled = true;
         };
@@ -2171,6 +2322,35 @@ function App() {
         });
     }
 
+    async function suggestSessionTitle(sessionId, prompt) {
+        const rawPrompt = String(prompt || "").trim();
+        if (!sessionId || !rawPrompt) {
+            return;
+        }
+        try {
+            const response = await fetch(`${settingsRef.current.apiUrl}/ui/title-suggestion`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    prompt: rawPrompt,
+                    mode,
+                    model: selectedModel,
+                }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            const nextTitle = String(payload.title || "").trim();
+            if (!response.ok || !nextTitle) {
+                return;
+            }
+            updateSessionById(sessionId, (session) => {
+                session.title = nextTitle;
+            }, { touchUpdatedAt: false });
+        } catch (error) {
+            console.debug("Failed to suggest session title", error);
+        }
+    }
+
     function queueGuidedCreateQuestion(flow, index, answers) {
         const question = flow.questions[index];
         if (!question) {
@@ -2319,8 +2499,13 @@ function App() {
         }
         setContextPercent(computeContextPercent(currentSession, toolContext));
 
+        const existingSession = sessionsRef.current.find((session) => session.id === sessionId);
+        const isFirstUserPrompt = !((existingSession?.transcript || []).some((entry) => entry?.role === "user"));
         if (!options.skipUserTranscript) {
             appendUserTranscript(sessionId, content, snapshotImages);
+            if (requestMode === "create" && isFirstUserPrompt && content) {
+                suggestSessionTitle(sessionId, content);
+            }
         }
         clearComposerDraft();
 
@@ -2525,9 +2710,9 @@ function App() {
                         statusLine: decision?.decision === "PASS"
                             ? `已完成 · 第 ${decision.roundId || 0} 轮`
                             : `${decision?.decision || "处理中"} · 第 ${decision?.roundId || 0} 轮`,
-                        nextAction: decision?.nextAgent && decision.nextAgent !== "None"
+                        nextAction: decision?.humanizedNextAction || (decision?.nextAgent && decision.nextAgent !== "None"
                             ? `下一步交由 ${decision.nextAgent}，进入 ${decision.nextState || "下一阶段"}`
-                            : "",
+                            : ""),
                         round_id: decision?.roundId || 0,
                     });
                     if (decision?.decision) {
@@ -2883,7 +3068,22 @@ function App() {
         setPreviewOpen(false);
     }
 
-    function refreshPreviewPane() {
+    async function refreshPreviewPane() {
+        await refreshWorkspaceChanges({ silent: false });
+        setPreviewNonce((current) => current + 1);
+    }
+
+    function cyclePreviewArtifact(direction) {
+        if (!previewArtifactOptions.length) {
+            return;
+        }
+        const currentIndex = Math.max(0, previewArtifactOptions.findIndex((option) => option.url === activePreviewUrl));
+        const nextIndex = (currentIndex + direction + previewArtifactOptions.length) % previewArtifactOptions.length;
+        const nextOption = previewArtifactOptions[nextIndex];
+        if (!nextOption) {
+            return;
+        }
+        setPreviewUrl(nextOption.url);
         setPreviewNonce((current) => current + 1);
     }
 
@@ -3250,63 +3450,91 @@ function App() {
                     {previewOpen ? (
                         <aside className="preview-pane">
                             <div className="preview-pane-shell">
-                                <div className="preview-pane-header">
-                                    <div className="preview-pane-copy">
-                                        <div className="preview-pane-identity">
+                                <div className="preview-pane-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                        <div className="preview-pane-copy">
                                             <span className="preview-pane-kicker">Live Preview</span>
-                                            {previewArtifactOptions.length > 1 ? (
-                                                <label className="preview-artifact-picker preview-artifact-picker--merged">
-                                                    <span className="visually-hidden">切换预览产物</span>
-                                                    <select
-                                                        className="preview-artifact-select preview-artifact-select--merged"
-                                                        value={activePreviewUrl}
-                                                        onChange={(e) => {
-                                                            setPreviewUrl(e.target.value);
-                                                            setPreviewNonce((n) => n + 1);
-                                                        }}
-                                                        title="工作区内多个 HTML 或对话中有多个 URL 时可在此切换"
+                                        </div>
+                                        <div className="preview-pane-actions">
+                                            {publishToast ? (
+                                                <span className="preview-publish-toast" role="status">{publishToast}</span>
+                                            ) : null}
+                                            {activePreviewUrl ? (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        className="preview-publish-btn"
+                                                        title="将当前 create 作品发布到发现页，供其他人可见和二创"
+                                                        onClick={publishPreviewLink}
+                                                        disabled={publishingProject}
                                                     >
-                                                        {previewArtifactOptions.map((o) => (
-                                                            <option key={o.url} value={o.url}>{o.label}</option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                            ) : (
-                                                <div
-                                                    className="preview-pane-target-static"
-                                                    title={activePreviewUrl || previewHeadline}
-                                                >
-                                                    {previewHeadline}
-                                                </div>
-                                            )}
+                                                        {publishingProject ? "发布中..." : "发布作品"}
+                                                    </button>
+                                                    <button type="button" className="icon-button" title="Refresh preview" onClick={refreshPreviewPane}>
+                                                        <i className="fas fa-rotate-right" />
+                                                    </button>
+                                                    <a className="icon-button" href={activePreviewUrl} target="_blank" rel="noreferrer noopener" title="Open preview in a new tab">
+                                                        <i className="fas fa-arrow-up-right-from-square" />
+                                                    </a>
+                                                </>
+                                            ) : null}
+                                            <button type="button" className="icon-button" title="Close preview" onClick={closePreviewPane}>
+                                                <i className="fas fa-xmark" />
+                                            </button>
                                         </div>
                                     </div>
-                                    <div className="preview-pane-actions">
-                                        {publishToast ? (
-                                            <span className="preview-publish-toast" role="status">{publishToast}</span>
-                                        ) : null}
-                                        {activePreviewUrl ? (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    className="preview-publish-btn"
-                                                    title="将当前 create 作品发布到发现页，供其他人可见和二创"
-                                                    onClick={publishPreviewLink}
-                                                    disabled={publishingProject}
+
+                                    <div className="preview-pane-identity" style={{ padding: '8px' }}>
+                                        <div className="preview-pane-switcher" role="group" aria-label="Live preview artifact switcher">
+                                            <button
+                                                type="button"
+                                                className="icon-button preview-switch-button"
+                                                title="切换到上一个产物"
+                                                onClick={() => cyclePreviewArtifact(-1)}
+                                                disabled={previewArtifactOptions.length <= 1}
+                                            >
+                                                <i className="fas fa-chevron-left" />
+                                            </button>
+                                            <label className="preview-artifact-picker preview-artifact-picker--merged" style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
+                                                <span className="visually-hidden">切换预览产物</span>
+                                                <select
+                                                    className="preview-artifact-select preview-artifact-select--merged"
+                                                    value={activePreviewUrl}
+                                                    onChange={(e) => {
+                                                        setPreviewUrl(e.target.value);
+                                                        setPreviewNonce((n) => n + 1);
+                                                    }}
+                                                    title={previewArtifactOptions.length > 1
+                                                        ? "工作区内有多个可预览产物，或对话中出现多个 URL 时，可在此切换"
+                                                        : "当前仅检测到 1 个可预览产物"
+                                                    }
+                                                    disabled={previewArtifactOptions.length === 0}
                                                 >
-                                                    {publishingProject ? "发布中..." : "发布作品"}
-                                                </button>
-                                                <button type="button" className="icon-button" title="Refresh preview" onClick={refreshPreviewPane}>
-                                                    <i className="fas fa-rotate-right" />
-                                                </button>
-                                                <a className="icon-button" href={activePreviewUrl} target="_blank" rel="noreferrer noopener" title="Open preview in a new tab">
-                                                    <i className="fas fa-arrow-up-right-from-square" />
-                                                </a>
-                                            </>
-                                        ) : null}
-                                        <button type="button" className="icon-button" title="Close preview" onClick={closePreviewPane}>
-                                            <i className="fas fa-xmark" />
-                                        </button>
+                                                    {previewArtifactOptions.length ? previewArtifactOptions.map((o) => (
+                                                        <option key={o.url} value={o.url}>{o.label}</option>
+                                                    )) : (
+                                                        <option value="">暂无可预览产物</option>
+                                                    )}
+                                                </select>
+                                                <span className="preview-artifact-count" style={{ marginTop: '4px' }}>
+                                                    {previewArtifactOptions.length > 1
+                                                        ? `${Math.max(1, previewArtifactOptions.findIndex((option) => option.url === activePreviewUrl) + 1)} / ${previewArtifactOptions.length}`
+                                                        : previewArtifactOptions.length === 1
+                                                        ? "1 个产物"
+                                                        : "等待产物"
+                                                    }
+                                                </span>
+                                            </label>
+                                            <button
+                                                type="button"
+                                                className="icon-button preview-switch-button"
+                                                title="切换到下一个产物"
+                                                onClick={() => cyclePreviewArtifact(1)}
+                                                disabled={previewArtifactOptions.length <= 1}
+                                            >
+                                                <i className="fas fa-chevron-right" />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -3316,15 +3544,15 @@ function App() {
                                             key={`${activePreviewUrl}:${previewNonce}`}
                                             className="preview-frame"
                                             src={activePreviewUrl}
-                                            title="App preview"
+                                            title={activePreviewOption?.label || "Artifact preview"}
                                         />
                                     </div>
                                 ) : (
                                     <div className="preview-empty">
                                         <i className="fas fa-window-restore" aria-hidden="true" />
                                         <p>
-                                            对话里出现可访问的 http(s) URL 时会自动加载；若只有本地 HTML 文件，
-                                            会在当前 thread 的默认工作区检测到变更后尝试打开 HTML 预览。
+                                            对话里出现可访问的 http(s) URL 时会自动加载；若工作区生成了本地 HTML、图片、PDF、视频、音频或 JSON 产物，
+                                            也会在检测到变更后自动加入右侧预览切换列表。
                                         </p>
                                     </div>
                                 )}
