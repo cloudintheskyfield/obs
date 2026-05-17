@@ -36,14 +36,13 @@ def test_harness_addendum_requires_environment_evaluation() -> None:
     assert "Runner script errors" in addendum
 
 
-def test_harness_maps_legacy_modes_to_strategies() -> None:
+def test_harness_maps_supported_modes_to_strategies() -> None:
     harness = HarnessEngine()
 
     assert harness.strategy_for_mode("agent") == "default"
     assert harness.strategy_for_mode("create") == "create"
     assert harness.strategy_for_mode("plan") == "planner_only"
-    assert harness.strategy_for_mode("review") == "evaluator_heavy"
-    assert harness.strategy_for_mode("battle") == "comparison"
+    assert harness.strategy_for_mode("unknown") == "default"
     assert harness.runtime_mode_for_strategy("planner_only") == "agent"
     assert harness.runtime_mode_for_strategy("create") == "create"
 

@@ -8,7 +8,7 @@ from skills import SkillManager
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "src" / "skills"
 EXPECTED_PUBLIC_TOOLS = {
-    "desktop-commander.terminal",
+    "desktop-commander",
     "file-manager",
     "filesystem",
     "computer-use",

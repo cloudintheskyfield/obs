@@ -466,7 +466,9 @@ def _ensure_game_smoke_tests(
     tests = [dict(item) for item in smoke_tests]
     ids = {str(item.get("id") or "").strip() for item in tests}
     actions = {str(item.get("action") or "").strip() for item in tests}
-    default_target = "index.html" if "index.html" in allowed_files else "http://localhost:5173"
+
+    html_files = [f for f in allowed_files if str(f).endswith(".html")]
+    default_target = html_files[0] if html_files else "http://localhost:8080"
 
     if "page_load" not in ids:
         tests.insert(
@@ -536,13 +538,15 @@ def _ensure_game_smoke_tests(
 
 def _default_smoke_tests(existing_files: Optional[List[str]]) -> List[Dict[str, Any]]:
     files = existing_files or []
-    if "index.html" in files or any(path.startswith("src/") for path in files):
+    html_files = [f for f in files if str(f).endswith(".html")]
+    if html_files:
+        target = html_files[0]
         return [
             {
                 "id": "page_load",
                 "type": "browser",
                 "action": "goto",
-                "target": "http://localhost:5173",
+                "target": target,
                 "expect": {
                     "page_loaded": True,
                     "no_fatal_console_error": True,
@@ -553,11 +557,11 @@ def _default_smoke_tests(existing_files: Optional[List[str]]) -> List[Dict[str, 
         ]
     return []
 
-
 def _browser_smoke_tests_from_descriptions(descriptions: List[str], allowed_files: List[str]) -> List[Dict[str, Any]]:
     if not descriptions:
         return []
-    target = "index.html" if "index.html" in allowed_files else ""
+    html_files = [f for f in allowed_files if str(f).endswith(".html")]
+    target = html_files[0] if html_files else "http://localhost:8080"
     tests: List[Dict[str, Any]] = []
     for index, description in enumerate(descriptions, start=1):
         tests.append(
@@ -584,6 +588,16 @@ def _default_dev_server(existing_files: Optional[List[str]]) -> Dict[str, Any]:
             "url": "http://localhost:8080",
             "ready_patterns": ["Local:", "ready in", "localhost", "8080"],
             "timeout_sec": 60,
+        }
+    html_files = [f for f in files if str(f).endswith(".html")]
+    if html_files:
+        import sys
+        return {
+            "enabled": True,
+            "start_cmd": f"{sys.executable} -m http.server 8080",
+            "url": "http://localhost:8080",
+            "ready_patterns": ["Serving HTTP"],
+            "timeout_sec": 10,
         }
     return {
         "enabled": False,
@@ -753,10 +767,14 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
 
     browser_descriptions = _browser_descriptions_from_commands(source.get("test_commands"))
     converted_smoke_tests = _browser_smoke_tests_from_descriptions(browser_descriptions, contract["allowed_files"])
+    if "smoke_tests" in source:
+        source_smoke_tests = _normalize_smoke_tests(source.get("smoke_tests"))
+    else:
+        source_smoke_tests = list(base["smoke_tests"])
     contract["smoke_tests"] = _ensure_game_smoke_tests(
         contract["goal"],
         [
-            *(_normalize_smoke_tests(source.get("smoke_tests")) or base["smoke_tests"]),
+            *source_smoke_tests,
             *converted_smoke_tests,
         ],
         contract["allowed_files"],

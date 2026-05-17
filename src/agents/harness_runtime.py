@@ -53,14 +53,10 @@ class HarnessRuntime:
         self,
         vllm_client: Any,
         skill_manager: Any,
-        execution_engine: Any = None,
-        plan_agent: Any = None,
         request_lifecycle: Optional[RequestLifecycle] = None,
     ) -> None:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
-        self.execution_engine = execution_engine
-        self.plan_agent = plan_agent
         self.request_lifecycle = request_lifecycle or RequestLifecycle()
         self.session_context_cache: Dict[str, Dict[str, Any]] = {}
         self.harness_engine = HarnessEngine()
@@ -627,7 +623,7 @@ class HarnessRuntime:
                     "steps": tasks,
                     "acceptance_checks": plan_contract.get("acceptance_criteria") or [],
                 },
-                "task_graph": {
+                "plan_graph": {
                     "tasks": tasks,
                     "edges": [
                         {"from": f"T{index}", "to": f"T{index + 1}"}

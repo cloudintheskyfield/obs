@@ -544,16 +544,12 @@ class HarnessEngine:
         "agent": "default",
         "create": "create",
         "plan": "planner_only",
-        "review": "evaluator_heavy",
-        "battle": "comparison",
     }
 
     RUNTIME_MODE_BY_STRATEGY = {
         "default": "agent",
         "create": "create",
         "planner_only": "agent",
-        "evaluator_heavy": "agent",
-        "comparison": "agent",
     }
 
     USER_WEB_LOOKUP_PATTERN = re.compile(

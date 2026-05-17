@@ -259,7 +259,7 @@ export default function SkillsDrawer({
                         {installTab === "url" ? (
                             <form onSubmit={handleInstallFromUrl} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                 <div style={{ display: "flex", gap: 6 }}>
-                                    <input type="text" placeholder="http://127.0.0.1:8001/skill.md"
+                                    <input type="text" placeholder="https://www.findskills.org/zh/directory/..."
                                         value={urlForm.url}
                                         onChange={e => { setUrlForm(f => ({ ...f, url: e.target.value })); setUrlPreview(""); }}
                                         style={{ flex: 1, padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border-color)", fontSize: 12, background: "var(--bg-secondary)", color: "inherit" }}

@@ -11,10 +11,8 @@ def app_root() -> Path:
 def src_skills_root() -> Path:
     return app_root() / "src" / "skills"
 
-
-
 def frontend_root() -> Path:
-    return app_root() / "frontend"
+    return app_root() / "ui"
 
 
 def frontend_dist_root() -> Path:

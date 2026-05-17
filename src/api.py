@@ -37,8 +37,6 @@ os.environ.setdefault("SKILLS_DIR", str(skills_path))
 
 from skills.skill_manager import SkillManager
 from core.vllm_client import VLLMClient
-from agents.plan_agent import PlanAgent
-from agents.execution_engine import ExecutionEngine
 from agents.harness_runtime import HarnessRuntime, normalize_llm_message_content
 from services import RequestLifecycle, SessionStore
 
@@ -153,7 +151,6 @@ except Exception as e:
 skill_manager: Optional[SkillManager] = None
 vllm_client: Optional[VLLMClient] = None
 chat_sessions: Dict[str, List[Dict[str, Any]]] = {}
-pending_plans: Dict[str, Dict[str, Any]] = {}
 session_locations: Dict[str, Dict[str, Any]] = {}
 workspace_request_lock = asyncio.Lock()
 
@@ -1035,18 +1032,9 @@ async def startup_event():
     )
     await vllm_client.__aenter__()
     
-    # 初始化Plan Agent
-    available_skills = list(skill_manager.skills.keys())
-    plan_agent = PlanAgent(vllm_client, [name for name in skill_manager.skills.keys()])
-    
-    execution_engine = ExecutionEngine(vllm_client, skill_manager, plan_agent)
-    app.state.execution_engine = execution_engine
-    
     harness_runtime = HarnessRuntime(
         vllm_client,
         skill_manager,
-        execution_engine,
-        plan_agent,
         request_lifecycle=request_lifecycle,
     )
     app.state.harness_runtime = harness_runtime
@@ -1056,8 +1044,6 @@ async def startup_event():
     # 同时存储在app.state中
     app.state.skill_manager = skill_manager
     app.state.vllm_client = vllm_client
-    app.state.plan_agent = plan_agent
-    app.state.execution_engine = execution_engine
     app.state.session_store = session_store
     app.state.request_lifecycle = request_lifecycle
     print("Skill manager initialized successfully")
@@ -1098,19 +1084,11 @@ async def root():
     })
 
 
-@app.get("/skill.md")
-async def service_skill_md():
-    """Serve a hall-friendly skill document for external registration."""
-    skill_file = Path(__file__).resolve().parents[2] / "skill.md"
-    if skill_file.exists():
-        return FileResponse(str(skill_file), media_type="text/markdown; charset=utf-8")
-    return JSONResponse({"detail": "skill.md not found"}, status_code=404)
-
 @app.get("/health")
 async def health():
     """健康检查 - 静默模式"""
     skills_count = len(skill_manager.skills) if skill_manager else 0
-    return {"status": "ok", "skills_count": skills_count}
+    return {"status": "ok", "version": app.version, "skills_count": skills_count}
 
 @app.get("/runtime")
 async def runtime_status():
@@ -2002,7 +1980,7 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                 })
                 _persist_chat_session(session_id)
 
-                # 使用流式引擎处理请求 (取代旧版 execution_engine 块)
+                # 使用 HarnessRuntime 流式状态机处理请求
                 async for chunk in harness_runtime.chat_stream(
                     session_id,
                     chat_sessions,
@@ -2031,16 +2009,6 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                             payload = json.loads(chunk[6:].strip())
                             if payload.get("type") == "llm_log":
                                 _persist_llm_trace(session_id, payload)
-                            elif payload.get("type") == "plan" and payload.get("plan_id"):
-                                pending_plans[payload["plan_id"]] = {
-                                    "plan_id": payload["plan_id"],
-                                    "user_message": message,
-                                    "session_id": session_id,
-                                    "chat_history": list(chat_sessions.get(session_id, [])),
-                                    "plan": payload.get("plan"),
-                                    "task_graph": payload.get("task_graph"),
-                                    "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                                }
                         except Exception:
                             pass
                     yield chunk
@@ -2243,185 +2211,6 @@ async def execute_skill(request_data: SkillExecuteRequest):
         })
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)})
-
-@app.get("/experts")
-async def list_experts():
-    """获取所有可用专家列表"""
-    if not vllm_client:
-        return JSONResponse({"success": False, "error": "VLM客户端未初始化"})
-    
-    from agents.expert_agents import ExpertAgentOrchestrator
-    orchestrator = ExpertAgentOrchestrator(vllm_client)
-    
-    experts = orchestrator.get_available_experts()
-    return JSONResponse({
-        "success": True,
-        "experts": experts
-    })
-
-@app.post("/expert/execute")
-async def execute_with_expert(request_data: Dict[str, Any]):
-    """使用专家Agent执行任务"""
-    if not vllm_client:
-        return JSONResponse({"success": False, "error": "VLM客户端未初始化"})
-    
-    try:
-        from agents.expert_agents import ExpertAgentOrchestrator
-        orchestrator = ExpertAgentOrchestrator(vllm_client)
-        
-        task = request_data.get("task", "")
-        context = request_data.get("context", "")
-        expert_type = request_data.get("expert_type")
-        
-        result = await orchestrator.execute_with_expert(
-            task=task,
-            context=context,
-            expert_type=expert_type,
-            skill_manager=skill_manager
-        )
-        
-        return JSONResponse(result)
-        
-    except Exception as e:
-        logger.error(f"Expert execution error: {e}")
-        return JSONResponse({"success": False, "error": str(e)})
-
-@app.get("/plan/pending")
-async def list_pending_plans():
-    """List plans awaiting human approval."""
-    return JSONResponse({
-        "pending_plans": [
-            {
-                "plan_id": v["plan_id"],
-                "session_id": v["session_id"],
-                "user_message": v["user_message"],
-                "created_at": v["created_at"],
-                "steps_count": len((v.get("plan") or {}).get("steps") or []),
-            }
-            for v in pending_plans.values()
-        ]
-    })
-
-
-@app.post("/plan/approve/{plan_id}")
-async def approve_plan(plan_id: str):
-    """Approve a pending plan and stream its execution."""
-    plan_data = pending_plans.pop(plan_id, None)
-    if plan_data is None:
-        return JSONResponse({"error": "Plan not found or already executed"}, status_code=404)
-
-    execution_engine = getattr(app.state, "execution_engine", None)
-    if execution_engine is None:
-        return JSONResponse({"error": "Execution engine not initialized"}, status_code=503)
-
-    session_id = plan_data["session_id"]
-
-    async def generate():
-        try:
-            async for event in execution_engine.execute_user_request(
-                user_message=plan_data["user_message"],
-                session_id=session_id,
-                chat_history=plan_data.get("chat_history") or [],
-            ):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as exc:
-            yield f"data: {json.dumps({'error': str(exc), 'done': True}, ensure_ascii=False)}\n\n"
-        finally:
-            yield f"data: {json.dumps({'done': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-@app.delete("/plan/{plan_id}")
-async def reject_plan(plan_id: str):
-    """Reject (discard) a pending plan."""
-    pending_plans.pop(plan_id, None)
-    return JSONResponse({"ok": True})
-
-
-# ============================================================================
-# Creature Management API
-# ============================================================================
-
-from core.creature_manager import creature_manager
-
-
-class CreatureStartRequest(BaseModel):
-    session_id: str
-    creature_name: str
-
-
-class CreatureStopRequest(BaseModel):
-    creature_name: str
-
-
-@app.get("/api/creatures/session/{session_id}")
-async def list_session_creatures(session_id: str):
-    """获取 session 的所有产物"""
-    try:
-        creatures = creature_manager.list_creatures(session_id)
-        return JSONResponse({
-            "success": True,
-            "session_id": session_id,
-            "creatures": creatures
-        })
-    except Exception as e:
-        logger.error(f"Error listing creatures: {e}")
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
-
-@app.post("/api/creatures/start")
-async def start_creature(request: CreatureStartRequest):
-    """启动产物"""
-    try:
-        result = creature_manager.start_creature(
-            session_id=request.session_id,
-            creature_name=request.creature_name
-        )
-        return JSONResponse(result)
-    except Exception as e:
-        logger.error(f"Error starting creature: {e}")
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
-
-@app.post("/api/creatures/stop")
-async def stop_creature(request: CreatureStopRequest):
-    """停止产物"""
-    try:
-        result = creature_manager.stop_creature(
-            creature_name=request.creature_name
-        )
-        return JSONResponse(result)
-    except Exception as e:
-        logger.error(f"Error stopping creature: {e}")
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
-
-@app.get("/api/creatures/status/{session_id}/{creature_name}")
-async def get_creature_status(session_id: str, creature_name: str):
-    """获取产物状态"""
-    try:
-        result = creature_manager.get_creature_status(
-            session_id=session_id,
-            creature_name=creature_name
-        )
-        return JSONResponse(result)
-    except Exception as e:
-        logger.error(f"Error getting creature status: {e}")
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
 
 # 导出app实例
 __all__ = ["app"]

@@ -112,7 +112,8 @@ def test_skill_execution():
     async def run_tests():
         result = await manager.execute_skill("bash", command="echo should-not-run")
         assert result.success
-        assert result.metadata["mode"] == "instruction_only"
+        assert result.metadata.get("mode") != "instruction_only"
+        assert "should-not-run" in (result.content or "")
     
     import asyncio
     asyncio.run(run_tests())

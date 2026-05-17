@@ -139,7 +139,7 @@ class GPT55Config(BaseModel):
     """GPT-5.5配置（AceData API）"""
     enabled: bool = False
     base_url: str = "https://api.acedata.cloud/openai/chat/completions"
-    api_key: str = "587473ccbe934b3fa700adb9ec442955"
+    api_key: str = "dummy_key"
     model: str = "gpt-5.5"
     timeout: int = 60
     max_retries: int = 3

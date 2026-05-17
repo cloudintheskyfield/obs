@@ -72,9 +72,7 @@ class SkillManager:
         "computer": "computer-use",
     }
 
-    PUBLIC_TOOL_NAMES = {
-        "desktop-commander": "desktop-commander.terminal",
-    }
+    PUBLIC_TOOL_NAMES: Dict[str, str] = {}
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -109,6 +107,7 @@ class SkillManager:
                     if skill_instance:
                         # 关联SKILL.md定义
                         skill_instance.skill_definition = skill_def
+                        skill_instance._instructions = (getattr(skill_def, "instructions", "") or "").strip()
                         
                         # Skip regular web_search if we already have advanced web_search loaded,
                         # but associate the SKILL.md definition so it doesn't warn as missing

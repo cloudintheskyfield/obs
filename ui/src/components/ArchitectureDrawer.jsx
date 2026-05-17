@@ -298,7 +298,6 @@ function buildFlowModel({
             "task_start",
             "task_complete",
             "plan",
-            "battle_result",
             "done",
         ]),
     ];

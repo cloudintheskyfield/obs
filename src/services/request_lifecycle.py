@@ -28,7 +28,6 @@ class RequestLifecycle:
         "prep_model": LifecyclePhase("prep_model", "Waiting for model response"),
         "fast_path": LifecyclePhase("fast_path", "Running direct tool path"),
         "create": LifecyclePhase("create", "Scaffolding runnable application", transient=False),
-        "battle": LifecyclePhase("battle", "Running battle contenders", transient=False),
         "compression_start": LifecyclePhase("compression_start", "Compressing conversation context", transient=False),
         "compression_complete": LifecyclePhase("compression_complete", "Context compression complete", transient=False),
     }
@@ -223,8 +222,6 @@ class RequestLifecycle:
                 {"mode": "agent", "handler": "Unified Harness", "purpose_zh": "默认 Planner -> Search Gate -> Generator -> Runner -> Evaluator 闭环", "purpose_en": "Default Planner -> Search Gate -> Generator -> Runner -> Evaluator loop"},
                 {"mode": "create", "handler": "Unified Harness / create strategy", "purpose_zh": "同一个 Agent 的可运行产物策略，不再是独立 Agent", "purpose_en": "Runnable-deliverable strategy inside the same Agent, no longer a separate agent"},
                 {"mode": "plan", "handler": "Unified Harness / planner-only strategy", "purpose_zh": "Planner 只输出规格与任务图", "purpose_en": "Planner-only spec and task graph"},
-                {"mode": "review", "handler": "Unified Harness / evaluator-heavy strategy", "purpose_zh": "Evaluator 加权的审查与验证", "purpose_en": "Evaluator-heavy review and verification"},
-                {"mode": "battle", "handler": "Unified Harness / comparison strategy", "purpose_zh": "同一 Harness 内的候选比较与裁决", "purpose_en": "Candidate comparison and judgement inside the same Harness"},
             ],
             "prompt_sections": [
                 "workspace_context",

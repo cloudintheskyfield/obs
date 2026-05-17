@@ -190,8 +190,9 @@ Use:
 
 Set `enabled = true` for web/frontend/game tasks that need browser verification.
 
-Example:
-
+**Crucial Exception for Standalone HTML Tasks:**
+If you are generating a new standalone HTML file (like a single-file game or simple page) inside a larger project (like a Vite/React app), **do not** use the project's `npm run dev` or point to `http://localhost:5173`. The project's dev server will serve the main app, not your standalone file!
+Instead, plan a lightweight server for your specific file:
 ```json
 {
   "enabled": true,
@@ -216,7 +217,7 @@ Example:
     "id": "page_load",
     "type": "browser",
     "action": "goto",
-    "target": "http://localhost:8080",
+    "target": "new_game.html",
     "expect": {
       "page_loaded": true,
       "no_fatal_console_error": true

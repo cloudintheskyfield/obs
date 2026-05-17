@@ -2488,10 +2488,8 @@ function App() {
         setRequestIndicator({
             active: true,
             startedAt: Date.now(),
-            label: requestMode === "battle"
-                ? "Running battle contenders"
-                : requestMode === "create"
-                    ? "Scaffolding runnable app"
+            label: requestMode === "create"
+                ? "Scaffolding runnable app"
                 : (thinkingMode ? "Preparing request" : "Working on your request"),
         });
         if (requestMode === "create") {
@@ -3216,20 +3214,28 @@ function App() {
                     <div className="session-list">
                         {sessionPreviewList.map((session) => {
                             const preview = session.transcript.at(-1)?.content || "Start a new thread...";
+                            const activateSession = () => {
+                                setCurrentSessionId(session.id);
+                                if (sessionBadges[session.id]) {
+                                    setSessionBadges((prev) => ({ ...prev, [session.id]: "fading" }));
+                                    setTimeout(() => setSessionBadges((prev) => {
+                                        const next = { ...prev };
+                                        delete next[session.id];
+                                        return next;
+                                    }), 500);
+                                }
+                            };
                             return (
-                                <button
+                                <div
                                     key={session.id}
-                                    type="button"
+                                    role="button"
+                                    tabIndex={0}
                                     className={`session-item${session.id === currentSessionId ? " active" : ""}${session.id === justSentSessionId ? " just-sent" : ""}`}
-                                    onClick={() => {
-                                        setCurrentSessionId(session.id);
-                                        if (sessionBadges[session.id]) {
-                                            setSessionBadges((prev) => ({ ...prev, [session.id]: "fading" }));
-                                            setTimeout(() => setSessionBadges((prev) => {
-                                                const next = { ...prev };
-                                                delete next[session.id];
-                                                return next;
-                                            }), 500);
+                                    onClick={activateSession}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter" || event.key === " ") {
+                                            event.preventDefault();
+                                            activateSession();
                                         }
                                     }}
                                 >
@@ -3256,7 +3262,7 @@ function App() {
                                     >
                                         <i className="fas fa-times" aria-hidden="true" />
                                     </button>
-                                </button>
+                                </div>
                             );
                         })}
                     </div>
