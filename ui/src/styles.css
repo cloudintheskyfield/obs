@@ -4288,3 +4288,477 @@ html[data-theme="light"] .preview-empty {
 html[data-theme="light"] .preview-frame-wrap {
     background: rgba(255, 255, 255, 0.78);
 }
+
+/* Codex-style light workspace */
+html[data-theme="light"] {
+    --bg: #f7f7f4;
+    --bg-top: #ffffff;
+    --bg-glow: rgba(15, 23, 42, 0.03);
+    --sidebar: #fafafa;
+    --panel: rgba(255, 255, 255, 0.86);
+    --panel-strong: #ffffff;
+    --panel-soft: #f5f5f3;
+    --line: rgba(17, 24, 39, 0.1);
+    --line-strong: rgba(17, 24, 39, 0.16);
+    --text: #1f2328;
+    --text-soft: rgba(31, 35, 40, 0.72);
+    --text-dim: rgba(31, 35, 40, 0.42);
+    --accent: #1f2328;
+    --success: #16a34a;
+    --warning: #b45309;
+    --danger: #dc2626;
+    --shadow-soft: 0 18px 44px rgba(15, 23, 42, 0.08);
+}
+
+html[data-theme="light"] body {
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #ffffff;
+}
+
+html[data-theme="light"] .app-shell {
+    background: #ffffff;
+    grid-template-columns: 254px minmax(0, 1fr);
+}
+
+html[data-theme="light"] .sidebar {
+    background: #fbfbfa;
+    border-right: 1px solid #ececea;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .brand-name,
+html[data-theme="light"] .session-name,
+html[data-theme="light"] .sidebar-action {
+    color: #24292f;
+}
+
+html[data-theme="light"] .brand-tagline,
+html[data-theme="light"] .session-preview {
+    color: #6b7280;
+}
+
+html[data-theme="light"] .brand-mark {
+    box-shadow: none;
+}
+
+html[data-theme="light"] .session-item {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .session-item:hover,
+html[data-theme="light"] .session-item.active {
+    background: #ffffff;
+    border-color: #e5e7eb;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+html[data-theme="light"] .workspace {
+    padding: 0;
+    gap: 0;
+    background: #ffffff;
+}
+
+html[data-theme="light"] .unified-bar {
+    min-height: 56px;
+    padding: 0 28px;
+    border: 0;
+    border-bottom: 1px solid #ececea;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .mode-chip,
+html[data-theme="light"] .create-hub-link,
+html[data-theme="light"] .icon-button,
+html[data-theme="light"] .files-changed-dropdown-summary {
+    background: #ffffff;
+    border-color: #e5e7eb;
+    color: #24292f;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .mode-chip.active {
+    background: #f6f8fa;
+    border-color: #d0d7de;
+}
+
+html[data-theme="light"] .context-meter {
+    color: #6b7280;
+}
+
+html[data-theme="light"] .context-meter-track {
+    background: #e5e7eb;
+}
+
+html[data-theme="light"] .context-meter-fill-thread,
+html[data-theme="light"] .context-meter-fill-working {
+    background: #8b949e !important;
+}
+
+html[data-theme="light"] .workspace-content-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(286px, 22vw, 348px);
+    gap: clamp(18px, 3vw, 38px);
+    align-items: start;
+    padding: 18px clamp(22px, 4vw, 52px) 0;
+    overflow: hidden;
+}
+
+html[data-theme="light"] .workspace-content-shell.split {
+    display: flex;
+    padding: 14px 22px 12px;
+}
+
+html[data-theme="light"] .workspace-main-pane {
+    width: 100%;
+    max-width: 980px;
+    justify-self: center;
+    overflow: hidden;
+}
+
+html[data-theme="light"] .chat-region {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .chat-messages {
+    padding: 4px 0 18px;
+}
+
+html[data-theme="light"] .message-list {
+    gap: 20px;
+}
+
+html[data-theme="light"] .message,
+html[data-theme="light"] .message.user,
+html[data-theme="light"] .message.assistant,
+html[data-theme="light"] .message.system,
+html[data-theme="light"] .message.thinking,
+html[data-theme="light"] .message.agent-process {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .message.user .message-body {
+    font-size: clamp(20px, 2vw, 30px);
+    line-height: 1.35;
+    font-weight: 650;
+    color: #1f2328;
+}
+
+html[data-theme="light"] .message-meta {
+    margin-bottom: 8px;
+    color: #9ca3af;
+    font-size: 13px;
+    letter-spacing: 0;
+}
+
+html[data-theme="light"] .message-body {
+    color: #24292f;
+    line-height: 1.72;
+    font-size: 16px;
+}
+
+html[data-theme="light"] .message-body code,
+html[data-theme="light"] .message-body pre,
+html[data-theme="light"] .message-body .inline-code {
+    background: #f6f8fa;
+    border: 1px solid #eaecf0;
+    color: #24292f;
+}
+
+html[data-theme="light"] .tool-card {
+    border: 0;
+    background: transparent;
+    color: #9ca3af;
+    padding: 4px 0;
+}
+
+html[data-theme="light"] .agent-process-card,
+html[data-theme="light"] .codex-style-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 16px 34px rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme="light"] .composer-wrap {
+    padding: 16px 0 22px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0), #ffffff 26%);
+}
+
+html[data-theme="light"] .composer-card {
+    border-radius: 22px;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    box-shadow: 0 18px 44px rgba(15, 23, 42, 0.1);
+}
+
+html[data-theme="light"] .model-pill-select,
+html[data-theme="light"] .tiny-pill,
+html[data-theme="light"] .small-tool {
+    border-color: #e5e7eb;
+    background: #ffffff;
+    color: #4b5563;
+}
+
+html[data-theme="light"] .small-tool.active,
+html[data-theme="light"] .small-tool:hover {
+    background: #f6f8fa;
+    color: #24292f;
+}
+
+html[data-theme="light"] .composer-card textarea {
+    color: #24292f;
+}
+
+html[data-theme="light"] .composer-card textarea::placeholder {
+    color: #a1a1aa;
+}
+
+html[data-theme="light"] .send-btn {
+    background: #24292f;
+    color: #ffffff;
+    box-shadow: none;
+}
+
+html[data-theme="light"] .statusline {
+    display: none;
+}
+
+.codex-side-panel {
+    position: sticky;
+    top: 74px;
+    max-height: calc(100dvh - 98px);
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 22px;
+    background: #ffffff;
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+}
+
+.codex-side-section {
+    padding: 22px 24px;
+    border-bottom: 1px solid #eeeeec;
+}
+
+.codex-side-section:last-child {
+    border-bottom: 0;
+}
+
+.codex-side-heading,
+.codex-side-section h3 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 0 16px;
+    color: #9ca3af;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0;
+}
+
+.codex-side-heading i {
+    color: #8b949e;
+}
+
+.codex-progress-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    list-style: none;
+}
+
+.codex-progress-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    color: #6b7280;
+}
+
+.codex-progress-dot {
+    width: 16px;
+    height: 16px;
+    margin-top: 4px;
+    border-radius: 999px;
+    border: 2px solid #a1a1aa;
+    background: #ffffff;
+}
+
+.codex-progress-item.running .codex-progress-dot {
+    border-color: #8b949e;
+    border-top-color: #24292f;
+    animation: spin 0.9s linear infinite;
+}
+
+.codex-progress-item.done .codex-progress-dot {
+    border-color: #16a34a;
+    background: #16a34a;
+    box-shadow: inset 0 0 0 4px #ffffff;
+}
+
+.codex-progress-item.error .codex-progress-dot {
+    border-color: #dc2626;
+    background: #dc2626;
+    box-shadow: inset 0 0 0 4px #ffffff;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.codex-progress-copy {
+    min-width: 0;
+}
+
+.codex-progress-copy span {
+    display: block;
+    color: #6b7280;
+    font-size: 15px;
+    line-height: 1.42;
+}
+
+.codex-progress-item.running .codex-progress-copy span,
+.codex-progress-item.done .codex-progress-copy span {
+    color: #24292f;
+}
+
+.codex-progress-copy small {
+    display: block;
+    margin-top: 4px;
+    color: #9ca3af;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.codex-side-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    min-height: 32px;
+    border: 0;
+    background: transparent;
+    color: #24292f;
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+}
+
+.codex-side-row + .codex-side-row {
+    margin-top: 8px;
+}
+
+.codex-side-row i {
+    color: #4b5563;
+    text-align: center;
+}
+
+.codex-side-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.codex-side-row strong {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.codex-side-row strong em {
+    color: #16a34a;
+    font-style: normal;
+}
+
+.codex-side-row strong b {
+    color: #dc2626;
+    font-weight: 500;
+}
+
+.codex-side-row-button {
+    cursor: pointer;
+}
+
+.codex-side-row-button:disabled {
+    cursor: default;
+}
+
+.codex-side-row.muted {
+    color: #6b7280;
+}
+
+html[data-theme="dark"] .codex-side-panel {
+    border-color: var(--line);
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: var(--shadow-soft);
+}
+
+html[data-theme="dark"] .codex-side-section {
+    border-bottom-color: var(--line);
+}
+
+html[data-theme="dark"] .codex-side-heading,
+html[data-theme="dark"] .codex-side-section h3,
+html[data-theme="dark"] .codex-progress-copy small {
+    color: var(--text-dim);
+}
+
+html[data-theme="dark"] .codex-progress-copy span,
+html[data-theme="dark"] .codex-side-row,
+html[data-theme="dark"] .codex-progress-item.running .codex-progress-copy span,
+html[data-theme="dark"] .codex-progress-item.done .codex-progress-copy span {
+    color: var(--text-soft);
+}
+
+html[data-theme="dark"] .codex-progress-dot {
+    background: var(--bg);
+}
+
+@media (max-width: 1180px) {
+    html[data-theme="light"] .workspace-content-shell {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .codex-side-panel {
+        position: static;
+        max-height: none;
+        margin-bottom: 18px;
+    }
+}
+
+@media (max-width: 900px) {
+    html[data-theme="light"] .app-shell {
+        grid-template-columns: 1fr;
+    }
+
+    html[data-theme="light"] .workspace-content-shell {
+        padding: 16px 14px 0;
+    }
+
+    html[data-theme="light"] .unified-bar {
+        padding: 8px 14px;
+        min-height: auto;
+    }
+
+    .codex-side-panel {
+        border-radius: 16px;
+    }
+}

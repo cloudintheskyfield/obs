@@ -1731,6 +1731,7 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "changed_files": 0,
                 "insertions": 0,
                 "deletions": 0,
+                "branch": "",
                 "files": [],
                 "preview_files": preview_files,
             })
@@ -1739,6 +1740,7 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
         diff_proc = _git(["diff", "--numstat", "HEAD", "--", "."])
         top_proc = _git(["rev-parse", "--show-toplevel"])
         prefix_proc = _git(["rev-parse", "--show-prefix"])
+        branch_proc = _git(["branch", "--show-current"])
 
         repo_root = Path(top_proc.stdout.strip()).resolve() if top_proc.returncode == 0 and top_proc.stdout.strip() else workspace
         workspace_prefix = prefix_proc.stdout.strip() if prefix_proc.returncode == 0 else ""
@@ -1783,18 +1785,13 @@ async def workspace_changes(path: Optional[str] = Query(default=None)):
                 "absolute_path": _runtime_to_host_path(str(absolute_path)),
             })
 
-        seen_paths = {str(file.get("absolute_path") or "") for file in files}
-        for preview_file in preview_files:
-            if str(preview_file.get("absolute_path") or "") and str(preview_file.get("absolute_path") or "") not in seen_paths:
-                files.append(preview_file)
-                seen_paths.add(str(preview_file.get("absolute_path") or ""))
-
         return JSONResponse({
             "success": True,
             "workspace": _runtime_to_host_path(str(workspace)),
             "repo_root": _runtime_to_host_path(str(repo_root)),
             "scope": "workspace",
             "is_git": True,
+            "branch": branch_proc.stdout.strip() if branch_proc.returncode == 0 else "",
             "changed_files": len(files),
             "insertions": total_insertions,
             "deletions": total_deletions,

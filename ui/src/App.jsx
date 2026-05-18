@@ -1074,16 +1074,159 @@ function buildRemixPrompt(project) {
     return lines.join("\n");
 }
 
+const CODEX_PROGRESS_FALLBACK = [
+    { role: "Planner", label: "读取上下文并确认范围" },
+    { role: "Search", label: "按 Harness Gate 检索必要资料" },
+    { role: "Generator", label: "生成受限文件修改" },
+    { role: "Runner", label: "运行命令和浏览器验证" },
+    { role: "Evaluator", label: "评估证据并给出结论" },
+];
+
+function progressStatusClass(status) {
+    const normalized = String(status || "").toLowerCase();
+    if (/(success|done|pass|passed|complete|completed)/.test(normalized)) {
+        return "done";
+    }
+    if (/(error|fail|failed|blocked)/.test(normalized)) {
+        return "error";
+    }
+    if (/(running|active|working|in_progress)/.test(normalized)) {
+        return "running";
+    }
+    return "pending";
+}
+
+function latestAgentProcess(session) {
+    const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+    for (let index = transcript.length - 1; index >= 0; index -= 1) {
+        const entry = transcript[index];
+        if (entry?.kind === "agent_process" && entry.agentProcess) {
+            return normalizeAgentProcess(entry.agentProcess);
+        }
+    }
+    return null;
+}
+
+function buildCodexProgressItems(session, requestIndicator) {
+    const process = latestAgentProcess(session);
+    if (!process) {
+        return CODEX_PROGRESS_FALLBACK.map((item, index) => ({
+            ...item,
+            status: requestIndicator?.active && index === 0 ? "running" : "pending",
+            detail: "",
+        }));
+    }
+
+    const latestByRole = new Map();
+    (process.events || []).forEach((event) => {
+        if (event?.role) {
+            latestByRole.set(event.role, event);
+        }
+    });
+
+    return CODEX_PROGRESS_FALLBACK.map((fallback) => {
+        const roleState = process.roles?.[fallback.role] || {};
+        const event = latestByRole.get(fallback.role);
+        const status = progressStatusClass(event?.status || roleState.status);
+        const detail = String(event?.detail || roleState.detail || "").replace(/\s+/g, " ").trim();
+        return {
+            role: fallback.role,
+            label: String(event?.title || roleState.title || fallback.label).trim(),
+            status,
+            detail,
+        };
+    });
+}
+
+function CodexSidePanel({ progressItems, workspaceChanges, currentSessionId, githubUrl, onFocusFiles }) {
+    const changedFiles = Number(workspaceChanges?.changedFiles || 0);
+    const insertions = Number(workspaceChanges?.insertions || 0);
+    const deletions = Number(workspaceChanges?.deletions || 0);
+    const hasChanges = Boolean(workspaceChanges?.isGit && changedFiles > 0);
+    const branchName = String(workspaceChanges?.branch || "").trim() || (workspaceChanges?.isGit ? "detached" : "workspace");
+
+    return (
+        <aside className="codex-side-panel" aria-label="Workspace status">
+            <section className="codex-side-section">
+                <div className="codex-side-heading">
+                    <span>Progress</span>
+                    <i className="fas fa-thumbtack" aria-hidden="true" />
+                </div>
+                <ol className="codex-progress-list">
+                    {(progressItems || CODEX_PROGRESS_FALLBACK).map((item, index) => (
+                        <li key={`${item.role}-${index}`} className={`codex-progress-item ${progressStatusClass(item.status)}`}>
+                            <span className="codex-progress-dot" aria-hidden="true" />
+                            <div className="codex-progress-copy">
+                                <span>{item.label}</span>
+                                {item.detail ? <small>{item.detail}</small> : null}
+                            </div>
+                        </li>
+                    ))}
+                </ol>
+            </section>
+
+            <section className="codex-side-section">
+                <h3>Git</h3>
+                <button
+                    type="button"
+                    className="codex-side-row codex-side-row-button"
+                    onClick={onFocusFiles}
+                    disabled={!hasChanges}
+                >
+                    <i className="fas fa-square-plus" aria-hidden="true" />
+                    <span>Changes</span>
+                    <strong>
+                        {hasChanges ? (
+                            <>
+                                <em>+{insertions}</em>
+                                <b>-{deletions}</b>
+                            </>
+                        ) : "Clean"}
+                    </strong>
+                </button>
+                <div className="codex-side-row">
+                    <i className="fas fa-laptop" aria-hidden="true" />
+                    <span>Local</span>
+                </div>
+                <div className="codex-side-row">
+                    <i className="fas fa-code-branch" aria-hidden="true" />
+                    <span>{branchName}</span>
+                </div>
+                <div className="codex-side-row muted">
+                    <i className="far fa-circle" aria-hidden="true" />
+                    <span>Commit</span>
+                </div>
+                <a className="codex-side-row muted" href={githubUrl} target="_blank" rel="noreferrer noopener">
+                    <i className="fab fa-github" aria-hidden="true" />
+                    <span>Create pull request</span>
+                </a>
+            </section>
+
+            <section className="codex-side-section">
+                <h3>Sources</h3>
+                <div className="codex-side-row muted">
+                    <i className="fas fa-globe" aria-hidden="true" />
+                    <span>Web search</span>
+                </div>
+                <div className="codex-side-row muted">
+                    <i className="far fa-window-maximize" aria-hidden="true" />
+                    <span>{currentSessionId ? `Thread ${currentSessionId.slice(0, 8)}` : "No thread"}</span>
+                </div>
+            </section>
+        </aside>
+    );
+}
+
 function App() {
     const [settings, setSettings] = useState({
         apiUrl: resolveDefaultApiBaseUrl(),
         autoSave: true,
-        theme: "system",
+        theme: "light",
         permissionMode: "ask",
         thinkingMode: true,
         toolContext: "workspace"
     });
-    const [themeMode, setThemeMode] = useState("system");
+    const [themeMode, setThemeMode] = useState("light");
     const [systemTheme, setSystemTheme] = useState(() => getSystemTheme());
     const [mode, setMode] = useState("agent");
     const [runtime, setRuntime] = useState(null);
@@ -1144,6 +1287,7 @@ function App() {
         changedFiles: 0,
         insertions: 0,
         deletions: 0,
+        branch: "",
         files: [],
         previewFiles: [],
     });
@@ -1525,6 +1669,7 @@ function App() {
                 changedFiles: 0,
                 insertions: 0,
                 deletions: 0,
+                branch: "",
                 files: [],
                 previewFiles: [],
             });
@@ -1542,6 +1687,7 @@ function App() {
                 changedFiles: payload.changed_files || 0,
                 insertions: payload.insertions || 0,
                 deletions: payload.deletions || 0,
+                branch: payload.branch || "",
                 files: payload.files || [],
                 previewFiles: payload.preview_files || [],
             });
@@ -3189,6 +3335,7 @@ function App() {
     const workingTimerLabel = requestIndicator?.active && requestIndicator?.startedAt
         ? formatWorkingDuration(requestTimerNow - requestIndicator.startedAt)
         : "";
+    const codexProgressItems = buildCodexProgressItems(currentSession, requestIndicator);
 
     return (
         <div className={`app-shell${previewOpen ? " preview-active" : ""}`}>
@@ -3452,6 +3599,16 @@ function App() {
                             inputRef={messageInputRef}
                         />
                     </section>
+
+                    {!previewOpen ? (
+                        <CodexSidePanel
+                            progressItems={codexProgressItems}
+                            workspaceChanges={workspaceChanges}
+                            currentSessionId={currentSessionId}
+                            githubUrl={GITHUB_REPO_URL}
+                            onFocusFiles={focusFilesChanged}
+                        />
+                    ) : null}
 
                     {previewOpen ? (
                         <aside className="preview-pane">
