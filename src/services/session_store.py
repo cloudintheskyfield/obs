@@ -122,6 +122,30 @@ class SessionStore:
             logger.warning(f"Failed to load chat session {session_id}: {exc}")
         return None
 
+    def list_chat_sessions(self) -> List[Dict[str, Any]]:
+        sessions: List[Dict[str, Any]] = []
+        for file_path in sorted(
+            self.paths.session_store_dir.glob("*.json"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        ):
+            try:
+                payload = json.loads(file_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            messages = payload.get("messages")
+            if not isinstance(messages, list):
+                continue
+            session_id = str(payload.get("session_id") or file_path.stem)
+            sessions.append(
+                {
+                    "session_id": session_id,
+                    "updated_at": str(payload.get("updated_at") or ""),
+                    "messages": messages,
+                }
+            )
+        return sessions
+
     def persist_chat_session(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
         payload = {
             "session_id": session_id,
@@ -171,24 +195,93 @@ class SessionStore:
         if cache_store is not None and session_id not in cache_store:
             cache_store[session_id] = self.load_context_cache(session_id) or {}
 
+    @staticmethod
+    def _message_to_transcript_entry(message: Dict[str, Any], index: int) -> Dict[str, Any]:
+        role = str(message.get("role") or "assistant")
+        kind = "user" if role == "user" else "assistant"
+        return {
+            "id": f"persisted_{index}_{kind}",
+            "kind": kind,
+            "content": str(message.get("content") or ""),
+            "timestamp": message.get("timestamp") or "",
+            "message_parts": message.get("message_parts") or [],
+            "streaming": False,
+        }
+
+    @staticmethod
+    def _fallback_title_from_messages(messages: List[Dict[str, Any]], session_id: str) -> str:
+        for message in messages:
+            if str(message.get("role") or "") != "user":
+                continue
+            content = str(message.get("content") or "").strip()
+            if content:
+                return content.replace("\n", " ")[:24]
+        return session_id
+
+    def _ui_session_from_chat_payload(self, chat_payload: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = str(chat_payload.get("session_id") or "")
+        messages = chat_payload.get("messages") if isinstance(chat_payload.get("messages"), list) else []
+        updated_at = str(chat_payload.get("updated_at") or datetime.now().astimezone().isoformat(timespec="seconds"))
+        return {
+            "id": session_id,
+            "title": self._fallback_title_from_messages(messages, session_id),
+            "transcript": [
+                self._message_to_transcript_entry(message, index)
+                for index, message in enumerate(messages)
+                if isinstance(message, dict)
+            ],
+            "logs": self.load_llm_traces(session_id)[-400:],
+            "tasks": {},
+            "workspacePath": str(self.paths.thread_workspace_dir / self.sanitize_session_id(session_id)),
+            "selectedModel": "",
+            "createdAt": updated_at,
+            "updatedAt": updated_at,
+            "restoredFromChatSession": True,
+        }
+
     def list_ui_sessions(self) -> List[Dict[str, Any]]:
         sessions: List[Dict[str, Any]] = []
+        seen_ids = set()
         for file_path in sorted(
             self.paths.ui_sessions_dir.glob("*.json"),
             key=lambda item: item.stat().st_mtime,
             reverse=True,
         ):
             try:
-                sessions.append(json.loads(file_path.read_text(encoding="utf-8")))
+                payload = json.loads(file_path.read_text(encoding="utf-8"))
+                session_id = str(payload.get("id") or file_path.stem)
+                seen_ids.add(session_id)
+                sessions.append(payload)
             except Exception:
                 continue
+        for chat_payload in self.list_chat_sessions():
+            session_id = str(chat_payload.get("session_id") or "")
+            if not session_id or session_id in seen_ids:
+                continue
+            sessions.append(self._ui_session_from_chat_payload(chat_payload))
         return sessions
 
     def load_ui_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         session_file = self.ui_session_file(session_id)
-        if not session_file.exists():
+        if session_file.exists():
+            return json.loads(session_file.read_text(encoding="utf-8"))
+        messages = self.load_chat_session(session_id)
+        if messages is None:
             return None
-        return json.loads(session_file.read_text(encoding="utf-8"))
+        chat_file = self.chat_session_file(session_id)
+        updated_at = ""
+        try:
+            payload = json.loads(chat_file.read_text(encoding="utf-8"))
+            updated_at = str(payload.get("updated_at") or "")
+        except Exception:
+            pass
+        return self._ui_session_from_chat_payload(
+            {
+                "session_id": session_id,
+                "updated_at": updated_at,
+                "messages": messages,
+            }
+        )
 
     def save_ui_session(self, session_id: str, payload: Dict[str, Any]) -> None:
         self.ui_session_file(session_id).write_text(

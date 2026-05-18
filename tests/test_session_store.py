@@ -63,6 +63,37 @@ def test_session_store_handles_ui_and_workspace_state(tmp_path: Path) -> None:
     assert store.load_ui_session(session_id) is None
 
 
+def test_session_store_lists_chat_sessions_when_ui_snapshot_is_missing(tmp_path: Path) -> None:
+    store = build_store(tmp_path)
+    session_id = "session-from-chat"
+    messages = [
+        {"role": "user", "content": "生成一个小游戏"},
+        {"role": "assistant", "content": "已经完成。"},
+    ]
+
+    store.persist_chat_session(session_id, messages)
+    sessions = store.list_ui_sessions()
+    restored = next(item for item in sessions if item["id"] == session_id)
+
+    assert restored["restoredFromChatSession"] is True
+    assert restored["title"] == "生成一个小游戏"
+    assert [entry["kind"] for entry in restored["transcript"]] == ["user", "assistant"]
+    assert store.load_ui_session(session_id)["transcript"][0]["content"] == "生成一个小游戏"
+
+
+def test_session_store_prefers_saved_ui_snapshot_over_chat_fallback(tmp_path: Path) -> None:
+    store = build_store(tmp_path)
+    session_id = "session-with-ui"
+
+    store.persist_chat_session(session_id, [{"role": "user", "content": "old"}])
+    store.save_ui_session(session_id, {"id": session_id, "title": "Saved UI", "transcript": []})
+
+    sessions = [item for item in store.list_ui_sessions() if item["id"] == session_id]
+    assert len(sessions) == 1
+    assert sessions[0]["title"] == "Saved UI"
+    assert store.load_ui_session(session_id)["title"] == "Saved UI"
+
+
 def test_session_store_handles_published_projects(tmp_path: Path) -> None:
     store = build_store(tmp_path)
     payload = {"id": "project-demo", "title": "Zombie Rush", "published_at": "2026-05-07T18:00:00+08:00"}

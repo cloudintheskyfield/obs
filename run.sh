@@ -40,10 +40,20 @@ PY
 
 start() {
     mkdir -p "$PID_DIR"
+    local backend_work_dir="${WORK_DIR:-$SCRIPT_DIR/workspace}"
+    local backend_screenshot_dir="${SCREENSHOT_DIR:-$SCRIPT_DIR/screenshots}"
+    local backend_log_file="${LOG_FILE:-$SCRIPT_DIR/logs/app.log}"
+    mkdir -p "$backend_work_dir" "$backend_screenshot_dir" "$(dirname "$backend_log_file")"
 
     echo "Starting backend..."
-    start_detached "$SCRIPT_DIR" "$BACKEND_LOG" "$BACKEND_PID" env PYTHONPATH="$SCRIPT_DIR/src" uv run uvicorn api:app --host 0.0.0.0 --port 8213
+    start_detached "$SCRIPT_DIR" "$BACKEND_LOG" "$BACKEND_PID" env \
+        PYTHONPATH="$SCRIPT_DIR/src" \
+        WORK_DIR="$backend_work_dir" \
+        SCREENSHOT_DIR="$backend_screenshot_dir" \
+        LOG_FILE="$backend_log_file" \
+        uv run uvicorn api:app --host 0.0.0.0 --port 8213
     echo "  Backend PID: $(cat "$BACKEND_PID")  (log: $BACKEND_LOG)"
+    echo "  Session store: $(dirname "$backend_log_file")"
 
     echo "Starting frontend..."
     start_detached "$SCRIPT_DIR/ui" "$FRONTEND_LOG" "$FRONTEND_PID" npm run dev -- --host 0.0.0.0
