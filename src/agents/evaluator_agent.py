@@ -155,7 +155,11 @@ def _normalize_verdict(raw_obj: Optional[Dict[str, Any]], payload: Mapping[str, 
     if not raw_obj:
         return _heuristic_verdict(payload, harness)
     base = _heuristic_verdict(payload, harness)
+    if base.get("verdict") == "PASS":
+        return base
     verdict_name = str(raw_obj.get("verdict") or base["verdict"]).upper()
+    if verdict_name == "PASS":
+        return base
     next_agent = str(raw_obj.get("next_agent") or base["next_agent"])
     verdict = {
         "schema_version": str(raw_obj.get("schema_version") or "1.0"),

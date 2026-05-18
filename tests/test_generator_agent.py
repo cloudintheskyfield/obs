@@ -592,3 +592,107 @@ def test_generator_retries_when_model_returns_incomplete_json_patch_result(tmp_p
 
     assert agent.last_patch_result["created_files"] == ["index.html"]
     assert agent.last_patch_result["summary"] == "Recovered after incomplete JSON output."
+
+
+def test_generator_retries_transient_model_stream_errors(tmp_path: Path) -> None:
+    class _TransientErrorsThenValidVllm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat_completion(self, *, messages, tools=None, temperature=0.1, max_tokens=2400, stream=True, model=None):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("temporary stream failure")
+            if self.calls == 3:
+                args = json.dumps(
+                    {
+                        "command": "create",
+                        "path": "index.html",
+                        "file_text": "<!doctype html><html><body>ok</body></html>",
+                    }
+                )
+
+                async def stream():
+                    yield {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call_retry_success",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "file-manager",
+                                                "arguments": args,
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+
+                return stream()
+
+            payload = {
+                "schema_version": "1.0",
+                "task_id": "task_generator_retry",
+                "round_id": 1,
+                "mode": "initial",
+                "changed_files": [],
+                "created_files": ["index.html"],
+                "deleted_files": [],
+                "summary": "Recovered after transient model errors.",
+                "implementation_notes": [],
+                "commands_to_run": [],
+                "risk_points": [],
+                "patch_envelope": {
+                    "operations": [{"path": "index.html"}],
+                    "changed_files": ["index.html"],
+                },
+                "needs_replan": False,
+                "replan_reason": "",
+            }
+
+            async def final_stream():
+                yield {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": json.dumps(payload),
+                            }
+                        }
+                    ]
+                }
+
+            return final_stream()
+
+    vllm = _TransientErrorsThenValidVllm()
+    agent = GeneratorAgent(vllm_client=vllm, skill_manager=_DummySkillManager(tmp_path))
+    generator_input = {
+        "schema_version": "1.0",
+        "task_id": "task_generator_retry",
+        "round_id": 1,
+        "mode": "initial",
+        "workspace": str(tmp_path),
+        "plan_contract": {
+            "task_id": "task_generator_retry",
+            "allowed_files": ["index.html"],
+            "forbidden_files": [".env", ".harness/**", "package.json"],
+            "test_commands": [],
+        },
+        "harness_constraints": {
+            "allowed_write_paths": ["index.html"],
+            "forbidden_write_paths": [".env", ".harness/**", "package.json"],
+        },
+    }
+
+    async def collect() -> None:
+        async for _ in agent.generate("generator-session", generator_input, tools=[]):
+            pass
+
+    asyncio.run(collect())
+
+    assert vllm.calls == 4
+    assert agent.last_patch_result["created_files"] == ["index.html"]

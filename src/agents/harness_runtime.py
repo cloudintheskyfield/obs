@@ -1,6 +1,8 @@
 import json
 import difflib
+import re
 import traceback
+import urllib.parse
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -227,6 +229,77 @@ class HarnessRuntime:
             if content is not None:
                 snapshot[rel] = content
         return snapshot
+
+    def _repair_source_context(
+        self,
+        workspace: Path,
+        plan_contract: Mapping[str, Any],
+        run_report: Mapping[str, Any],
+        *,
+        radius: int = 8,
+    ) -> List[Dict[str, Any]]:
+        if not run_report:
+            return []
+        source_text = json.dumps(run_report, ensure_ascii=False, default=str)
+        matches = re.findall(r"(https?://[^\s)\"]+?):(\d+):(\d+)", source_text)
+        if not matches:
+            return []
+
+        dev_server = (
+            plan_contract.get("dev_server")
+            if isinstance(plan_contract.get("dev_server"), Mapping)
+            else {}
+        )
+        fallback_path = "index.html"
+        dev_url = str((dev_server or {}).get("url") or "")
+        try:
+            parsed_dev = urllib.parse.urlsplit(dev_url)
+            if parsed_dev.path and parsed_dev.path not in {"", "/"}:
+                fallback_path = parsed_dev.path.lstrip("/")
+        except Exception:
+            pass
+        required_files = self.harness_engine.required_output_files(plan_contract)
+        if required_files:
+            fallback_path = required_files[0]
+
+        contexts: List[Dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
+        for url, line_text, column_text in matches[:8]:
+            try:
+                line_no = int(line_text)
+                column_no = int(column_text)
+            except Exception:
+                continue
+            parsed = urllib.parse.urlsplit(url)
+            rel = urllib.parse.unquote(parsed.path or "").lstrip("/")
+            if not rel:
+                rel = fallback_path
+            rel = rel.split("?", 1)[0].split("#", 1)[0]
+            if not rel or rel.startswith(".harness/") or ".." in Path(rel).parts:
+                continue
+            key = (rel, line_no)
+            if key in seen:
+                continue
+            seen.add(key)
+            content = self._read_text_file(workspace, rel)
+            if content is None:
+                continue
+            lines = content.splitlines()
+            start = max(1, line_no - radius)
+            end = min(len(lines), line_no + radius)
+            snippet = "\n".join(
+                f"{idx}: {lines[idx - 1]}" for idx in range(start, end + 1)
+            )
+            contexts.append(
+                {
+                    "path": rel,
+                    "line": line_no,
+                    "column": column_no,
+                    "url": url,
+                    "snippet": snippet,
+                }
+            )
+        return contexts
 
     def _capture_allowed_text_snapshot(self, workspace: Path, plan_contract: Mapping[str, Any]) -> Dict[str, str]:
         allowed = list(plan_contract.get("allowed_files") or [])
@@ -496,6 +569,9 @@ class HarnessRuntime:
             "search_reports": list(search_reports or []),
             "run_report": dict(last_run_report or {}),
             "eval_verdict": dict(eval_verdict or {}),
+            "repair_source_context": self._repair_source_context(
+                workspace, plan_contract, last_run_report
+            ),
         }
 
     def _build_runner_input(

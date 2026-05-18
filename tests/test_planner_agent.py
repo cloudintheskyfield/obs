@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from agents.planner_agent import _normalize_plan_contract
+from agents.planner_agent import _default_plan_contract, _normalize_plan_contract
 
 
 def test_planner_filters_browser_description_out_of_test_commands() -> None:
@@ -106,3 +106,83 @@ def test_planner_adds_interactive_smoke_tests_for_game_requests() -> None:
     assert "evaluate" in actions
     assert "click" in actions
     assert "keyboard" in actions
+
+
+def test_planner_default_contract_for_empty_game_workspace_is_runnable() -> None:
+    contract = _default_plan_contract(
+        "生成一个第一人称3D游戏，玩家可以用鼠标控制视角，用WASD移动",
+        [],
+    )
+
+    assert "index.html" in contract["allowed_files"]
+    assert contract["dev_server"]["enabled"] is True
+    assert "http.server" in contract["dev_server"]["start_cmd"]
+    assert any("index.html" in command["cmd"] for command in contract["test_commands"])
+    assert {item["action"] for item in contract["smoke_tests"]} >= {
+        "goto",
+        "evaluate",
+        "click",
+        "keyboard",
+    }
+
+
+def test_planner_prunes_stale_generated_file_checks_outside_allowed_files() -> None:
+    contract = _normalize_plan_contract(
+        {
+            "goal": "Create a first person 3D game",
+            "allowed_files": ["first_person_game.html"],
+            "test_commands": [
+                {
+                    "name": "verify_generated_files",
+                    "cmd": "python -c \"from pathlib import Path; files=['index.html']; missing=[p for p in files if not Path(p).is_file() or Path(p).stat().st_size == 0]; assert not missing, 'missing or empty generated files: '+', '.join(missing)\"",
+                    "timeout_sec": 30,
+                    "required": True,
+                }
+            ],
+        },
+        "Create a first person 3D game",
+        [],
+    )
+
+    command_texts = [command["cmd"] for command in contract["test_commands"]]
+    assert any("first_person_game.html" in command for command in command_texts)
+    assert not any("index.html" in command for command in command_texts)
+
+
+def test_planner_prunes_stale_checks_when_allowed_files_are_globs() -> None:
+    contract = _normalize_plan_contract(
+        {
+            "goal": "Create a 3D sokoban game",
+            "allowed_files": ["*.html", "*.js", "*.css"],
+            "test_commands": [
+                {
+                    "name": "verify_generated_files",
+                    "cmd": "python -c \"from pathlib import Path; files=['index.html']; missing=[p for p in files if not Path(p).is_file() or Path(p).stat().st_size == 0]; assert not missing, 'missing or empty generated files: '+', '.join(missing)\"",
+                    "timeout_sec": 30,
+                    "required": True,
+                }
+            ],
+            "dev_server": {
+                "enabled": True,
+                "start_cmd": "python3 -m http.server 8080",
+                "url": "http://localhost:8080/sokoban3d.html",
+                "ready_patterns": ["Serving HTTP"],
+                "timeout_sec": 60,
+            },
+            "smoke_tests": [
+                {
+                    "id": "page_load",
+                    "type": "browser",
+                    "action": "goto",
+                    "target": "sokoban3d.html",
+                    "expect": {"page_loaded": True},
+                    "timeout_sec": 15,
+                    "required": True,
+                }
+            ],
+        },
+        "Create a 3D sokoban game",
+        [],
+    )
+
+    assert not any("index.html" in command["cmd"] for command in contract["test_commands"])

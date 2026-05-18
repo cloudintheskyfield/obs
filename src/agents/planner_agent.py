@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shlex
@@ -447,6 +448,70 @@ def _default_file_output_commands(allowed_files: List[str]) -> List[Dict[str, An
     ]
 
 
+def _verify_generated_files_targets(command: str) -> List[str]:
+    text = str(command or "")
+    if "missing or empty generated files" not in text:
+        return []
+    match = re.search(r"files=(\[[^\]]*\])", text)
+    if not match:
+        return []
+    try:
+        parsed = ast.literal_eval(match.group(1))
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _prune_stale_output_checks(
+    commands: List[Dict[str, Any]],
+    allowed_files: List[str],
+    expected_files: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    concrete = set(_concrete_allowed_files(allowed_files))
+    expected = {str(item).strip() for item in (expected_files or []) if str(item).strip()}
+    expected_or_concrete = expected or concrete
+    if not expected_or_concrete:
+        return commands
+    pruned: List[Dict[str, Any]] = []
+    seen_cmds = set()
+    for command in commands:
+        cmd = str(command.get("cmd") or "")
+        targets = _verify_generated_files_targets(cmd)
+        if targets and not all(target in expected_or_concrete for target in targets):
+            continue
+        if cmd in seen_cmds:
+            continue
+        seen_cmds.add(cmd)
+        pruned.append(command)
+    return pruned
+
+
+def _html_targets_from_contract(contract: Mapping[str, Any]) -> List[str]:
+    targets: List[str] = []
+    dev_server = contract.get("dev_server") if isinstance(contract.get("dev_server"), Mapping) else {}
+    for value in [dev_server.get("url") if isinstance(dev_server, Mapping) else ""]:
+        path = str(value or "").split("?", 1)[0].rstrip("/")
+        name = path.rsplit("/", 1)[-1]
+        if name.endswith((".html", ".htm")):
+            targets.append(name)
+    for smoke_test in contract.get("smoke_tests") or []:
+        if not isinstance(smoke_test, Mapping):
+            continue
+        target = str(smoke_test.get("target") or "").split("?", 1)[0].rstrip("/")
+        name = target.rsplit("/", 1)[-1]
+        if name.endswith((".html", ".htm")):
+            targets.append(name)
+    seen = set()
+    result: List[str] = []
+    for target in targets:
+        if target not in seen:
+            seen.add(target)
+            result.append(target)
+    return result
+
+
 _GAME_REQUEST_RE = re.compile(
     r"(game|小游戏|游戏|跑酷|忍者|platformer|arcade|canvas|playable|interactive)",
     re.IGNORECASE,
@@ -578,8 +643,11 @@ def _browser_smoke_tests_from_descriptions(descriptions: List[str], allowed_file
     return tests
 
 
-def _default_dev_server(existing_files: Optional[List[str]]) -> Dict[str, Any]:
+def _default_dev_server(
+    existing_files: Optional[List[str]], planned_outputs: Optional[List[str]] = None
+) -> Dict[str, Any]:
     files = existing_files or []
+    outputs = planned_outputs or []
     if "package.json" in files:
         # Avoid 5173 to prevent clashing with host UI
         return {
@@ -589,7 +657,7 @@ def _default_dev_server(existing_files: Optional[List[str]]) -> Dict[str, Any]:
             "ready_patterns": ["Local:", "ready in", "localhost", "8080"],
             "timeout_sec": 60,
         }
-    html_files = [f for f in files if str(f).endswith(".html")]
+    html_files = [f for f in [*files, *outputs] if str(f).endswith(".html")]
     if html_files:
         import sys
         return {
@@ -679,8 +747,16 @@ def _derive_implementation_steps(
 def _default_plan_contract(user_message: str, existing_files: Optional[List[str]]) -> Dict[str, Any]:
     allowed_files = _default_allowed_files(existing_files)
     required_files_to_inspect = list((existing_files or [])[:8])
-    test_commands = _default_test_commands(existing_files)
-    smoke_tests = _default_smoke_tests(existing_files)
+    test_commands = [
+        *_default_file_output_commands(allowed_files),
+        *_default_test_commands(existing_files),
+    ]
+    smoke_tests = _ensure_game_smoke_tests(
+        user_message,
+        _default_smoke_tests(existing_files),
+        allowed_files,
+    )
+    concrete_outputs = _concrete_allowed_files(allowed_files)
     return {
         "schema_version": "1.0",
         "task_id": "task_plan_001",
@@ -699,7 +775,7 @@ def _default_plan_contract(user_message: str, existing_files: Optional[List[str]
             smoke_tests,
         ),
         "test_commands": test_commands,
-        "dev_server": _default_dev_server(existing_files),
+        "dev_server": _default_dev_server(existing_files, concrete_outputs),
         "smoke_tests": smoke_tests,
         "acceptance_criteria": list(_DEFAULT_ACCEPTANCE_CRITERIA),
         "repair_policy": {
@@ -754,15 +830,23 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
             *[item for item in output_commands if str(item.get("cmd") or "") not in existing_cmds],
             *contract["test_commands"],
         ]
+    contract["test_commands"] = _prune_stale_output_checks(
+        contract["test_commands"],
+        contract["allowed_files"],
+    )
 
     dev_server_raw = source.get("dev_server")
     dev_server: Dict[str, Any] = dict(dev_server_raw) if isinstance(dev_server_raw, Mapping) else {}
+    default_dev_server = _default_dev_server(
+        existing_files,
+        _concrete_allowed_files(contract["allowed_files"]),
+    )
     contract["dev_server"] = {
-        "enabled": bool(dev_server.get("enabled", base["dev_server"].get("enabled"))),
-        "start_cmd": str(dev_server.get("start_cmd") or base["dev_server"].get("start_cmd") or ""),
-        "url": str(dev_server.get("url") or base["dev_server"].get("url") or ""),
-        "ready_patterns": _normalize_string_list(dev_server.get("ready_patterns")) or base["dev_server"].get("ready_patterns", []),
-        "timeout_sec": int(dev_server.get("timeout_sec", base["dev_server"].get("timeout_sec", 60)) or 60),
+        "enabled": bool(dev_server.get("enabled", default_dev_server.get("enabled"))),
+        "start_cmd": str(dev_server.get("start_cmd") or default_dev_server.get("start_cmd") or ""),
+        "url": str(dev_server.get("url") or default_dev_server.get("url") or ""),
+        "ready_patterns": _normalize_string_list(dev_server.get("ready_patterns")) or default_dev_server.get("ready_patterns", []),
+        "timeout_sec": int(dev_server.get("timeout_sec", default_dev_server.get("timeout_sec", 60)) or 60),
     }
 
     browser_descriptions = _browser_descriptions_from_commands(source.get("test_commands"))
@@ -770,7 +854,7 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
     if "smoke_tests" in source:
         source_smoke_tests = _normalize_smoke_tests(source.get("smoke_tests"))
     else:
-        source_smoke_tests = list(base["smoke_tests"])
+        source_smoke_tests = []
     contract["smoke_tests"] = _ensure_game_smoke_tests(
         contract["goal"],
         [
@@ -778,6 +862,18 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
             *converted_smoke_tests,
         ],
         contract["allowed_files"],
+    )
+    if contract["smoke_tests"] and not contract["dev_server"].get("enabled"):
+        fallback_dev_server = _default_dev_server(
+            existing_files,
+            _concrete_allowed_files(contract["allowed_files"]),
+        )
+        if fallback_dev_server.get("enabled"):
+            contract["dev_server"] = dict(fallback_dev_server)
+    contract["test_commands"] = _prune_stale_output_checks(
+        contract["test_commands"],
+        contract["allowed_files"],
+        _html_targets_from_contract(contract),
     )
     contract["implementation_steps"] = _normalize_steps(source.get("implementation_steps")) or _derive_implementation_steps(
         contract["goal"],

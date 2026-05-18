@@ -322,6 +322,53 @@ def test_runtime_builds_spec_shaped_harness_inputs(tmp_path: Path) -> None:
     assert evaluator_input["screenshots"] == [".harness/runs/run_001/screenshots/page.png"]
 
 
+def test_runtime_adds_repair_source_context_from_browser_stack(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "index.html").write_text(
+        "\n".join(
+            [
+                "<script>",
+                "const light = {};",
+                "light.shadow = { mapSize: {} };",
+                "light.shadow.mapSize.width = 2048;",
+                "light.shadowMap.height = 2048;",
+                "</script>",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime = HarnessRuntime(vllm_client=None, skill_manager=_DummySkillManager(tmp_path))
+    generator_input = runtime._build_generator_input(
+        workspace=tmp_path,
+        plan_contract={
+            "task_id": "task_runtime_stack",
+            "allowed_files": ["index.html"],
+            "forbidden_files": [".harness/**"],
+            "required_files_to_inspect": [],
+            "dev_server": {"url": "http://localhost:8080/index.html"},
+            "package_json_policy": {},
+        },
+        search_reports=[],
+        last_run_report={
+            "status": "FAILED",
+            "errors": [
+                {
+                    "type": "PRODUCT_UI_ERROR",
+                    "message": "TypeError at http://localhost:8080/index.html:5:17",
+                }
+            ],
+        },
+        eval_verdict={},
+        round_id=2,
+    )
+
+    context = generator_input["repair_source_context"]
+    assert context[0]["path"] == "index.html"
+    assert context[0]["line"] == 5
+    assert "light.shadowMap.height" in context[0]["snippet"]
+
+
 def test_runtime_runs_full_harness_chain_and_persists_evidence(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir()

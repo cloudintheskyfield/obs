@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Tuple
@@ -11,6 +12,7 @@ GENERATOR_SYSTEM_PROMPT = (
     "You are Generator Agent in a five-agent Harness workflow. "
     "Your only responsibility is scoped code editing.\n\n"
     "Read the supplied PlanContract, optional SearchReport findings, and optional repair instruction. "
+    "When repair_source_context is present, treat its file snippets and line numbers as the primary evidence to patch; inspect or replace the exact referenced workspace-relative file. "
     "Use only the provided file editing tool to modify files inside the allowed workspace scope. "
     "Always use workspace-relative paths from PlanContract.allowed_files or harness_constraints.allowed_write_paths; never use absolute paths. "
     "Read required_files_to_inspect before writing when those files exist. "
@@ -518,6 +520,7 @@ class GeneratorAgent:
         raw_obj: Optional[Dict[str, Any]] = None
         invalid_tool_call_count = 0
         incomplete_json_retry_count = 0
+        transient_model_error_count = 0
 
         for iteration in range(max_iterations):
             assistant_message: Dict[str, Any] = {"role": "assistant", "content": ""}
@@ -588,6 +591,55 @@ class GeneratorAgent:
                         }
                     )
                     continue
+                transient_model_error_count += 1
+                if transient_model_error_count < 3:
+                    yield self._sse(
+                        {
+                            "type": "agent_step",
+                            "role": "Generator",
+                            "status": "error",
+                            "title": "Generator 模型调用失败，正在重试",
+                            "detail": str(exc) or "transient model stream error",
+                            "session_id": session_id,
+                        }
+                    )
+                    await asyncio.sleep(min(2 * transient_model_error_count, 5))
+                    continue
+                raw_obj = {
+                    "schema_version": "1.0",
+                    "task_id": str(
+                        generator_input.get("task_id")
+                        or (
+                            dict(generator_input.get("plan_contract") or {}).get(
+                                "task_id"
+                            )
+                            if isinstance(
+                                generator_input.get("plan_contract"), Mapping
+                            )
+                            else ""
+                        )
+                        or "task_runtime_001"
+                    ),
+                    "round_id": int(generator_input.get("round_id") or 1),
+                    "mode": str(generator_input.get("mode") or "initial"),
+                    "changed_files": [],
+                    "created_files": [],
+                    "deleted_files": [],
+                    "summary": "Generator model call failed before producing file edits.",
+                    "implementation_notes": [],
+                    "commands_to_run": [],
+                    "risk_points": [str(exc) or "transient model stream error"],
+                    "patch_envelope": {
+                        "schema_version": "1.0",
+                        "operations": [],
+                        "changed_files": [],
+                    },
+                    "needs_replan": True,
+                    "replan_reason": (
+                        "Generator model call failed repeatedly before producing "
+                        "file edits; retry the generation step."
+                    ),
+                }
                 break
 
             if not tool_calls:

@@ -34,7 +34,9 @@ Harness contracts, policy checks, mode mapping, Search Gate rules, and permissio
 - Search only runs after the Harness Search Gate allows it.
 - Generator only reads and writes files allowed by `PlanContract.allowed_files`.
 - Runner only executes approved commands, manages dev servers, performs browser smoke tests, and writes artifacts.
+- Runner treats fatal browser errors from interaction smoke tests as blocking evidence, even when the interaction itself is optional.
 - Evaluator only judges evidence and emits one verdict for the current round.
+- Repair rounds pass browser stack locations back to Generator as local source snippets so fixes target the failing file and line.
 - Temporary workflow output is kept under Harness-managed artifact/workspace locations, not the repository root.
 - Legacy direct-execution layers, generated product endpoints, alternate comparison modes, and checked-in build output folders have been removed from the runtime architecture.
 

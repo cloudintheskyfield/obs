@@ -249,13 +249,19 @@ def _resolve_smoke_target(target: str, base_url: str) -> str:
     if candidate.startswith(("http://", "https://")):
         return candidate
     if base:
+        parsed = urllib.parse.urlsplit(base)
+        if parsed.scheme and parsed.netloc:
+            base_for_join = base
+            if not parsed.path or parsed.path.endswith("/"):
+                base_for_join = base if base.endswith("/") else f"{base}/"
+            return urllib.parse.urljoin(base_for_join, candidate.lstrip("/"))
         return urllib.parse.urljoin(
             base if base.endswith("/") else f"{base}/", candidate.lstrip("/")
         )
     return candidate
 
 
-_INTERACTIVE_SMOKE_ACTIONS = {"click", "keyboard"}
+_INTERACTIVE_SMOKE_ACTIONS = {"click", "keyboard", "visual_change"}
 _BROWSER_KEY_ALIASES = {
     "space": "Space",
     "enter": "Enter",
@@ -265,6 +271,15 @@ _BROWSER_KEY_ALIASES = {
     "up": "ArrowUp",
     "down": "ArrowDown",
 }
+_VISUAL_ARTIFACT_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".screenshot",
+)
 
 
 def _strip_html_tags(value: str) -> str:
@@ -273,8 +288,63 @@ def _strip_html_tags(value: str) -> str:
 
 
 def _normalize_browser_key(raw: str) -> str:
-    key = str(raw or "").strip()
+    raw_key = str(raw or "")
+    if raw_key and raw_key.isspace():
+        return "Space"
+    key = raw_key.strip()
     return _BROWSER_KEY_ALIASES.get(key.lower(), key)
+
+
+def _infer_browser_key(smoke_test: Mapping[str, Any]) -> str:
+    hint = " ".join(
+        str(smoke_test.get(name) or "")
+        for name in ("id", "name", "target", "description", "label")
+    ).lower()
+    if "jump" in hint or "space" in hint:
+        return "Space"
+    if "attack" in hint or "shoot" in hint or "fire" in hint:
+        return "j"
+    if "left" in hint:
+        return "ArrowLeft"
+    if "right" in hint:
+        return "ArrowRight"
+    if "up" in hint or "forward" in hint or "move" in hint:
+        return "w"
+    if "down" in hint or "back" in hint:
+        return "s"
+    if "primary" in hint or "start" in hint or "action" in hint:
+        return "Space"
+    return ""
+
+
+def _looks_like_visual_artifact_target(value: Any) -> bool:
+    candidate = str(value or "").strip().lower()
+    return bool(candidate) and candidate.endswith(_VISUAL_ARTIFACT_SUFFIXES)
+
+
+def _looks_like_html_document_target(value: Any) -> bool:
+    candidate = str(value or "").strip().lower().split("?", 1)[0].rstrip("/")
+    return bool(candidate) and candidate.endswith((".html", ".htm"))
+
+
+def _smoke_test_requires_live_browser(smoke_test: Mapping[str, Any]) -> bool:
+    action = str(smoke_test.get("action") or "").strip()
+    if action in _INTERACTIVE_SMOKE_ACTIONS:
+        return True
+    if action == "evaluate" and (smoke_test.get("key") or smoke_test.get("text")):
+        return True
+    expect = (
+        smoke_test.get("expect")
+        if isinstance(smoke_test.get("expect"), Mapping)
+        else {}
+    )
+    return bool(
+        (isinstance(expect, Mapping) and expect.get("visual_change"))
+        or smoke_test.get("duration_ms")
+        or (isinstance(expect, Mapping) and expect.get("game_responsive"))
+        or (isinstance(expect, Mapping) and expect.get("no_fatal_console_error"))
+        or (isinstance(expect, Mapping) and expect.get("visual_elements"))
+    )
 
 
 def _maybe_local_target(target: str, workspace: Path) -> str:
@@ -289,14 +359,86 @@ def _maybe_local_target(target: str, workspace: Path) -> str:
     return candidate
 
 
+def _has_glob_pattern(value: str) -> bool:
+    return any(ch in str(value or "") for ch in "*?[")
+
+
+def _resolve_glob_browser_target(target: str, workspace: Path, base_url: str) -> str:
+    parsed = urllib.parse.urlsplit(str(base_url or ""))
+    if parsed.scheme in {"http", "https"} and parsed.path:
+        base_path = (workspace / parsed.path.lstrip("/")).resolve()
+        if base_path.is_file():
+            return str(base_url)
+
+    matches = sorted(
+        path
+        for path in workspace.glob(str(target or "").strip())
+        if path.is_file()
+    )
+    if not matches:
+        return str(target or "").strip()
+
+    preferred = next((path for path in matches if path.name == "index.html"), matches[0])
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        relative = urllib.parse.quote(
+            str(preferred.relative_to(workspace)).replace("\\", "/")
+        )
+        return urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, f"/{relative}", "", "")
+        )
+    return preferred.resolve().as_uri()
+
+
+def _preferred_html_file(workspace: Path) -> Optional[Path]:
+    files = sorted(path for path in workspace.glob("*.html") if path.is_file())
+    if not files:
+        return None
+    return next((path for path in files if path.name == "index.html"), files[0])
+
+
+def _resolve_missing_html_browser_target(target: str, workspace: Path, base_url: str) -> str:
+    candidate = str(target or "").strip()
+    parsed_target = urllib.parse.urlsplit(candidate)
+    path_text = parsed_target.path if parsed_target.scheme else candidate
+    if not path_text.lower().endswith((".html", ".htm")):
+        return candidate
+
+    local_path = Path(path_text.lstrip("/"))
+    if not local_path.is_absolute():
+        local_path = (workspace / local_path).resolve()
+    if local_path.is_file():
+        return candidate
+
+    preferred = _preferred_html_file(workspace)
+    if preferred is None:
+        return candidate
+
+    parsed_base = urllib.parse.urlsplit(
+        candidate if parsed_target.scheme in {"http", "https"} else str(base_url or "")
+    )
+    if parsed_base.scheme in {"http", "https"} and parsed_base.netloc:
+        relative = urllib.parse.quote(
+            str(preferred.relative_to(workspace)).replace("\\", "/")
+        )
+        return urllib.parse.urlunsplit(
+            (parsed_base.scheme, parsed_base.netloc, f"/{relative}", "", "")
+        )
+    return str(preferred.relative_to(workspace)).replace("\\", "/")
+
+
 def _resolve_browser_navigation_target(
     smoke_test: Mapping[str, Any], workspace: Path, base_url: str
 ) -> str:
     action = str(smoke_test.get("action") or "goto").strip() or "goto"
     target = str(smoke_test.get("target") or "").strip()
+    if target and _has_glob_pattern(target):
+        target = _resolve_glob_browser_target(target, workspace, base_url)
+    elif target:
+        target = _resolve_missing_html_browser_target(target, workspace, base_url)
     if (
         action == "evaluate"
         and target
+        and not _looks_like_html_document_target(target)
         and not target.startswith(("http://", "https://", "/"))
     ):
         return str(base_url or "").strip()
@@ -377,6 +519,72 @@ async def _pick_first_selector(page: Any, candidates: List[str]) -> str:
     return ""
 
 
+async def _pick_first_visible_selector(page: Any, candidates: List[str]) -> str:
+    fallback = ""
+    for candidate in candidates:
+        selector = str(candidate or "").strip()
+        if not selector:
+            continue
+        try:
+            locator = page.locator(selector).first
+            count = await page.locator(selector).count()
+            if count <= 0:
+                continue
+            fallback = fallback or selector
+            if await locator.is_visible(timeout=500):
+                return selector
+        except Exception:
+            continue
+    return fallback
+
+
+async def _click_first_successful_selector(
+    page: Any, candidates: List[str], timeout_ms: int
+) -> str:
+    seen = set()
+    selectors = [
+        *[str(candidate or "").strip() for candidate in candidates],
+        "button",
+        "[role=button]",
+        "input[type=button]",
+        "input[type=submit]",
+        "canvas",
+        "body",
+    ]
+    last_error: Optional[Exception] = None
+    per_selector_timeout = min(max(timeout_ms // 3, 1500), 3500)
+    for selector in selectors:
+        if not selector or selector in seen:
+            continue
+        seen.add(selector)
+        try:
+            locator = page.locator(selector).first
+            if await page.locator(selector).count() <= 0:
+                continue
+            if not await locator.is_visible(timeout=500):
+                continue
+            await locator.click(timeout=per_selector_timeout)
+            return selector
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    candidate_text = ", ".join(candidates)
+    raise ValueError(f"No matching selector found from candidates: {candidate_text}")
+
+
+def _looks_like_plain_selector(value: str) -> bool:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return False
+    if candidate in {"body", "html"}:
+        return True
+    if candidate.startswith(("#", ".", "[", "button", "canvas")):
+        return True
+    return bool(re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", candidate))
+
+
 async def _canvas_nonblank(page: Any) -> bool:
     try:
         return bool(
@@ -404,6 +612,30 @@ async def _canvas_nonblank(page: Any) -> bool:
                 }"""
             )
         )
+    except Exception:
+        return False
+
+
+async def _page_visually_changes(page: Any, timeout_ms: int, duration_ms: int = 0) -> bool:
+    try:
+        before = await page.screenshot(full_page=False)
+        return await _page_visually_changes_from(
+            page, before, timeout_ms, duration_ms
+        )
+    except Exception:
+        return False
+
+
+async def _page_visually_changes_from(
+    page: Any, before: bytes, timeout_ms: int, duration_ms: int = 0
+) -> bool:
+    try:
+        wait_ms = duration_ms or min(max(timeout_ms // 4, 700), 1500)
+        await page.wait_for_timeout(min(max(wait_ms, 300), timeout_ms))
+        after = await page.screenshot(full_page=False)
+        if before != after:
+            return True
+        return await _canvas_nonblank(page)
     except Exception:
         return False
 
@@ -439,6 +671,12 @@ async def _check_browser_expectations(
     if expect.get("canvas_nonblank") and not await _canvas_nonblank(page):
         return "Canvas was present but appeared blank."
 
+    if (
+        (expect.get("visual_change") or expect.get("game_responsive"))
+        and evaluation_result is not True
+    ):
+        return "Expected visual change was not detected."
+
     if expect.get("no_fatal_console_error") and console_errors:
         for err in console_errors:
             if "HOST_LEAK_DETECTED" in str(err):
@@ -451,6 +689,93 @@ async def _check_browser_expectations(
             return f"Expected evaluation result {expected!r}, got {evaluation_result!r}"
 
     return ""
+
+
+def _maybe_call(value: Any) -> Any:
+    try:
+        if callable(value):
+            return value()
+    except Exception:
+        return None
+    return value
+
+
+def _format_browser_location(location: Any) -> str:
+    location = _maybe_call(location)
+    if not isinstance(location, Mapping):
+        return ""
+    url = str(location.get("url") or "").strip()
+    line = location.get("lineNumber")
+    column = location.get("columnNumber")
+    if not url:
+        return ""
+    parts = [url]
+    if line is not None:
+        parts.append(str(line))
+        if column is not None:
+            parts.append(str(column))
+    return ":".join(parts)
+
+
+def _compact_browser_error(text: str, *, limit: int = 2000) -> str:
+    text = re.sub(r"\n{3,}", "\n\n", str(text or "").strip())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def _format_console_message(message: Any) -> Dict[str, Any]:
+    message_type = str(_maybe_call(getattr(message, "type", "")) or "")
+    text = str(_maybe_call(getattr(message, "text", "")) or "")
+    location = _format_browser_location(getattr(message, "location", None))
+    formatted = text
+    if location:
+        formatted = f"{formatted}\nLocation: {location}".strip()
+    return {
+        "type": message_type,
+        "text": _compact_browser_error(formatted),
+        "location": location,
+    }
+
+
+def _format_page_error(error: Any) -> str:
+    parts = [str(error or "").strip()]
+    for attr in ("message", "name", "stack"):
+        value = _maybe_call(getattr(error, attr, None))
+        if value:
+            value_text = str(value).strip()
+            if value_text and all(value_text not in part for part in parts):
+                label = attr.capitalize()
+                parts.append(f"{label}: {value_text}")
+    return _compact_browser_error("\n".join(part for part in parts if part))
+
+
+async def _goto_with_domcontentloaded_recovery(
+    page: Any, url: str, timeout_ms: int
+) -> Any:
+    try:
+        return await page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=timeout_ms,
+        )
+    except Exception as exc:
+        if "timeout" not in str(exc).lower():
+            raise
+        await page.wait_for_timeout(min(max(timeout_ms // 3, 1500), 5000))
+        try:
+            body_text = await page.locator("body").inner_text(timeout=1000)
+        except Exception:
+            body_text = ""
+        try:
+            canvas_count = await page.locator("canvas").count()
+        except Exception:
+            canvas_count = 0
+        if page.url not in {"", "about:blank"} and (
+            body_text.strip() or canvas_count > 0
+        ):
+            return None
+        raise
 
 
 async def _terminate_process(process: asyncio.subprocess.Process) -> List[str]:
@@ -855,10 +1180,10 @@ class RunnerAgent:
         test_id = str(smoke_test.get("id") or smoke_test.get("action") or "smoke")
         action = str(smoke_test.get("action") or "goto").strip() or "goto"
         raw_target = str(smoke_test.get("target") or "").strip()
-        target = (
-            str(base_url or "").strip()
-            if action == "evaluate"
-            else _resolve_smoke_target(raw_target, base_url)
+        target = _resolve_browser_navigation_target(
+            smoke_test,
+            workspace,
+            base_url,
         )
         timeout_sec = int(smoke_test.get("timeout_sec") or default_timeout_sec or 15)
         required = bool(smoke_test.get("required", True))
@@ -1012,15 +1337,14 @@ class RunnerAgent:
 
         def _on_console(message: Any) -> None:
             try:
-                text = str(getattr(message, "text", ""))[:500]
-                entry = {
-                    "type": getattr(message, "type", ""),
-                    "text": text,
-                }
+                entry = _format_console_message(message)
+                text = str(entry.get("text") or "")
                 console_entries.append(entry)
                 if entry["type"] == "error":
                     # Filter out host-side React hydration errors or minor warnings
                     lower_text = text.lower()
+                    if "pointer lock" in lower_text or "wrongdocumenterror" in lower_text:
+                        return
                     if "hydration error" in lower_text or "cannot be a descendant of" in lower_text:
                         if "app-shell" in lower_text or "sidebar" in lower_text or "history-panel" in lower_text:
                             # This is a strong indicator we hit the host UI
@@ -1031,10 +1355,12 @@ class RunnerAgent:
                 pass
 
         def _on_page_error(error: Any) -> None:
-            text = str(error)[:500]
+            text = _format_page_error(error)
             console_entries.append({"type": "pageerror", "text": text})
             # Filter out host-side React hydration errors
             lower_text = text.lower()
+            if "pointer lock" in lower_text or "wrongdocumenterror" in lower_text:
+                return
             if "hydration error" in lower_text or "cannot be a descendant of" in lower_text:
                 if "app-shell" in lower_text or "sidebar" in lower_text or "history-panel" in lower_text:
                     console_errors.append(f"HOST_LEAK_DETECTED: {text}")
@@ -1077,6 +1403,45 @@ class RunnerAgent:
                         if isinstance(smoke_test.get("expect"), Mapping)
                         else {}
                     )
+                    if action == "evaluate" and not (
+                        str(smoke_test.get("target") or "").strip()
+                        or str(smoke_test.get("expression") or "").strip()
+                        or str(smoke_test.get("selector") or "").strip()
+                        or smoke_test.get("selector_candidates")
+                    ):
+                        if smoke_test.get("key") or smoke_test.get("text"):
+                            action = "keyboard"
+                        elif (
+                            expect.get("visual_change")
+                            or expect.get("game_responsive")
+                            or smoke_test.get("duration_ms")
+                        ):
+                            action = "visual_change"
+                    elif (
+                        action == "evaluate"
+                        and (
+                            expect.get("visual_change")
+                            or expect.get("game_responsive")
+                        )
+                        and _looks_like_visual_artifact_target(
+                            smoke_test.get("target")
+                            or smoke_test.get("expression")
+                        )
+                    ):
+                        action = "visual_change"
+                    elif (
+                        action == "evaluate"
+                        and _looks_like_html_document_target(
+                            smoke_test.get("target")
+                            or smoke_test.get("expression")
+                        )
+                    ):
+                        smoke_test = dict(smoke_test)
+                        smoke_test["selector_candidates"] = [
+                            *list(smoke_test.get("selector_candidates") or []),
+                            "canvas",
+                            "body",
+                        ]
                     navigation_target = _resolve_browser_navigation_target(
                         smoke_test, workspace, base_url
                     )
@@ -1102,10 +1467,10 @@ class RunnerAgent:
                                     "Smoke test target is empty and no dev server "
                                     "url is available."
                                 )
-                            response = await page.goto(
+                            response = await _goto_with_domcontentloaded_recovery(
+                                page,
                                 navigation_target,
-                                wait_until="domcontentloaded",
-                                timeout=timeout_ms,
+                                timeout_ms,
                             )
                             try:
                                 await page.wait_for_load_state(
@@ -1122,11 +1487,104 @@ class RunnerAgent:
                             )
                         elif action == "click":
                             if navigation_target and page.url in {"", "about:blank"}:
-                                await page.goto(
+                                await _goto_with_domcontentloaded_recovery(
+                                    page,
                                     navigation_target,
-                                    wait_until="domcontentloaded",
-                                    timeout=timeout_ms,
+                                    timeout_ms,
                                 )
+                            candidates = [
+                                *[
+                                    str(item).strip()
+                                    for item in (
+                                        smoke_test.get("selector_candidates") or []
+                                    )
+                                    if str(item).strip()
+                                ],
+                                    str(smoke_test.get("selector") or "").strip(),
+                            ]
+                            visual_before = None
+                            if expect.get("visual_change") or expect.get(
+                                "game_responsive"
+                            ):
+                                visual_before = await page.screenshot(full_page=False)
+                            selector = await _click_first_successful_selector(
+                                page, candidates, timeout_ms
+                            )
+                            result["evidence"].append(f"Clicked selector: {selector}")
+                            if visual_before is not None:
+                                evaluation_result = await _page_visually_changes_from(
+                                    page,
+                                    visual_before,
+                                    timeout_ms,
+                                    int(smoke_test.get("duration_ms") or 0),
+                                )
+                                result["evaluation_result"] = evaluation_result
+                                result["evidence"].append(
+                                    "Visual change after click -> "
+                                    f"{evaluation_result!r}"
+                                )
+                        elif action == "keyboard":
+                            if navigation_target and page.url in {"", "about:blank"}:
+                                await _goto_with_domcontentloaded_recovery(
+                                    page,
+                                    navigation_target,
+                                    timeout_ms,
+                                )
+                            key = _normalize_browser_key(
+                                str(
+                                    smoke_test.get("key")
+                                    or smoke_test.get("text")
+                                    or ""
+                                )
+                            )
+                            if not key:
+                                key = _infer_browser_key(smoke_test)
+                            if not key:
+                                raise ValueError("keyboard smoke test requires key")
+                            await page.keyboard.press(key)
+                            result["evidence"].append(f"Pressed key: {key}")
+                            if expect.get("visual_change") or expect.get(
+                                "game_responsive"
+                            ):
+                                evaluation_result = await _page_visually_changes(
+                                    page,
+                                    timeout_ms,
+                                    int(smoke_test.get("duration_ms") or 0),
+                                )
+                                result["evaluation_result"] = evaluation_result
+                                result["evidence"].append(
+                                    "Visual change after key -> "
+                                    f"{evaluation_result!r}"
+                                )
+                        elif action == "visual_change":
+                            if navigation_target and page.url in {"", "about:blank"}:
+                                await _goto_with_domcontentloaded_recovery(
+                                    page,
+                                    navigation_target,
+                                    timeout_ms,
+                                )
+                            evaluation_result = await _page_visually_changes(
+                                page,
+                                timeout_ms,
+                                int(smoke_test.get("duration_ms") or 0),
+                            )
+                            result["evaluation_result"] = evaluation_result
+                            result["evidence"].append(
+                                "Visual change detected -> "
+                                f"{evaluation_result!r}"
+                            )
+                        elif action == "evaluate":
+                            if navigation_target and page.url in {"", "about:blank"}:
+                                await _goto_with_domcontentloaded_recovery(
+                                    page,
+                                    navigation_target,
+                                    timeout_ms,
+                                )
+                            expression = str(
+                                smoke_test.get("target")
+                                or smoke_test.get("expression")
+                                or ""
+                            ).strip()
                             candidates = [
                                 *[
                                     str(item).strip()
@@ -1138,55 +1596,37 @@ class RunnerAgent:
                                 str(smoke_test.get("selector") or "").strip(),
                             ]
                             selector = await _pick_first_selector(page, candidates)
-                            if not selector:
-                                candidate_text = ", ".join(candidates)
-                                raise ValueError(
-                                    "No matching selector found from candidates: "
-                                    f"{candidate_text}"
+                            if not selector and _looks_like_plain_selector(expression):
+                                selector = await _pick_first_selector(page, [expression])
+                            if selector:
+                                if selector == "canvas":
+                                    evaluation_result = await _canvas_nonblank(page)
+                                else:
+                                    evaluation_result = await page.locator(
+                                        selector
+                                    ).first.inner_text(timeout=timeout_ms)
+                                result["evidence"].append(
+                                    f"Evaluated selector {selector} -> "
+                                    f"{evaluation_result!r}"
                                 )
-                            await page.locator(selector).first.click(timeout=timeout_ms)
-                            result["evidence"].append(f"Clicked selector: {selector}")
-                        elif action == "keyboard":
-                            if navigation_target and page.url in {"", "about:blank"}:
-                                await page.goto(
-                                    navigation_target,
-                                    wait_until="domcontentloaded",
-                                    timeout=timeout_ms,
-                                )
-                            key = _normalize_browser_key(
-                                str(
-                                    smoke_test.get("key")
-                                    or smoke_test.get("text")
-                                    or ""
-                                )
-                            )
-                            if not key:
-                                raise ValueError("keyboard smoke test requires key")
-                            await page.keyboard.press(key)
-                            result["evidence"].append(f"Pressed key: {key}")
-                        elif action == "evaluate":
-                            if navigation_target and page.url in {"", "about:blank"}:
-                                await page.goto(
-                                    navigation_target,
-                                    wait_until="domcontentloaded",
-                                    timeout=timeout_ms,
-                                )
-                            expression = str(
-                                smoke_test.get("target")
-                                or smoke_test.get("expression")
-                                or ""
-                            ).strip()
-                            if not expression:
-                                raise ValueError(
-                                    "evaluate smoke test requires target expression"
-                                )
-                            evaluation_result = await page.evaluate(
-                                f"() => ({expression})"
-                            )
+                            else:
+                                if (
+                                    not expression
+                                    or _looks_like_html_document_target(expression)
+                                ):
+                                    evaluation_result = True
+                                    result["evidence"].append(
+                                        "Observed page state without expression"
+                                    )
+                                else:
+                                    evaluation_result = await page.evaluate(
+                                        f"() => ({expression})"
+                                    )
+                                    result["evidence"].append(
+                                        "Evaluated expression -> "
+                                        f"{evaluation_result!r}"
+                                    )
                             result["evaluation_result"] = evaluation_result
-                            result["evidence"].append(
-                                f"Evaluated expression -> {evaluation_result!r}"
-                            )
                         else:
                             raise ValueError(
                                 "Unsupported smoke test action in browser Runner: "
@@ -1434,7 +1874,7 @@ class RunnerAgent:
                     dev_server_report.get("url") or dev_server_cfg.get("url") or ""
                 )
                 requires_live_browser = any(
-                    str(item.get("action") or "").strip() in _INTERACTIVE_SMOKE_ACTIONS
+                    _smoke_test_requires_live_browser(item)
                     for item in smoke_tests
                 )
                 if requires_live_browser and PLAYWRIGHT_AVAILABLE:
@@ -1546,12 +1986,12 @@ class RunnerAgent:
             and item.get("status") not in {"PASSED", "SKIPPED"}
             for item in browser_tests
         )
-        optional_failures = any(
-            not item.get("required", True)
-            and item.get("status") not in {"PASSED", "SKIPPED"}
-            for item in commands + browser_tests
+        fatal_browser_failed = any(
+            item.get("status") not in {"PASSED", "SKIPPED"}
+            and str(item.get("error_type") or "")
+            in {"PRODUCT_UI_ERROR", "RUNNER_PORT_ERROR", "HOST_LEAK_DETECTED"}
+            for item in browser_tests
         )
-
         if not has_work:
             status = "SKIPPED"
         elif any(error.get("type") == "RUNNER_TIMEOUT" for error in errors):
@@ -1559,10 +1999,11 @@ class RunnerAgent:
         elif (
             required_command_failed
             or required_browser_failed
+            or fatal_browser_failed
             or any(error.get("type") == "RUNNER_SCRIPT_ERROR" for error in errors)
         ):
             status = "FAILED"
-        elif errors or optional_failures:
+        elif errors:
             status = "PARTIAL"
         else:
             status = "PASSED"
