@@ -203,6 +203,17 @@ Instead, plan a lightweight server for your specific file:
 }
 ```
 
+**Crucial Exception for Non-Web Tasks:**
+If you are generating a Python script, a CLI tool, a `.pptx` presentation, or anything that is NOT a web interface, **set `dev_server.enabled` to `false`**. Do not start any server. Verify the task by running the script in `test_commands`.
+
+**Crucial Exception for Pure Informational Queries:**
+If the user's request is purely a question (e.g., "What is today's hot news?", "Explain how X works") and does NOT require creating or modifying any code/files:
+1. Set `allowed_files` and `implementation_steps` to empty arrays `[]`.
+2. Set `test_commands` and `smoke_tests` to `[]`.
+3. Set `dev_server.enabled` to `false`.
+4. Set `external_research.required` to `true` if you need to search the web for the answer.
+The workflow will run the Search Agent to answer the user directly and then terminate without modifying files.
+
 ---
 
 ## `smoke_tests`

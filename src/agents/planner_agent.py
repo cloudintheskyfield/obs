@@ -648,6 +648,19 @@ def _default_dev_server(
 ) -> Dict[str, Any]:
     files = existing_files or []
     outputs = planned_outputs or []
+
+    # If the task outputs standalone HTML files and doesn't modify project config/source
+    html_outputs = [f for f in outputs if str(f).endswith(".html")]
+    if html_outputs and "package.json" not in outputs and not any(f.startswith("src/") for f in outputs):
+        import sys
+        return {
+            "enabled": True,
+            "start_cmd": f"{sys.executable} -m http.server 8080",
+            "url": "http://localhost:8080",
+            "ready_patterns": ["Serving HTTP"],
+            "timeout_sec": 10,
+        }
+
     if "package.json" in files:
         # Avoid 5173 to prevent clashing with host UI
         return {
@@ -657,6 +670,7 @@ def _default_dev_server(
             "ready_patterns": ["Local:", "ready in", "localhost", "8080"],
             "timeout_sec": 60,
         }
+
     html_files = [f for f in [*files, *outputs] if str(f).endswith(".html")]
     if html_files:
         import sys
@@ -875,14 +889,26 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
         contract["allowed_files"],
         _html_targets_from_contract(contract),
     )
-    contract["implementation_steps"] = _normalize_steps(source.get("implementation_steps")) or _derive_implementation_steps(
-        contract["goal"],
-        existing_files,
-        contract["allowed_files"],
-        contract["required_files_to_inspect"],
-        contract["test_commands"],
-        contract["smoke_tests"],
-    )
+    source_steps = source.get("implementation_steps")
+    normalized_source_steps = _normalize_steps(source_steps) if isinstance(source_steps, list) else []
+    if normalized_source_steps:
+        contract["implementation_steps"] = normalized_source_steps
+    elif (
+        isinstance(source_steps, list)
+        and not contract["allowed_files"]
+        and not contract["test_commands"]
+        and not contract["smoke_tests"]
+    ):
+        contract["implementation_steps"] = []
+    else:
+        contract["implementation_steps"] = _derive_implementation_steps(
+            contract["goal"],
+            existing_files,
+            contract["allowed_files"],
+            contract["required_files_to_inspect"],
+            contract["test_commands"],
+            contract["smoke_tests"],
+        )
     contract["acceptance_criteria"] = _normalize_string_list(source.get("acceptance_criteria")) or base["acceptance_criteria"]
 
     repair_policy_raw = source.get("repair_policy")

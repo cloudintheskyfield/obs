@@ -49,7 +49,10 @@ const CREATE_SCRIPT_REQUEST_PATTERN = /(脚本|script|cli|工具|tool|自动化|
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
-    if ((hostname === "localhost" || hostname === "127.0.0.1") && window.location.port === "5173") {
+    if (
+        (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0")
+        && window.location.port !== "8213"
+    ) {
         return `${protocol}//${hostname}:8213`;
     }
     if ((protocol === "http:" || protocol === "https:") && hostname) {
@@ -3551,9 +3554,9 @@ function App() {
                     </section>
                 </section>
 
-                <div className={`workspace-content-shell${previewOpen ? " split" : ""}`}>
-                    <section className="workspace-main-pane">
-                        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <div className={`workspace-content-shell${previewOpen ? " split" : ""}`} style={{ height: '100%', overflow: 'hidden' }}>
+                    <section className="workspace-main-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', maxHeight: '100%', overflow: 'hidden', flex: '1 1 auto', minWidth: 0, minHeight: 0 }}>
+                        <div style={{ flex: '1 1 auto', minHeight: 0, height: '100%', overflow: 'hidden', display: "flex", flexDirection: "column" }}>
                             <TranscriptView
                                 transcript={currentSession?.transcript || []}
                                 chatMessagesRef={chatMessagesRef}
@@ -3600,19 +3603,11 @@ function App() {
                         />
                     </section>
 
-                    {!previewOpen ? (
-                        <CodexSidePanel
-                            progressItems={codexProgressItems}
-                            workspaceChanges={workspaceChanges}
-                            currentSessionId={currentSessionId}
-                            githubUrl={GITHUB_REPO_URL}
-                            onFocusFiles={focusFilesChanged}
-                        />
-                    ) : null}
+                    {/* Removed CodexSidePanel as per user request to clean up the UI */}
 
                     {previewOpen ? (
-                        <aside className="preview-pane">
-                            <div className="preview-pane-shell">
+                        <aside className="preview-pane" style={{ height: '100%', maxHeight: '100%', overflow: 'hidden' }}>
+                            <div className="preview-pane-shell" style={{ height: '100%', maxHeight: '100%', overflow: 'hidden' }}>
                                 <div className="preview-pane-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                                         <div className="preview-pane-copy">

@@ -938,3 +938,88 @@ html[data-theme="dark"] .todo-strip-item.done .todo-item-text {
     grid-template-columns: 1fr;
   }
 }
+
+/* Light mode overrides for Harness/Agent process components */
+html[data-theme="light"] .agent-process-statusbar {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+  color: #4b5563;
+}
+
+html[data-theme="light"] .agent-process-statusbar strong {
+  color: #111827;
+}
+
+html[data-theme="light"] .agent-process-overview-card {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="light"] .harness-user-timeline-card,
+html[data-theme="light"] .harness-timeline-card,
+html[data-theme="light"] .harness-debug-details {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="light"] .harness-user-stage-index {
+  border-color: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: #6b7280;
+}
+
+html[data-theme="light"] .harness-user-stage-body {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="light"] .harness-user-stage-status {
+  background: rgba(0, 0, 0, 0.06);
+  color: #6b7280;
+}
+
+html[data-theme="light"] .harness-stage-chip {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.025);
+}
+
+html[data-theme="light"] .agent-process-timeline li {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="light"] .agent-process-time-badge {
+  background: rgba(0, 0, 0, 0.06);
+  color: #4b5563;
+}
+
+html[data-theme="light"] .harness-issue-card pre,
+html[data-theme="light"] .harness-debug-details pre {
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+}
+
+html[data-theme="light"] .agent-process-kicker,
+html[data-theme="light"] .agent-process-overview-label,
+html[data-theme="light"] .harness-timeline-title,
+html[data-theme="light"] .harness-card-eyebrow {
+  color: #6b7280;
+}
+
+html[data-theme="light"] .agent-process-time,
+html[data-theme="light"] .harness-stage-chip em {
+  color: #6b7280;
+}
+
+html[data-theme="light"] .agent-process-detail,
+html[data-theme="light"] .agent-process-summary,
+html[data-theme="light"] .harness-issue-card p,
+html[data-theme="light"] .harness-next-step-list,
+html[data-theme="light"] .harness-next-step-card p,
+html[data-theme="light"] .harness-highlights-card ul {
+  color: #4b5563;
+}
+
+html[data-theme="light"] .harness-issue-note {
+  color: #d97706;
+}

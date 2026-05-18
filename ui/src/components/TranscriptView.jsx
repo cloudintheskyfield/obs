@@ -342,8 +342,8 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
   })()
 
   return (
-    <section className="chat-region">
-      <div id="chat-messages" className="chat-messages" ref={chatMessagesRef}>
+    <section className="chat-region" style={{ height: '100%', maxHeight: '100%', overflow: 'hidden' }}>
+      <div id="chat-messages" className="chat-messages" ref={chatMessagesRef} style={{ height: '100%', overflowY: 'auto' }}>
         {!transcript.length ? (
           <div className="transcript-empty">No transcript items yet. Start with a task request, or ask for a real-time search.</div>
         ) : (

@@ -701,6 +701,8 @@ class HarnessEngine:
             return "RUN"
         if recommended_next == "Evaluator":
             return "EVALUATE"
+        if recommended_next == "None":
+            return "PASS"
         if str((verdict or {}).get("next_agent") or "").strip() == "Search":
             return "RUN"
         if bool(((plan or {}).get("external_research") or {}).get("required")):

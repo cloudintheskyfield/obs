@@ -396,7 +396,7 @@ class GeneratorAgent:
         if error or full_path is None or normalized_path is None:
             return False, error or "Invalid path."
 
-        if command in {"view", "read", "read_file"}:
+        if command in {"view", "read", "read_file", "ls", "list", "list_dir"}:
             if full_path.exists() and full_path.is_dir():
                 return True, self._render_directory_view(full_path, workspace=self._workspace_path())
             if not full_path.exists() or not full_path.is_file():
