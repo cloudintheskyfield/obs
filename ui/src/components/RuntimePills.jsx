@@ -17,6 +17,7 @@ export default function RuntimePills({
     createHubOpen, onToggleCreateHub,
     fileChangeSummary, onFocusFiles,
     themeMode, effectiveTheme, onThemeToggle,
+    taskStatus,
 }) {
     const workingPct = Math.min(100, Math.max(0, Number(contextPercent) || 0));
     const threadPct = Math.min(100, Math.max(0, Number(threadContextPercent) || 0));
@@ -91,8 +92,8 @@ export default function RuntimePills({
                     </button>
                 ) : null}
 
-                {fileChangeSummary?.visible ? (
-                    <details className="files-changed-dropdown">
+	                {fileChangeSummary?.visible ? (
+	                    <details className="files-changed-dropdown">
                         <summary
                             className="files-changed-dropdown-summary"
                             title={`${fileChangeSummary.changedFiles} files changed — 点击展开列表`}
@@ -137,9 +138,28 @@ export default function RuntimePills({
                                 </button>
                             ) : null}
                         </div>
-                    </details>
-                ) : null}
-            </div>
+	                    </details>
+	                ) : null}
+
+	                {taskStatus ? (
+	                    <span className={`workspace-status-pill ${taskStatus.status || "idle"}`} title={taskStatus.subtitle || ""}>
+	                        <i
+	                            className={`fas ${
+	                                taskStatus.status === "done"
+	                                    ? "fa-check"
+	                                    : taskStatus.status === "blocked"
+	                                    ? "fa-triangle-exclamation"
+	                                    : taskStatus.status === "running"
+	                                    ? "fa-spinner fa-spin"
+	                                    : "fa-circle"
+	                            }`}
+	                            aria-hidden="true"
+	                        />
+	                        <span>{taskStatus.label || "Idle"}</span>
+	                        {taskStatus.duration ? <em>{taskStatus.duration}</em> : null}
+	                    </span>
+	                ) : null}
+	            </div>
 
             {/* ── Right: icon actions ── */}
             <div className="unified-bar-actions">

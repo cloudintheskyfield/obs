@@ -23,6 +23,10 @@ MODEL_CONTEXT_WINDOWS = {
 }
 
 
+def strip_provider_thinking(text: str) -> str:
+    return re.sub(r"<think>[\s\S]*?</think>", "", str(text or ""), flags=re.IGNORECASE).strip()
+
+
 def normalize_llm_message_content(content: Any) -> str:
     if content is None:
         return ""
@@ -714,6 +718,112 @@ class HarnessRuntime:
         yield self._sse({"type": "answer_delta", "delta": final_text, "session_id": session_id})
         yield self._sse({"done": True, "session_id": session_id})
 
+    def _classify_intent(self, user_message: str) -> str:
+        """Rule-based intent classification for the Harness Router.
+
+        CODE_WORKFLOW and DOC_WORKFLOW trigger the workflow pipeline.
+        DIRECT_ANSWER streams a reply directly without entering the Agent loop.
+        Rules are pure regex — zero latency, no extra LLM call.
+        """
+        text = (user_message or "").strip()
+        if not text:
+            return "DIRECT_ANSWER"
+
+        DOC_SIGNALS = (
+            r"(pptx?|powerpoint|slide|slides|presentation|deck|keynote|docx?|word|markdown|\bmd\b"
+            r"|\u5e7b\u706f\u7247|\u6f14\u793a\u6587\u7a3f|\u7b80\u62a5|\u6587\u6863|\u6587\u6848|\u65b9\u6848|\u89c4\u8303|\u62a5\u544a|\u7b56\u5212)"
+        )
+        DOC_ACTIONS = (
+            r"(\u751f\u6210|\u521b\u5efa|\u5236\u4f5c|\u505a|\u5199|\u7ed9\u6211|\u5e2e\u6211|\u6574\u7406|\u66f4\u65b0|\u4fee\u6539|create|make|write|generate|build)"
+        )
+        if re.search(DOC_SIGNALS, text, re.IGNORECASE) and re.search(DOC_ACTIONS, text, re.IGNORECASE):
+            return "DOC_WORKFLOW"
+
+        # Explicit engineering/code task signals → always run the pipeline
+        CODE_SIGNALS = (
+            r"(\u751f\u6210|\u521b\u5efa|\u5b9e\u73b0|\u4fee\u590d|\u4fee\u6539|\u6784\u5efa|\u6dfb\u52a0|\u91cd\u6784|\u4f18\u5316\u4ee3\u7801"
+            r"|\u8fd0\u884c|\u542f\u52a8|\u6d4b\u8bd5|\u90e8\u7f72|\u722c\u866b|\u7f16\u5199|\u5199\u4e00\u4e2a|\u5199\u4e2a|\u7ed9\u6211|\u5e2e\u6211"
+            r"|\u8dd1\u901a|\u5168\u94fe\u8def|\u5de5\u4f5c\u6d41|harness"
+            r"|game|\u6e38\u620f|\u7f51\u9875|\u811a\u672c|\u63a5\u53e3|api|\u9875\u9762|\u7ec4\u4ef6|html|css|react|vue|vite"
+            r"|fastapi|flask|django|express|node|python|playwright|ppt|\u8c03\u8bd5|debug|fix|build|create|make|write|generate)"
+        )
+        if re.search(CODE_SIGNALS, text, re.IGNORECASE):
+            return "CODE_WORKFLOW"
+
+        SEARCH_SIGNALS = (
+            r"(\u6700\u65b0|\u4eca\u5929|\u73b0\u5728|\u5f53\u524d|\u67e5\u4e00\u4e0b|\u641c\u4e00\u4e0b|\u8054\u7f51|\u5b98\u7f51|\u4ef7\u683c|\u653f\u7b56|latest|current|today|search|look up)"
+        )
+
+        if re.search(SEARCH_SIGNALS, text, re.IGNORECASE):
+            return "SEARCH_ANSWER"
+
+        # Very short messages are almost always conversational
+        if len(text) < 25:
+            return "DIRECT_ANSWER"
+
+        # Question patterns that don't imply coding work
+        SIMPLE_QUESTION = (
+            r"^(\u4ec0\u4e48\u662f|.*\u662f\u4ec0\u4e48|.*\u662f\u4ec0\u4e48\u610f\u601d|.*\u600e\u4e48\u7528|.*\u6709\u4ec0\u4e48\u533a\u522b"
+            r"|.*\u80fd\u89e3\u91ca|.*\u80fd\u8bf4\u660e|.*\u600e\u4e48\u8fd0\u4f5c|.*\u662f\u5982\u4f55\u5de5\u4f5c"
+            r"|what\s+is|how\s+does|explain|what\s+does|can\s+you\s+explain|difference\s+between).{0,100}$"
+        )
+        if re.search(SIMPLE_QUESTION, text, re.IGNORECASE) and len(text) < 160:
+            return "DIRECT_ANSWER"
+
+        # Default to workflow for anything ambiguous that is longer than a quick question
+        return "CODE_WORKFLOW"
+
+    async def _direct_answer_stream(
+        self,
+        *,
+        session_id: str,
+        chat_sessions: Dict[str, List[Dict[str, Any]]],
+        user_message: str,
+        model: Optional[str],
+        route: Optional[str] = "DIRECT_ANSWER",
+    ) -> AsyncGenerator[str, None]:
+        """Stream a direct LLM answer without invoking the 5-agent pipeline."""
+        if route:
+            yield self._sse({"type": "route", "route": route, "session_id": session_id})
+        yield self._phase("answering", session_id=session_id)
+
+        messages = list(chat_sessions.get(session_id, []))
+        if not messages:
+            messages = [{"role": "user", "content": user_message}]
+
+        accumulated = ""
+        try:
+            stream = await self.vllm_client.chat_completion(messages=messages, model=model, stream=True)
+            async for chunk in stream:
+                # Handle rate-limit wait chunks emitted by VLLMClient
+                if isinstance(chunk, dict) and chunk.get("__obs_phase"):
+                    yield self._sse({"type": "phase", "transient": True, "content": "正在重试...", "session_id": session_id})
+                    continue
+                delta = ""
+                try:
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = str(
+                            (choices[0].get("delta") or {}).get("content")
+                            or (choices[0].get("message") or {}).get("content")
+                            or ""
+                        )
+                except Exception:
+                    pass
+                if delta:
+                    accumulated += delta
+                    yield self._sse({"type": "answer_delta", "delta": delta, "session_id": session_id})
+        except Exception as exc:
+            logger.warning(f"Direct answer stream error: {exc}")
+            fallback = "暂时无法回答，请稍后重试。"
+            accumulated = fallback
+            yield self._sse({"type": "answer_delta", "delta": fallback, "session_id": session_id})
+
+        accumulated = strip_provider_thinking(accumulated)
+        if accumulated.strip():
+            self._append_assistant_message(chat_sessions, session_id, accumulated)
+        yield self._sse({"done": True, "session_id": session_id})
+
     async def chat_stream(
         self,
         session_id: str,
@@ -759,9 +869,41 @@ class HarnessRuntime:
                     yield chunk
                 return
 
-            budgets = self.harness_engine.default_budgets()
+            # Intent Router: for default strategy, skip the 5-agent pipeline
+            # for simple conversational queries that don't require code changes.
+            if strategy in ("agent", "default", "", None):
+                intent = self._classify_intent(user_message)
+                if intent == "DIRECT_ANSWER":
+                    async for chunk in self._direct_answer_stream(
+                        session_id=session_id,
+                        chat_sessions=chat_sessions,
+                        user_message=user_message,
+                        model=selected_model,
+                        route="DIRECT_ANSWER",
+                    ):
+                        yield chunk
+                    return
+                if intent == "SEARCH_ANSWER":
+                    # This lightweight path keeps Search/Answer questions out of
+                    # Planner/Generator/Runner/Evaluator. The answer composer can
+                    # still use the model's own current-context capabilities; no
+                    # project files or patch workflow are invoked.
+                    yield self._sse({"type": "route", "route": "SEARCH_ANSWER", "session_id": session_id})
+                    async for chunk in self._direct_answer_stream(
+                        session_id=session_id,
+                        chat_sessions=chat_sessions,
+                        user_message=user_message,
+                        model=selected_model,
+                        route=None,
+                    ):
+                        yield chunk
+                    return
+                # CODE_WORKFLOW / DOC_WORKFLOW fall through to the controlled pipeline below.
+                yield self._sse({"type": "route", "route": intent if intent in ("CODE_WORKFLOW", "DOC_WORKFLOW") else "CODE_WORKFLOW", "session_id": session_id})
+
             existing_files = self._get_workspace_files_if_small(request_context)
             self.harness_engine.create_scaffold(workspace)
+            budgets = self.harness_engine.default_budgets()
             provisional_task_id = f"task_{session_id.replace('-', '')[:12] or 'runtime'}"
             planner = PlannerAgent(self.vllm_client)
             planner_input = self._build_planner_input(

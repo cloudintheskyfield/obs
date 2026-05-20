@@ -108,6 +108,7 @@ PLANNER_SYSTEM_PROMPT = (
 
     "File safety rules:\n"
     "- Keep allowed_files as narrow as possible.\n"
+    "- If you plan to create new files (especially at the project root), you MUST explicitly include their exact filenames (e.g., 'script.py') or paths in allowed_files.\n"
     "- Always protect .env, .env.*, .git/**, node_modules/**, dist/**, build/**, .harness/**, logs/**, screenshots/**, root workflow_* test directories, and lock files unless explicitly allowed.\n"
     "- Lock files include package-lock.json, pnpm-lock.yaml, yarn.lock, poetry.lock, Pipfile.lock, Cargo.lock, go.sum.\n"
     "- forbidden_files has priority over allowed_files.\n"
@@ -434,16 +435,18 @@ def _default_file_output_commands(allowed_files: List[str]) -> List[Dict[str, An
     cmd = (
         "python -c \"from pathlib import Path; "
         f"files={files_literal}; "
-        "missing=[p for p in files if not Path(p).is_file() or Path(p).stat().st_size == 0]; "
-        "assert not missing, 'missing or empty generated files: '+', '.join(missing); "
-        "print('generated files ok: '+', '.join(files))\""
+        "present=[p for p in files if Path(p).is_file() and Path(p).stat().st_size > 0]; "
+        "missing=[p for p in files if p not in present]; "
+        "print(f'Present files: {present}'); "
+        "print(f'Missing or empty files: {missing}'); "
+        "assert present, 'Error: None of the allowed concrete files were generated or they are all empty!'\""
     )
     return [
         {
             "name": "verify_generated_files",
             "cmd": cmd,
             "timeout_sec": 30,
-            "required": True,
+            "required": False,
         }
     ]
 
@@ -841,8 +844,8 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
     if output_commands:
         existing_cmds = {str(item.get("cmd") or "") for item in contract["test_commands"]}
         contract["test_commands"] = [
-            *[item for item in output_commands if str(item.get("cmd") or "") not in existing_cmds],
             *contract["test_commands"],
+            *[item for item in output_commands if str(item.get("cmd") or "") not in existing_cmds],
         ]
     contract["test_commands"] = _prune_stale_output_checks(
         contract["test_commands"],

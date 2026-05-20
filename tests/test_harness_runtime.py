@@ -431,6 +431,14 @@ def test_runtime_runs_search_gate_chain_before_generator(tmp_path: Path) -> None
     assert decision["decision"] == "PASS"
 
 
+def test_intent_router_keeps_doc_and_harness_tasks_out_of_direct_path(tmp_path: Path) -> None:
+    runtime = HarnessRuntime(vllm_client=_FakeVllmClient(), skill_manager=_DummySkillManager(tmp_path))
+
+    assert runtime._classify_intent("你好") == "DIRECT_ANSWER"
+    assert runtime._classify_intent("给我一个ppt 宣传北京旅游的") == "DOC_WORKFLOW"
+    assert runtime._classify_intent("跑通 Harness 全链路") == "CODE_WORKFLOW"
+
+
 def test_runtime_retries_generator_when_patch_envelope_is_empty(tmp_path: Path) -> None:
     runtime = HarnessRuntime(vllm_client=_FakeEmptyPatchThenCreateVllm(), skill_manager=_DummySkillManager(tmp_path))
 

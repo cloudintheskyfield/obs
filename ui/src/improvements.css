@@ -1023,3 +1023,771 @@ html[data-theme="light"] .harness-highlights-card ul {
 html[data-theme="light"] .harness-issue-note {
   color: #d97706;
 }
+
+/* Harness iteration: reasoning stream and user-facing workflow cards */
+.codex-process-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.reasoning-stream,
+.harness-final-card {
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.reasoning-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reasoning-step {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.reasoning-step.compact {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--text-soft, #9ca3af);
+  font-size: 12px;
+}
+
+.reasoning-step.compact strong {
+  color: var(--text, #f8fafc);
+  font-size: 12px;
+}
+
+.reasoning-step.expanded {
+  padding: 12px;
+  border-left: 4px solid #818cf8;
+}
+
+.reasoning-step.expanded.blocked,
+.reasoning-step.expanded.error {
+  border-left-color: #f59e0b;
+}
+
+.reasoning-step.expanded.done {
+  border-left-color: #10b981;
+}
+
+.reasoning-step-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reasoning-agent {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(129, 140, 248, 0.12);
+  color: #818cf8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.reasoning-step-top strong {
+  min-width: 0;
+  color: var(--text, #f8fafc);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.reasoning-step p {
+  margin: 9px 0 0;
+  color: var(--text-soft, #9ca3af);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.reasoning-basis {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-soft, #9ca3af);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.reasoning-next {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.reasoning-next span {
+  color: #818cf8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.reasoning-next strong {
+  color: var(--text, #f8fafc);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.harness-user-stage-role {
+  flex: 0 0 auto;
+  color: var(--text-dim, #9ca3af);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.harness-user-stage-time {
+  display: inline-flex;
+  margin-top: 8px;
+  color: var(--text-dim, #9ca3af);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.harness-final-card {
+  border-color: rgba(16, 185, 129, 0.28);
+  border-left: 4px solid #10b981;
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.harness-final-card strong {
+  display: block;
+  color: var(--text, #f8fafc);
+  font-size: 14px;
+}
+
+.harness-final-card p,
+.harness-final-card ul {
+  margin: 8px 0 0;
+  color: var(--text-soft, #9ca3af);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.harness-final-card ul {
+  padding-left: 18px;
+}
+
+.harness-issue-card.blocked {
+  border-left: 4px solid #f59e0b;
+}
+
+.task-header-card {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.task-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.task-header-meta span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-soft, #9ca3af);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.harness-current-action-card {
+  padding: 14px;
+  border: 1px solid rgba(99, 102, 241, 0.22);
+  border-left: 4px solid #818cf8;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.harness-current-action-card.blocked {
+  border-color: rgba(245, 158, 11, 0.36);
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.harness-current-action-card.done {
+  border-color: rgba(16, 185, 129, 0.28);
+  border-left-color: #10b981;
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.harness-current-action-card strong {
+  display: block;
+  color: var(--text, #f8fafc);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.harness-current-action-card p {
+  margin: 8px 0 0;
+  color: var(--text-soft, #9ca3af);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.current-action-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.current-action-grid span {
+  color: var(--text-dim, #9ca3af);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.current-action-grid strong {
+  color: var(--text-soft, #d1d5db);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.harness-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.harness-action-row button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text, #f8fafc);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.harness-action-row button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.harness-evidence-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-soft, #9ca3af);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.harness-detail-tabs {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+.harness-detail-tablist {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
+}
+
+.harness-detail-tablist button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft, #9ca3af);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.harness-detail-tablist button.active,
+.harness-detail-tablist button:hover {
+  border-color: rgba(129, 140, 248, 0.28);
+  background: rgba(129, 140, 248, 0.12);
+  color: #818cf8;
+}
+
+.harness-detail-panel {
+  padding: 12px;
+}
+
+.harness-detail-panel strong {
+  display: block;
+  color: var(--text, #f8fafc);
+  font-size: 13px;
+}
+
+.harness-detail-panel p,
+.harness-detail-panel ul {
+  margin: 8px 0 0;
+  color: var(--text-soft, #9ca3af);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.harness-detail-panel ul {
+  padding-left: 18px;
+}
+
+.harness-detail-panel pre {
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(243, 244, 246, 0.88);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+html[data-theme="light"] .codex-process-body {
+  background: var(--bg-card, #ffffff);
+}
+
+html[data-theme="light"] .reasoning-stream,
+html[data-theme="light"] .harness-user-timeline-card,
+html[data-theme="light"] .harness-debug-details {
+  border-color: var(--border-subtle, #e5e7eb);
+  background: var(--bg-card, #ffffff);
+  box-shadow: var(--shadow-card, 0 1px 2px rgba(16, 24, 40, 0.06));
+}
+
+html[data-theme="light"] .reasoning-step {
+  border-color: var(--border-subtle, #e5e7eb);
+  background: var(--bg-card-muted, #f3f4f6);
+}
+
+html[data-theme="light"] .reasoning-step.compact {
+  color: var(--text-secondary, #374151);
+}
+
+html[data-theme="light"] .reasoning-step.compact strong,
+html[data-theme="light"] .reasoning-step-top strong,
+html[data-theme="light"] .reasoning-next strong,
+html[data-theme="light"] .harness-final-card strong {
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .reasoning-step p,
+html[data-theme="light"] .reasoning-basis,
+html[data-theme="light"] .harness-final-card p,
+html[data-theme="light"] .harness-final-card ul,
+html[data-theme="light"] .harness-user-stage-role,
+html[data-theme="light"] .harness-user-stage-time {
+  color: var(--text-secondary, #374151);
+}
+
+html[data-theme="light"] .reasoning-agent,
+html[data-theme="light"] .reasoning-next span {
+  color: var(--running, #7c3aed);
+  background: var(--running-soft, #ede9fe);
+}
+
+html[data-theme="light"] .reasoning-next {
+  background: var(--accent-soft, #dbeafe);
+}
+
+html[data-theme="light"] .harness-user-stage-body {
+  border-color: var(--border-subtle, #e5e7eb);
+  background: var(--bg-card, #ffffff);
+  box-shadow: var(--shadow-card, 0 1px 2px rgba(16, 24, 40, 0.06));
+}
+
+html[data-theme="light"] .harness-user-stage:hover .harness-user-stage-body {
+  background: var(--bg-hover, #eef2f7);
+  border-color: var(--border-default, #d1d5db);
+}
+
+html[data-theme="light"] .harness-user-stage.running .harness-user-stage-body,
+html[data-theme="light"] .harness-user-stage.pending .harness-user-stage-body {
+  border-color: var(--running-border, #c4b5fd);
+  border-left: 4px solid var(--running, #7c3aed);
+  background: var(--running-soft, #ede9fe);
+}
+
+html[data-theme="light"] .harness-user-stage.success .harness-user-stage-body {
+  border-color: var(--success-border, #86efac);
+  border-left: 4px solid var(--success, #16a34a);
+  background: var(--success-soft, #dcfce7);
+}
+
+html[data-theme="light"] .harness-user-stage.error .harness-user-stage-body {
+  border-color: var(--blocked-border, #fdba74);
+  border-left: 4px solid var(--blocked, #c2410c);
+  background: var(--blocked-soft, #ffedd5);
+}
+
+html[data-theme="light"] .harness-user-stage-index {
+  border-color: var(--border-default, #d1d5db);
+  background: var(--bg-card, #ffffff);
+  color: var(--text-muted, #6b7280);
+}
+
+html[data-theme="light"] .harness-user-stage-status.running,
+html[data-theme="light"] .harness-user-stage-status.pending {
+  background: var(--running-soft, #ede9fe);
+  color: var(--running, #7c3aed);
+}
+
+html[data-theme="light"] .harness-user-stage-status.success {
+  background: var(--success-soft, #dcfce7);
+  color: var(--success, #16a34a);
+}
+
+html[data-theme="light"] .harness-user-stage-status.error {
+  background: var(--blocked-soft, #ffedd5);
+  color: var(--blocked, #c2410c);
+}
+
+html[data-theme="light"] .harness-issue-card.blocked {
+  border-color: var(--blocked-border, #fdba74);
+  border-left-color: var(--blocked, #c2410c);
+  background: var(--blocked-soft, #ffedd5);
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .harness-issue-card.blocked strong {
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .harness-next-step-inline {
+  color: var(--blocked, #c2410c);
+}
+
+html[data-theme="light"] .harness-final-card strong {
+  color: var(--success, #16a34a);
+}
+
+html[data-theme="light"] .task-header-card {
+  border-bottom-color: var(--border-subtle, #e5e7eb);
+}
+
+html[data-theme="light"] .task-header-meta span {
+  background: var(--bg-card-muted, #f3f4f6);
+  color: var(--text-secondary, #374151);
+}
+
+html[data-theme="light"] .harness-current-action-card {
+  border-color: var(--running-border, #c4b5fd);
+  border-left-color: var(--running, #7c3aed);
+  background: var(--running-soft, #ede9fe);
+}
+
+html[data-theme="light"] .harness-current-action-card.blocked {
+  border-color: var(--blocked-border, #fdba74);
+  border-left-color: var(--blocked, #c2410c);
+  background: var(--blocked-soft, #ffedd5);
+}
+
+html[data-theme="light"] .harness-current-action-card.done {
+  border-color: var(--success-border, #86efac);
+  border-left-color: var(--success, #16a34a);
+  background: var(--success-soft, #dcfce7);
+}
+
+html[data-theme="light"] .harness-current-action-card strong,
+html[data-theme="light"] .current-action-grid strong,
+html[data-theme="light"] .harness-detail-panel strong {
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .harness-current-action-card p,
+html[data-theme="light"] .current-action-grid span,
+html[data-theme="light"] .harness-evidence-list,
+html[data-theme="light"] .harness-detail-panel p,
+html[data-theme="light"] .harness-detail-panel ul {
+  color: var(--text-secondary, #374151);
+}
+
+html[data-theme="light"] .current-action-grid,
+html[data-theme="light"] .harness-detail-tabs {
+  border-color: var(--border-subtle, #e5e7eb);
+  background: var(--bg-card, #ffffff);
+}
+
+html[data-theme="light"] .harness-action-row button {
+  border-color: var(--border-default, #d1d5db);
+  background: var(--bg-card, #ffffff);
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .harness-action-row button:hover {
+  border-color: var(--accent-border, #93c5fd);
+  background: var(--accent-soft, #dbeafe);
+}
+
+html[data-theme="light"] .harness-action-row button:disabled:hover {
+  border-color: var(--border-default, #d1d5db);
+  background: var(--bg-card, #ffffff);
+}
+
+html[data-theme="light"] .harness-detail-tablist {
+  border-bottom-color: var(--border-subtle, #e5e7eb);
+}
+
+html[data-theme="light"] .harness-detail-tablist button {
+  color: var(--text-secondary, #374151);
+}
+
+html[data-theme="light"] .harness-detail-tablist button.active,
+html[data-theme="light"] .harness-detail-tablist button:hover {
+  border-color: var(--accent-border, #93c5fd);
+  background: var(--accent-soft, #dbeafe);
+  color: var(--accent, #2563eb);
+}
+
+html[data-theme="light"] .harness-detail-panel pre {
+  border: 1px solid var(--code-border, #d1d5db);
+  background: var(--code-bg, #f3f4f6);
+  color: var(--code-text, #111827);
+}
+
+/* ============================================================================
+   Light Mode: Inline code + raw log panels
+   ============================================================================ */
+
+/* Inline code in light mode — use the spec code-bg token */
+html[data-theme="light"] code:not([class]) {
+  padding: 1px 5px;
+  border: 1px solid var(--code-border, #d1d5db);
+  border-radius: 4px;
+  background: var(--code-bg, #f3f4f6);
+  color: var(--code-text, #111827);
+  font-size: 0.875em;
+}
+
+/* Raw logs / debug panels — always dark terminal style, even in light mode */
+html[data-theme="light"] .harness-debug-details pre,
+html[data-theme="light"] .harness-issue-card pre,
+html[data-theme="light"] .log-block-pre,
+html[data-theme="light"] pre.raw-log {
+  background: #0f172a;
+  color: #94a3b8;
+  border: 1px solid #1e293b;
+}
+
+/* ============================================================================
+   Light Mode: Agent process timeline — stronger hierarchy
+   ============================================================================ */
+
+html[data-theme="light"] .agent-process-timeline li {
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  box-shadow: var(--shadow-card, 0 1px 2px rgba(16, 24, 40, 0.06));
+}
+
+html[data-theme="light"] .agent-process-timeline li.running,
+html[data-theme="light"] .agent-process-timeline li.queued {
+  border-left: 3px solid var(--running, #7c3aed);
+  background: var(--running-soft, #ede9fe);
+  border-color: var(--running-border, #c4b5fd);
+}
+
+html[data-theme="light"] .agent-process-timeline li.success {
+  border-left: 3px solid var(--success-std, #16a34a);
+  background: var(--success-soft, #dcfce7);
+  border-color: var(--success-border, #86efac);
+}
+
+html[data-theme="light"] .agent-process-timeline li.error {
+  border-left: 3px solid var(--blocked, #c2410c);
+  background: var(--blocked-soft, #ffedd5);
+  border-color: var(--blocked-border, #fdba74);
+}
+
+html[data-theme="light"] .agent-process-role {
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .agent-process-title {
+  color: var(--text-primary, #111827);
+}
+
+/* ============================================================================
+   Light Mode: Status pills / badges
+   ============================================================================ */
+
+/* Harness stage chips in light mode */
+html[data-theme="light"] .harness-stage-chip.running,
+html[data-theme="light"] .harness-stage-chip.queued {
+  border-color: var(--running-border, #c4b5fd);
+  background: var(--running-soft, #ede9fe);
+}
+
+html[data-theme="light"] .harness-stage-chip.running span,
+html[data-theme="light"] .harness-stage-chip.queued span {
+  color: var(--running, #7c3aed);
+}
+
+html[data-theme="light"] .harness-stage-chip.success {
+  border-color: var(--success-border, #86efac);
+  background: var(--success-soft, #dcfce7);
+}
+
+html[data-theme="light"] .harness-stage-chip.success span {
+  color: var(--success-std, #16a34a);
+}
+
+html[data-theme="light"] .harness-stage-chip.error {
+  border-color: var(--blocked-border, #fdba74);
+  background: var(--blocked-soft, #ffedd5);
+}
+
+html[data-theme="light"] .harness-stage-chip.error span {
+  color: var(--blocked, #c2410c);
+}
+
+/* ============================================================================
+   Light Mode: Reasoning stream
+   ============================================================================ */
+
+html[data-theme="light"] .reasoning-step.expanded {
+  border-left-color: var(--running, #7c3aed);
+  background: var(--running-soft, #ede9fe);
+  border-color: var(--running-border, #c4b5fd);
+}
+
+html[data-theme="light"] .reasoning-step.expanded.done {
+  border-left-color: var(--success-std, #16a34a);
+  background: var(--success-soft, #dcfce7);
+  border-color: var(--success-border, #86efac);
+}
+
+html[data-theme="light"] .reasoning-step.expanded.blocked,
+html[data-theme="light"] .reasoning-step.expanded.error {
+  border-left-color: var(--blocked, #c2410c);
+  background: var(--blocked-soft, #ffedd5);
+  border-color: var(--blocked-border, #fdba74);
+}
+
+/* ============================================================================
+   Light Mode: ThreadCard / Session list active state
+   ============================================================================ */
+
+html[data-theme="light"] .thread-item.active,
+html[data-theme="light"] .session-item.active,
+html[data-theme="light"] .thread-card.active {
+  background: var(--bg-active, #e8f0ff);
+  border-color: var(--accent-border, #93c5fd);
+}
+
+html[data-theme="light"] .thread-item.active .thread-title,
+html[data-theme="light"] .session-item.active .session-title,
+html[data-theme="light"] .thread-card.active .thread-title {
+  color: var(--accent-std, #2563eb);
+  font-weight: 700;
+}
+
+/* ============================================================================
+   Light Mode: Harness overview cards
+   ============================================================================ */
+
+html[data-theme="light"] .agent-process-overview-card {
+  background: var(--bg-card, #ffffff);
+  border-color: var(--border-subtle, #e5e7eb);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="light"] .agent-process-overview-value {
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .agent-process-overview-value.done {
+  color: var(--success-std, #16a34a);
+}
+
+html[data-theme="light"] .agent-process-overview-value.blocked {
+  color: var(--blocked, #c2410c);
+}
+
+html[data-theme="light"] .agent-process-overview-note {
+  color: var(--text-secondary, #374151);
+}
+
+/* ============================================================================
+   Light Mode: Process head statusbar
+   ============================================================================ */
+
+html[data-theme="light"] .agent-process-statusbar {
+  background: var(--bg-card, #ffffff);
+  border-color: var(--border-default, #d1d5db);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="light"] .agent-process-status-dot {
+  background: var(--running, #7c3aed);
+  box-shadow: 0 0 0 4px var(--running-soft, #ede9fe);
+}
+
+html[data-theme="light"] .agent-process-status-dot.done {
+  background: var(--success-std, #16a34a);
+  box-shadow: 0 0 0 4px var(--success-soft, #dcfce7);
+}
+
+html[data-theme="light"] .agent-process-status-dot.blocked {
+  background: var(--blocked, #c2410c);
+  box-shadow: 0 0 0 4px var(--blocked-soft, #ffedd5);
+}
+
+html[data-theme="light"] .agent-process-statusbar strong {
+  color: var(--text-primary, #111827);
+}
+
+html[data-theme="light"] .agent-process-live {
+  border-color: var(--running-border, #c4b5fd);
+  background: var(--running-soft, #ede9fe);
+  color: var(--running, #7c3aed);
+}
+
+html[data-theme="light"] .agent-process-live.done {
+  border-color: var(--success-border, #86efac);
+  background: var(--success-soft, #dcfce7);
+  color: var(--success-std, #16a34a);
+}
+
+html[data-theme="light"] .agent-process-live.blocked {
+  border-color: var(--blocked-border, #fdba74);
+  background: var(--blocked-soft, #ffedd5);
+  color: var(--blocked, #c2410c);
+}
+
+/* ============================================================================
+   Light Mode: Harness main timeline connector line
+   ============================================================================ */
+
+html[data-theme="light"] .harness-main-timeline .harness-user-stage:not(:last-child)::after {
+  background: var(--border-default, #d1d5db);
+}
+
+/* ============================================================================
+   Light Mode: Debug details panel
+   ============================================================================ */
+
+html[data-theme="light"] .harness-debug-details {
+  background: var(--bg-card-muted, #f3f4f6);
+  border-color: var(--border-subtle, #e5e7eb);
+}
+
+html[data-theme="light"] .harness-debug-details summary {
+  color: var(--text-muted, #6b7280);
+}

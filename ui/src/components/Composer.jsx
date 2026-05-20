@@ -53,7 +53,8 @@ export default function Composer({
     architectureOpen,
     onArchitectureToggle,
     statusItems,
-    inputRef
+    inputRef,
+    placeholder
 }) {
     // 动态构建模型选项
     const modelOptions = [];
@@ -145,7 +146,7 @@ export default function Composer({
                     onChange={onChange}
                     onKeyDown={onKeyDown}
                     onPaste={onPaste}
-                    placeholder="Describe the task, mention files, or ask for a coordinated refactor"
+                    placeholder={placeholder || "Describe the task, mention files, or ask for a coordinated refactor"}
                 />
                 <div className="composer-foot">
                     <div className="composer-left">

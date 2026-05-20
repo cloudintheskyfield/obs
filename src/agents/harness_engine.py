@@ -1443,11 +1443,17 @@ class HarnessEngine:
         normalized_pattern = str(pattern or "").strip().strip("/")
         if not normalized_pattern:
             return False
+            
+        if normalized_pattern.startswith("**/"):
+            if fnmatch.fnmatch(normalized_path, normalized_pattern[3:]):
+                return True
+                
         if normalized_pattern.endswith("/**"):
             prefix = normalized_pattern[:-3].rstrip("/")
             if any(token in prefix for token in ("*", "?", "[")):
                 return fnmatch.fnmatch(normalized_path, prefix) or fnmatch.fnmatch(normalized_path, f"{prefix}/*")
             return normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
+            
         return fnmatch.fnmatch(normalized_path, normalized_pattern)
 
     @staticmethod

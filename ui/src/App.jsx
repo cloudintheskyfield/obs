@@ -188,6 +188,28 @@ function normalizeHarnessDecision(decision) {
     };
 }
 
+function normalizeReasoningUpdate(update, index = 0) {
+    if (!update || typeof update !== "object") {
+        return null;
+    }
+    return {
+        id: String(update.id || `reasoning_${index}`),
+        agent: String(update.agent || update.role || "Harness"),
+        phase: String(update.phase || ""),
+        visibility: String(update.visibility || "user"),
+        title: String(update.title || "").trim(),
+        message: String(update.message || update.summary || "").trim(),
+        basis: Array.isArray(update.basis)
+            ? update.basis.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 3)
+            : [],
+        nextAction: String(update.next_action || update.nextAction || "").trim(),
+        confidence: typeof update.confidence === "number" ? update.confidence : null,
+        artifactRefs: Array.isArray(update.artifact_refs || update.artifactRefs)
+            ? (update.artifact_refs || update.artifactRefs).map((item) => String(item || "").trim()).filter(Boolean).slice(0, 6)
+            : [],
+    };
+}
+
 function userFacingStep(step) {
     const userEvent = normalizeUserEvent(step?.user_event || step?.userEvent);
     if (userEvent?.title) {
@@ -218,6 +240,24 @@ function userFacingStep(step) {
     const rawDetail = String(step?.detail || "");
     const rawEvidence = String(step?.evidence || "");
     const combined = `${rawTitle}\n${rawDetail}\n${rawEvidence}`;
+
+    if (/内部事件|internal event/i.test(rawTitle)) {
+        const roleTitles = {
+            Planner: "正在制定计划",
+            Search: "正在检查资料需求",
+            Generator: "正在修改代码",
+            Runner: "正在运行验证",
+            Evaluator: "正在检查结果",
+        };
+        return {
+            role,
+            status: step?.status || "running",
+            title: roleTitles[role] || "正在推进任务",
+            detail: rawDetail || rawEvidence,
+            evidence: rawEvidence,
+            recommendedAction: "",
+        };
+    }
 
     if (/Locator can't be used in 'await'|object Locator/i.test(combined)) {
         return {
@@ -321,6 +361,7 @@ function userFacingStep(step) {
 
 function normalizeAgentProcess(process) {
     const source = process && typeof process === "object" ? process : {};
+    const reasoningSource = source.reasoning_updates || source.reasoningUpdates || [];
     const roleState = {};
     HARNESS_ROLES.forEach((role) => {
         const current = source.roles?.[role] || {};
@@ -334,7 +375,14 @@ function normalizeAgentProcess(process) {
     });
     const events = Array.isArray(source.events)
         ? source.events
-            .filter((event) => event && typeof event === "object")
+            .filter((event) => {
+                if (!event || typeof event !== "object") return false;
+                // Drop events the backend explicitly marked as internal/debug-only
+                const ue = event.user_event || event.userEvent;
+                if (ue?.hiddenByDefault === true) return false;
+                if (/^内部事件$|^internal\s+event$/i.test(String(event.title || ""))) return false;
+                return true;
+            })
             .slice(-24)
             .map((event) => {
                 const friendly = userFacingStep(event);
@@ -345,8 +393,11 @@ function normalizeAgentProcess(process) {
                     detail: String(friendly.detail || "").slice(0, 260),
                     evidence: String(friendly.evidence || "").slice(0, 320),
                     timestamp: event.timestamp || nowIso(),
+                    _hidden: friendly._hidden || false,
                 };
             })
+            // Secondary filter: drop entries where userFacingStep itself signals hidden
+            .filter((event) => !event._hidden)
         : [];
     const latestErrorEvent = [...events].reverse().find((event) => event.status === "error") || null;
     return {
@@ -373,6 +424,9 @@ function normalizeAgentProcess(process) {
         decision: source.decision && typeof source.decision === "object"
             ? normalizeHarnessDecision(source.decision)
             : null,
+        reasoningUpdates: Array.isArray(reasoningSource)
+            ? reasoningSource.map(normalizeReasoningUpdate).filter((item) => item && item.visibility !== "debug").slice(-12)
+            : [],
         roundId: Number(source.roundId || 0),
     };
 }
@@ -1141,6 +1195,76 @@ function buildCodexProgressItems(session, requestIndicator) {
     });
 }
 
+function lastTranscriptEntry(session, predicate = () => true) {
+    const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+    for (let index = transcript.length - 1; index >= 0; index -= 1) {
+        const entry = transcript[index];
+        if (predicate(entry)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function compactSessionText(value, max = 92) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function buildSessionWorkflowMeta(session, { requestIndicator, isCurrent = false } = {}) {
+    const process = latestAgentProcess(session);
+    const active = isCurrent && requestIndicator?.active;
+    const lastAgentEntry = lastTranscriptEntry(session, (entry) => entry?.kind === "agent_process");
+    const lastEntry = lastTranscriptEntry(session);
+
+    if (active) {
+        return {
+            status: "running",
+            label: "Working",
+            subtitle: requestIndicator?.label || "Harness is processing the current request.",
+            duration: "",
+        };
+    }
+
+    if (process?.currentIssue) {
+        return {
+            status: "blocked",
+            label: "Blocked",
+            subtitle: compactSessionText(process.currentIssue.detail || process.currentIssue.title || "Needs repair before the next validation round."),
+            duration: lastAgentEntry?.elapsedLabel || "",
+        };
+    }
+
+    if (process?.decision?.decision === "PASS" || process?.status === "done") {
+        return {
+            status: "done",
+            label: "Done",
+            subtitle: compactSessionText(process.latestSummary?.summary || process.decision?.reason || "Harness validation completed."),
+            duration: lastAgentEntry?.elapsedLabel || "",
+        };
+    }
+
+    const latestEvent = process?.events?.at(-1);
+    if (latestEvent) {
+        const status = progressStatusClass(latestEvent.status);
+        const mapped = status === "error" ? "blocked" : status === "done" ? "done" : status === "running" ? "running" : "idle";
+        return {
+            status: mapped,
+            label: mapped === "blocked" ? "Blocked" : mapped === "done" ? "Done" : mapped === "running" ? "Working" : "Idle",
+            subtitle: compactSessionText(latestEvent.detail || latestEvent.title || "Harness activity recorded."),
+            duration: lastAgentEntry?.elapsedLabel || "",
+        };
+    }
+
+    return {
+        status: session?.transcript?.length ? "idle" : "new",
+        label: session?.transcript?.length ? "Idle" : "New",
+        subtitle: compactSessionText(lastEntry?.content || "Start a new thread..."),
+        duration: "",
+    };
+}
+
 function CodexSidePanel({ progressItems, workspaceChanges, currentSessionId, githubUrl, onFocusFiles }) {
     const changedFiles = Number(workspaceChanges?.changedFiles || 0);
     const insertions = Number(workspaceChanges?.insertions || 0);
@@ -1298,6 +1422,9 @@ function App() {
     const messageInputRef = useRef(null);
     const chatMessagesRef = useRef(null);
     const shouldStickToBottomRef = useRef(true);
+    const threadScrollPositionsRef = useRef({});
+    const pendingScrollRestoreRef = useRef(null);
+    const restoringScrollRef = useRef(false);
     const previewDismissedKeyRef = useRef("");
     const sessionsRef = useRef([]);
     const currentSessionIdRef = useRef(null);
@@ -1317,6 +1444,7 @@ function App() {
 
     useEffect(() => {
         currentSessionIdRef.current = currentSessionId;
+        pendingScrollRestoreRef.current = currentSessionId;
     }, [currentSessionId]);
 
     useEffect(() => {
@@ -1516,6 +1644,10 @@ function App() {
         const el = chatMessagesRef.current;
         if (!el) return undefined;
         const updateStickiness = () => {
+            if (restoringScrollRef.current) return;
+            if (currentSessionIdRef.current) {
+                threadScrollPositionsRef.current[currentSessionIdRef.current] = el.scrollTop;
+            }
             const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
             shouldStickToBottomRef.current = distanceFromBottom < 140;
         };
@@ -1523,6 +1655,27 @@ function App() {
         el.addEventListener("scroll", updateStickiness, { passive: true });
         return () => el.removeEventListener("scroll", updateStickiness);
     }, [currentSessionId]);
+
+    useEffect(() => {
+        const el = chatMessagesRef.current;
+        if (!el || !currentSessionId || pendingScrollRestoreRef.current !== currentSessionId) {
+            return;
+        }
+        restoringScrollRef.current = true;
+        requestAnimationFrame(() => {
+            const saved = threadScrollPositionsRef.current[currentSessionId];
+            if (typeof saved === "number") {
+                const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+                el.scrollTop = Math.min(saved, maxTop);
+            } else {
+                el.scrollTop = el.scrollHeight;
+            }
+            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            shouldStickToBottomRef.current = distanceFromBottom < 140;
+            restoringScrollRef.current = false;
+            pendingScrollRestoreRef.current = null;
+        });
+    }, [currentSessionId, currentSession?.transcript?.length]);
 
     useEffect(() => {
         const el = chatMessagesRef.current;
@@ -2814,7 +2967,22 @@ function App() {
                     syncTodoAttachment();
                 };
 
+                if (payload.type === "route") {
+                    // Backend classified this request; record route mode on session
+                    const routeMode = String(payload.route || "");
+                    if (routeMode) {
+                        updateSessionById(sessionId, (session) => {
+                            session.routeMode = routeMode;
+                        });
+                    }
+                    return;
+                }
+
                 if (payload.type === "agent_step") {
+                    // Skip hiddenByDefault events so they never pollute the main timeline
+                    const ue = payload.user_event;
+                    if (ue?.hiddenByDefault === true) return;
+                    if (/^内部事件$|^internal\s+event$/i.test(String(payload.title || ""))) return;
                     upsertAgentProcess({
                         ...payload,
                         user_event: payload.user_event,
@@ -3339,6 +3507,15 @@ function App() {
         ? formatWorkingDuration(requestTimerNow - requestIndicator.startedAt)
         : "";
     const codexProgressItems = buildCodexProgressItems(currentSession, requestIndicator);
+    const currentWorkflowMeta = buildSessionWorkflowMeta(currentSession, {
+        requestIndicator,
+        isCurrent: true,
+    });
+    const composerPlaceholder = currentWorkflowMeta.status === "blocked"
+        ? "Reply with repair guidance, approve the next step, or ask for evidence"
+        : currentWorkflowMeta.status === "running"
+        ? "Add constraints or files while Harness is working..."
+        : "Describe the task, mention files, or ask for a coordinated refactor";
 
     return (
         <div className={`app-shell${previewOpen ? " preview-active" : ""}`}>
@@ -3363,7 +3540,11 @@ function App() {
                 <div className="history-panel">
                     <div className="session-list">
                         {sessionPreviewList.map((session) => {
-                            const preview = session.transcript.at(-1)?.content || "Start a new thread...";
+                            const sessionMeta = buildSessionWorkflowMeta(session, {
+                                requestIndicator,
+                                isCurrent: session.id === currentSessionId,
+                            });
+                            const preview = sessionMeta.subtitle || "Start a new thread...";
                             const activateSession = () => {
                                 setCurrentSessionId(session.id);
                                 if (sessionBadges[session.id]) {
@@ -3391,6 +3572,10 @@ function App() {
                                 >
                                     <span className="session-active-indicator" aria-hidden="true" />
                                     <div className="session-name">{session.title}</div>
+                                    <div className="session-meta-row">
+                                        <span className={`session-status-badge ${sessionMeta.status}`}>{sessionMeta.label}</span>
+                                        {sessionMeta.duration ? <span className="session-duration">{sessionMeta.duration}</span> : null}
+                                    </div>
                                     <div className="session-preview">{preview.slice(0, 90)}</div>
                                     {sessionBadges[session.id] && (
                                         <span
@@ -3442,6 +3627,7 @@ function App() {
                     themeMode={themeMode}
                     effectiveTheme={effectiveTheme}
                     onThemeToggle={cycleThemeMode}
+                    taskStatus={currentWorkflowMeta}
                 />
 
                 <section className={`create-hub-dropdown${createHubOpen ? " open" : ""}`} aria-hidden={!createHubOpen}>
@@ -3567,6 +3753,7 @@ function App() {
                                 requestIndicator={requestIndicator}
                                 workingTimerLabel={workingTimerLabel}
                                 completedLabel={completedLabel}
+                                routeMode={currentSession?.routeMode}
                             />
                         </div>
 
@@ -3600,6 +3787,7 @@ function App() {
                                 `model:${shortenModel(runtime?.model)}`
                             ]}
                             inputRef={messageInputRef}
+                            placeholder={composerPlaceholder}
                         />
                     </section>
 
