@@ -19,6 +19,7 @@ workspace/
 workflow_*/
 workflow_game_tests/
 .harness/test_reports/
+.harness/benchmark_results/
 *.backup
 
 # pulled skill source: keep code, skip large demo media

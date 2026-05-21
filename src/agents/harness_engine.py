@@ -204,7 +204,7 @@ class HarnessEngine:
         "max_evaluator_calls": 4,
         "max_search_calls_per_task": 2,
         "max_repair_rounds": 3,
-        "max_replan_rounds": 1,
+        "max_replan_rounds": 3,
         "max_same_error_repeats": 2,
         "timeouts": {
             "planner_sec": 60,
@@ -518,10 +518,11 @@ class HarnessEngine:
             "Search uses external lookup only after Search Gate approval.",
         ],
         context_selection=[
-            "Planner receives user request, project summary, constraints, and previous failures.",
-            "Generator receives PlanContract, scoped file snapshots, optional RunReport/EvalVerdict/SearchReport.",
-            "Runner receives PlanContract, PatchResult, optional SearchReport, and artifact paths.",
-            "Evaluator receives contracts, run evidence, screenshots, diff summary, and previous verdicts.",
+            "All agents receive a bounded ContextBundle with recent messages, working memory, and artifact index.",
+            "Planner receives user request, project summary, constraints, previous failures, SearchReports, and ContextBundle.",
+            "Generator receives PlanContract, scoped file snapshots, optional RunReport/EvalVerdict/SearchReport, and ContextBundle.",
+            "Runner receives PlanContract, PatchResult, optional SearchReport, artifact paths, and ContextBundle.",
+            "Evaluator receives contracts, run evidence, screenshots, diff summary, previous verdicts, and ContextBundle.",
         ],
         evidence_flow=[
             "Raw logs are written as artifacts and summarized into RunReport.",
@@ -552,10 +553,6 @@ class HarnessEngine:
         "planner_only": "agent",
     }
 
-    USER_WEB_LOOKUP_PATTERN = re.compile(
-        r"(查|搜索|联网|最新|今天|目前|文档|官网|网页|GitHub|API\s*用法|search|browse|latest|docs?)",
-        re.IGNORECASE,
-    )
     THIRD_PARTY_ERROR_TYPES = {
         "UNKNOWN_API_USAGE",
         "DEPENDENCY_VERSION_ERROR",
@@ -671,6 +668,16 @@ class HarnessEngine:
             raise HarnessPolicyViolation(
                 f"{role} input missing required fields: {', '.join(missing)}"
             )
+        if role == "Planner":
+            task_context = payload.get("task_context") if isinstance(payload.get("task_context"), Mapping) else {}
+            if "context_bundle" not in task_context:
+                raise HarnessPolicyViolation("Planner input missing task_context.context_bundle")
+        elif role == "Search":
+            context = payload.get("context") if isinstance(payload.get("context"), Mapping) else {}
+            if "context_bundle" not in context:
+                raise HarnessPolicyViolation("Search input missing context.context_bundle")
+        elif role in {"Generator", "Runner", "Evaluator"} and "context_bundle" not in payload:
+            raise HarnessPolicyViolation(f"{role} input missing context_bundle")
         return []
 
     def filter_tools_for_role(self, role: str, tools: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -848,9 +855,6 @@ class HarnessEngine:
             if path in {".env", "package.json"} or path.startswith((".git/", "node_modules/", ".harness/")):
                 continue
             concrete.append(path)
-        goal = str(plan.get("goal") or "").lower()
-        if "index.html" not in concrete and "index.html" in goal:
-            concrete.append("index.html")
         seen = set()
         result: List[str] = []
         for path in concrete:
@@ -860,29 +864,7 @@ class HarnessEngine:
         return result
 
     def plan_requires_file_output(self, plan: Optional[Mapping[str, Any]]) -> bool:
-        if self.required_output_files(plan):
-            return True
-        plan = plan or {}
-        signal = " ".join(
-            [
-                str(plan.get("goal") or ""),
-                str(plan.get("implementation_strategy") or ""),
-                " ".join(str(step.get("title") or step.get("description") or "") for step in (plan.get("implementation_steps") or []) if isinstance(step, Mapping)),
-            ]
-        ).lower()
-        implementation_terms = (
-            "create",
-            "generate",
-            "implement",
-            "build",
-            "生成",
-            "创建",
-            "实现",
-            "编写",
-            "小游戏",
-            "网页",
-        )
-        return any(term in signal for term in implementation_terms)
+        return bool(self.required_output_files(plan))
 
     def empty_patch_verdict(
         self,
@@ -929,10 +911,6 @@ class HarnessEngine:
         eval_verdict: Optional[Mapping[str, Any]] = None,
     ) -> bool:
         ctx = ctx or {}
-        request = user_request if user_request is not None else str(ctx.get("user_request") or "")
-        if request and self.USER_WEB_LOOKUP_PATTERN.search(request):
-            return True
-
         external_research = (plan or {}).get("external_research") or {}
         if bool(external_research.get("required") or external_research.get("search_agent_required")):
             return True
@@ -995,6 +973,9 @@ class HarnessEngine:
         elif result == "REPLAN" and replan_round < int(budgets.get("max_replan_rounds", 1)):
             decision, next_state, next_agent = "CALL_PLANNER", "REPLAN", "Planner"
             reason = root_cause or "Plan needs revision."
+        elif result in ("INFRA", "FAIL_HARD") and replan_round < int(budgets.get("max_replan_rounds", 1)):
+            decision, next_state, next_agent = "CALL_PLANNER", "REPLAN", "Planner"
+            reason = f"Encountered {result} error. Delegating back to Planner for LLM analysis and replanning."
         else:
             decision, next_state, next_agent = "FAIL_HARD", "FAIL_HARD", "None"
             reason = str(verdict.get("stop_reason") or root_cause or "No safe next step remains.")
@@ -1169,7 +1150,12 @@ class HarnessEngine:
                 new_text = operation.get("new_text") if operation.get("new_text") is not None else operation.get("new_str")
                 if old_text is None or new_text is None:
                     raise HarnessPolicyViolation(f"str_replace operation missing old_text/new_text for {normalized_path}.")
-                original_text = target_path.read_text(encoding="utf-8")
+                try:
+                    original_text = target_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError as exc:
+                    raise HarnessPolicyViolation(
+                        f"Cannot apply text str_replace to non-UTF-8 or binary artifact: {normalized_path}."
+                    ) from exc
                 old_str_val = str(old_text)
                 new_str_val = str(new_text)
 
@@ -1414,7 +1400,7 @@ class HarnessEngine:
             f"{roles}\n\n"
             "[State Flow]\n"
             "INIT -> PLAN -> VALIDATE_PLAN -> SEARCH? -> GENERATE -> APPLY_PATCH -> RUN -> EVALUATE -> PASS/REPAIR/REPLAN/SEARCH/FAIL_HARD.\n"
-            "Search Gate opens only for explicit lookup requests, planned external research, third-party API uncertainty, or Evaluator needs_search.\n\n"
+            "Search Gate opens only for LLM-routed research requests, planned external research, third-party API uncertainty, or Evaluator needs_search.\n\n"
             "[Six Layers]\n"
             f"{layers}\n\n"
             "[Hard Rules]\n"

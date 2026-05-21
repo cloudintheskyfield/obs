@@ -548,10 +548,47 @@ TaskContext
   "global_constraints": {
     "max_total_steps": 14,
     "max_repair_rounds": 3,
-    "max_replan_rounds": 1,
+    "max_replan_rounds": 3,
     "max_search_calls_per_task": 2,
     "overall_timeout_sec": 600
   }
+}
+```
+
+ContextBundle
+
+所有 Agent 输入都必须携带同一轮 Harness 生成的有界 `ContextBundle`。它只保留最近会话摘要、工作记忆和 artifact 索引；原始 stdout/stderr、浏览器 trace、完整模型输出仍然只放在 `.harness/**` 调试 artifact 中，避免上下文无限膨胀或污染主判断。
+
+```json
+{
+  "schema_version": "1.0",
+  "session_id": "session_1778229077123",
+  "workspace": "/Users/wangshuang/PycharmProjects/obs",
+  "current_user_request": "生成一个忍者跑酷小游戏",
+  "history_policy": {
+    "recent_messages_limit": 8,
+    "text_limit_per_message": 1200,
+    "raw_logs_policy": "artifact_only"
+  },
+  "recent_messages": [
+    {
+      "role": "user",
+      "content": "生成一个忍者跑酷小游戏"
+    }
+  ],
+  "working_memory": {
+    "last_user_message": "生成一个忍者跑酷小游戏",
+    "last_plan_goal": "",
+    "last_decision": {},
+    "last_verdict": {},
+    "open_failures": []
+  },
+  "artifact_index": [
+    {
+      "path": ".harness/runs/run_001/output/run_report.json",
+      "kind": "run_report"
+    }
+  ]
 }
 ```
 
@@ -658,7 +695,8 @@ TaskContext
   "context": {
     "error_message": "object Locator can't be used in 'await' expression",
     "related_component": "Runner playwright-e2e script",
-    "current_assumption": "可能错误地 await 了 page.locator()"
+    "current_assumption": "可能错误地 await 了 page.locator()",
+    "context_bundle": {}
   },
   "permissions": {
     "allow_web_search": true,
@@ -981,8 +1019,10 @@ Evaluator 后 Search 适合：Evaluator 判断“信息不足”
         "dev": "vite",
         "build": "vite build",
         "lint": "eslint ."
-      }
-    }
+      },
+      "context_bundle": {}
+    },
+    "context_bundle": {}
   },
   "previous_failures": []
 }

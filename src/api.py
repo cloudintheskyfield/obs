@@ -227,7 +227,6 @@ AVAILABLE_MODELS = [
     for model in os.getenv("AVAILABLE_MODELS", config.vllm.model).split(",")
     if model.strip()
 ]
-WEATHER_REQUEST_PATTERN = re.compile(r"(天气|温度|气温|weather|forecast)", re.IGNORECASE)
 PREVIEW_HTML_SUFFIXES = {".html", ".htm"}
 PREVIEW_SWITCHABLE_SUFFIXES = {
     ".html", ".htm",
@@ -392,6 +391,7 @@ PREVIEW_ASSET_ALLOWED_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".pdf",
     ".mp3", ".wav", ".ogg", ".mp4", ".webm",
     ".woff", ".woff2", ".ttf", ".otf",
+    ".pptx", ".ppt", ".doc", ".docx", ".xls", ".xlsx", ".py", ".txt", ".md", ".zip", ".tar.gz", ".csv"
 }
 
 
@@ -1525,9 +1525,6 @@ async def get_ui_session(session_id: str):
 
 def _fallback_title_from_prompt(prompt: str) -> str:
     cleaned = (prompt or "").strip()
-    cleaned = re.sub(r"^(请|帮我|帮忙|麻烦)?\s*(创建|生成|做|实现|制作|写|建|开发)\s*", "", cleaned)
-    cleaned = re.sub(r"^(一个|一款|一个像|一个类似|类似)\s*", "", cleaned)
-    cleaned = re.sub(r"^(网页|浏览器|web|html5|小游戏|游戏|页面|应用)\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"[：:]", " ", cleaned)
     cleaned = re.sub(r"[，,。！!？?].*$", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -1562,7 +1559,7 @@ async def suggest_ui_title(payload: TitleSuggestionRequest):
         for candidate in reversed(lines):
             candidate = candidate.strip('"“”「」[]()《》')
             candidate = candidate.replace("**", "").replace("`", "").strip()
-            if candidate and not re.search(r"创建需求|要求|标题|解释|思考", candidate):
+            if candidate:
                 picked = candidate
                 break
         final_title = re.sub(r"\s+", " ", picked or cleaned).strip()
@@ -1956,15 +1953,6 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                 _ensure_session_state_loaded(session_id, harness_runtime)
                 location = session_locations.get(session_id)
                 host_context = _resolve_public_host_context(request)
-                if location is None and WEATHER_REQUEST_PATTERN.search(message or ""):
-                    try:
-                        location = await asyncio.wait_for(_resolve_location_from_ip(request), timeout=2.5)
-                    except Exception as location_exc:
-                        logger.debug(f"On-demand weather location resolve failed for session {session_id}: {location_exc}")
-                        location = None
-                    if location:
-                        session_locations[session_id] = location
-
                 request_workspace = _resolve_request_workspace(session_id, workspace_path)
                 if skill_manager is not None:
                     skill_manager.set_workspace(request_workspace["runtime_path"])

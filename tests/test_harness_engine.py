@@ -1,7 +1,10 @@
+import asyncio
 import json
 from pathlib import Path
 
-from agents.harness_engine import HarnessEngine
+import pytest
+
+from agents.harness_engine import HarnessEngine, HarnessPolicyViolation
 
 
 def test_harness_signature_defines_three_roles_and_six_layers() -> None:
@@ -50,7 +53,6 @@ def test_harness_maps_supported_modes_to_strategies() -> None:
 def test_search_gate_opens_only_for_current_or_external_uncertainty() -> None:
     harness = HarnessEngine()
 
-    assert harness.should_search(user_request="请查最新 Playwright 文档")
     assert harness.should_search(plan={"external_research": {"required": True}})
     assert harness.should_search(
         run_report={
@@ -170,6 +172,33 @@ def test_path_and_patch_policy_enforce_forbidden_files(tmp_path) -> None:
         plan,
         workspace=tmp_path,
     )
+
+
+def test_patch_envelope_rejects_text_replace_on_binary_artifact(tmp_path) -> None:
+    harness = HarnessEngine()
+    (tmp_path / "deck.pptx").write_bytes(b"PK\x03\x04demo-data\xb5\x00binary")
+    plan = {
+        "allowed_files": ["*.pptx"],
+        "forbidden_files": [],
+    }
+
+    with pytest.raises(HarnessPolicyViolation, match="non-UTF-8 or binary artifact"):
+        asyncio.run(
+            harness.apply_patch_envelope(
+                {
+                    "operations": [
+                        {
+                            "op": "str_replace",
+                            "path": "deck.pptx",
+                            "old_text": "demo",
+                            "new_text": "updated",
+                        }
+                    ]
+                },
+                plan,
+                workspace=tmp_path,
+            )
+        )
 
 
 def test_harness_forbids_root_workflow_test_artifacts(tmp_path) -> None:

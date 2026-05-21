@@ -30,8 +30,7 @@ def test_planner_filters_browser_description_out_of_test_commands() -> None:
         command.startswith("python -c ") and "index.html" in command
         for command in command_texts
     )
-    assert contract["smoke_tests"][0]["type"] == "browser"
-    assert contract["smoke_tests"][0]["target"] == "index.html"
+    assert contract["smoke_tests"] == []
 
 
 def test_planner_keeps_real_shell_commands_and_adds_output_check() -> None:
@@ -80,7 +79,7 @@ def test_planner_has_no_static_default_implementation_steps_constant() -> None:
     assert "_DEFAULT_IMPLEMENTATION_STEPS" not in source
 
 
-def test_planner_adds_interactive_smoke_tests_for_game_requests() -> None:
+def test_planner_keeps_llm_supplied_interactive_smoke_tests_for_game_requests() -> None:
     contract = _normalize_plan_contract(
         {
             "goal": "创建一个忍者跑酷小游戏",
@@ -94,7 +93,25 @@ def test_planner_adds_interactive_smoke_tests_for_game_requests() -> None:
                     "expect": {"page_loaded": True},
                     "timeout_sec": 15,
                     "required": True,
-                }
+                },
+                {
+                    "id": "game_surface_visible",
+                    "type": "browser",
+                    "action": "evaluate",
+                    "target": "document.querySelector('canvas') !== null",
+                    "expect": {"result": True},
+                    "timeout_sec": 10,
+                    "required": True,
+                },
+                {
+                    "id": "primary_action_key",
+                    "type": "browser",
+                    "action": "keyboard",
+                    "key": "Space",
+                    "expect": {"no_fatal_console_error": True},
+                    "timeout_sec": 10,
+                    "required": False,
+                },
             ],
         },
         "创建一个忍者跑酷小游戏",
@@ -104,7 +121,6 @@ def test_planner_adds_interactive_smoke_tests_for_game_requests() -> None:
     actions = {item["action"] for item in contract["smoke_tests"]}
 
     assert "evaluate" in actions
-    assert "click" in actions
     assert "keyboard" in actions
 
 
@@ -118,12 +134,7 @@ def test_planner_default_contract_for_empty_game_workspace_is_runnable() -> None
     assert contract["dev_server"]["enabled"] is True
     assert "http.server" in contract["dev_server"]["start_cmd"]
     assert any("index.html" in command["cmd"] for command in contract["test_commands"])
-    assert {item["action"] for item in contract["smoke_tests"]} >= {
-        "goto",
-        "evaluate",
-        "click",
-        "keyboard",
-    }
+    assert contract["smoke_tests"] == []
 
 
 def test_planner_prunes_stale_generated_file_checks_outside_allowed_files() -> None:
@@ -186,3 +197,29 @@ def test_planner_prunes_stale_checks_when_allowed_files_are_globs() -> None:
     )
 
     assert not any("index.html" in command["cmd"] for command in contract["test_commands"])
+
+
+def test_planner_keeps_llm_supplied_pptx_artifact_check_for_slides_tasks_with_globs() -> None:
+    contract = _normalize_plan_contract(
+        {
+            "task_id": "xiamen_tourism_ppt",
+            "goal": "创建一个厦门文旅PPT文件",
+            "allowed_files": ["*.py", "*.pptx", "README.md"],
+            "test_commands": [
+                {"name": "generate_ppt", "cmd": "python xiamen_tourism_ppt.py", "timeout_sec": 60, "required": True},
+                {
+                    "name": "verify_xiamen_ppt",
+                    "cmd": "python -c \"from pathlib import Path; assert Path('xiamen_tourism.pptx').is_file(); assert Path('README.md').is_file()\"",
+                    "timeout_sec": 30,
+                    "required": True,
+                },
+            ],
+        },
+        "给我一个厦门文旅ppt",
+        ["beijing_tourism_ppt.py"],
+    )
+
+    command_texts = [command["cmd"] for command in contract["test_commands"]]
+    assert any("xiamen_tourism.pptx" in command for command in command_texts)
+    assert any("README.md" in command for command in command_texts)
+    assert "python xiamen_tourism_ppt.py" in command_texts

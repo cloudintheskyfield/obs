@@ -3,8 +3,12 @@
 import asyncio
 import httpx
 import json
+import os
 
-async def test_execute_endpoint():
+import pytest
+
+
+async def run_execute_endpoint():
     """测试execute端点"""
     
     # 测试数据
@@ -88,5 +92,11 @@ async def test_execute_endpoint():
     print(f"\n{'='*50}")
     print("测试完成！")
 
+def test_execute_endpoint():
+    if os.getenv("OBS_RUN_LIVE_API_TESTS") != "1":
+        pytest.skip("Live API smoke test; set OBS_RUN_LIVE_API_TESTS=1 when the backend is running.")
+    asyncio.run(run_execute_endpoint())
+
+
 if __name__ == "__main__":
-    asyncio.run(test_execute_endpoint())
+    asyncio.run(run_execute_endpoint())

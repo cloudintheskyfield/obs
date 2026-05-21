@@ -22,6 +22,26 @@ MODEL_CONTEXT_WINDOWS = {
     "minimax-m2": 200_000,
 }
 
+CONTEXT_MEMORY_MAX_MESSAGES = 8
+CONTEXT_TEXT_LIMIT = 1200
+CONTEXT_BUNDLE_MAX_TEXT_CHARS = 12_000
+
+ROUTER_SYSTEM_PROMPT = (
+    "You are the Harness Router for OBS Code. Decide the execution route for exactly one user request.\n"
+    "Return exactly one compact JSON object and no markdown.\n"
+    "Allowed routes: DIRECT_ANSWER, SEARCH_ANSWER, CODE_WORKFLOW, DOC_WORKFLOW, FILE_WORKFLOW.\n\n"
+    "Route meanings:\n"
+    "- DIRECT_ANSWER: answer conversationally without editing files or running the Harness workflow.\n"
+    "- SEARCH_ANSWER: use Search only for current external facts, official docs, or version-sensitive API usage.\n"
+    "- CODE_WORKFLOW: run the five-agent Harness for code, UI, app, backend, debugging, tests, or project workflow changes.\n"
+    "- DOC_WORKFLOW: run the five-agent Harness for documents, slides, spreadsheets, PDFs, Markdown reports, and generated files whose main deliverable is a document artifact.\n"
+    "- FILE_WORKFLOW: run the five-agent Harness for file organization, copying, moving, renaming, sorting, or batch filesystem operations.\n\n"
+    "Make a semantic judgment from the whole request and project context. Do not rely on keyword matching.\n"
+    "Prefer workflow routes when the user asks you to create, modify, fix, run, test, or verify artifacts in the workspace.\n"
+    "Prefer DIRECT_ANSWER only when no workspace change or external lookup is needed.\n"
+    "Return JSON with fields: route, confidence, reason."
+)
+
 
 def strip_provider_thinking(text: str) -> str:
     return re.sub(r"<think>[\s\S]*?</think>", "", str(text or ""), flags=re.IGNORECASE).strip()
@@ -428,12 +448,269 @@ class HarnessRuntime:
         used_tokens = self._estimate_context_tokens(messages)
         return int(min(100, round((used_tokens / max_tokens) * 100)))
 
+    def _truncate_context_text(self, value: Any, limit: int = CONTEXT_TEXT_LIMIT) -> str:
+        text = strip_provider_thinking(normalize_llm_message_content(value))
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 24)].rstrip() + "\n[context truncated]"
+
+    def _summarize_chat_history(
+        self,
+        chat_sessions: Mapping[str, List[Dict[str, Any]]],
+        session_id: str,
+        *,
+        max_messages: int = CONTEXT_MEMORY_MAX_MESSAGES,
+    ) -> List[Dict[str, Any]]:
+        messages = list(chat_sessions.get(session_id) or [])[-max_messages:]
+        summary: List[Dict[str, Any]] = []
+        for index, message in enumerate(messages, start=1):
+            content = message.get("content")
+            item: Dict[str, Any] = {
+                "index": index,
+                "role": str(message.get("role") or "user"),
+                "content": self._truncate_context_text(content),
+            }
+            if isinstance(content, list):
+                item["message_parts"] = len(content)
+                item["has_images"] = any(
+                    isinstance(part, Mapping)
+                    and str(part.get("type") or "").lower() in {"image", "image_url", "input_image"}
+                    for part in content
+                )
+            summary.append(item)
+        return summary
+
+    def _context_artifact_index(self, workspace: Path, *, max_items: int = 24) -> List[Dict[str, Any]]:
+        harness_dir = workspace / ".harness"
+        if not harness_dir.exists():
+            return []
+        patterns = [
+            ".harness/state.json",
+            ".harness/task.json",
+            ".harness/session.json",
+            ".harness/project_summary.json",
+            ".harness/plan.json",
+            ".harness/search/*/search_report.json",
+            ".harness/runs/run_*/input/*_input.json",
+            ".harness/runs/run_*/output/*.json",
+            ".harness/runs/run_*/diff.patch",
+            ".harness/runs/run_*/screenshots/*",
+            ".harness/runs/run_*/logs/*",
+        ]
+        candidates: Dict[str, Path] = {}
+        for pattern in patterns:
+            try:
+                for path in workspace.glob(pattern):
+                    if path.is_file():
+                        rel = str(path.relative_to(workspace)).replace("\\", "/")
+                        candidates[rel] = path
+            except Exception:
+                continue
+        ranked = sorted(
+            candidates.items(),
+            key=lambda item: item[1].stat().st_mtime if item[1].exists() else 0,
+            reverse=True,
+        )
+        indexed: List[Dict[str, Any]] = []
+        for rel, path in ranked[:max_items]:
+            name = path.name
+            if name.endswith("_input.json"):
+                kind = "agent_input"
+            elif name == "search_report.json":
+                kind = "search_report"
+            elif name == "run_report.json":
+                kind = "run_report"
+            elif name == "eval_verdict.json":
+                kind = "eval_verdict"
+            elif name == "patch_result.json":
+                kind = "patch_result"
+            elif name == "harness_decision.json":
+                kind = "harness_decision"
+            elif name == "diff.patch":
+                kind = "diff"
+            elif path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                kind = "screenshot"
+            elif path.suffix.lower() in {".log", ".txt"}:
+                kind = "log"
+            else:
+                kind = "harness_artifact"
+            try:
+                size = path.stat().st_size
+                modified_at = datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+            except Exception:
+                size = 0
+                modified_at = ""
+            indexed.append(
+                {
+                    "path": rel,
+                    "kind": kind,
+                    "bytes": size,
+                    "modified_at": modified_at,
+                }
+            )
+        return indexed
+
+    def _bounded_context_bundle(self, bundle: Mapping[str, Any]) -> Dict[str, Any]:
+        bounded = json.loads(json.dumps(bundle, ensure_ascii=False, default=str))
+        while len(json.dumps(bounded, ensure_ascii=False, default=str)) > CONTEXT_BUNDLE_MAX_TEXT_CHARS:
+            artifacts = bounded.get("artifact_index")
+            if isinstance(artifacts, list) and len(artifacts) > 8:
+                del artifacts[-1]
+                continue
+            messages = bounded.get("recent_messages")
+            if isinstance(messages, list) and messages:
+                longest = max(
+                    messages,
+                    key=lambda item: len(str(item.get("content") or "")) if isinstance(item, Mapping) else 0,
+                )
+                if isinstance(longest, dict) and len(str(longest.get("content") or "")) > 320:
+                    longest["content"] = self._truncate_context_text(longest.get("content"), 320)
+                    continue
+            bounded["truncated"] = True
+            break
+        return bounded
+
+    def _build_context_bundle(
+        self,
+        *,
+        session_id: str,
+        chat_sessions: Mapping[str, List[Dict[str, Any]]],
+        workspace: Path,
+        user_message: str,
+        model: Optional[str],
+        request_context: Optional[Mapping[str, Any]],
+        previous_failures: Optional[List[str]] = None,
+        search_reports: Optional[List[Mapping[str, Any]]] = None,
+        previous_verdicts: Optional[List[Mapping[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        memory = dict(self.session_context_cache.get(session_id) or {})
+        last_plan = memory.get("last_plan_contract") if isinstance(memory.get("last_plan_contract"), Mapping) else {}
+        last_verdict = memory.get("last_eval_verdict") if isinstance(memory.get("last_eval_verdict"), Mapping) else {}
+        last_decision = memory.get("last_harness_decision") if isinstance(memory.get("last_harness_decision"), Mapping) else {}
+        open_failures = [
+            self._truncate_context_text(item, 600)
+            for item in (previous_failures or [])
+            if str(item).strip()
+        ]
+        if last_verdict and str(last_verdict.get("verdict") or "").upper() not in {"", "PASS"}:
+            root_cause = str(last_verdict.get("root_cause") or last_verdict.get("repair_instruction") or "").strip()
+            if root_cause:
+                open_failures.append(self._truncate_context_text(root_cause, 600))
+        bundle = {
+            "schema_version": "1.0",
+            "session_id": session_id,
+            "workspace": str(workspace),
+            "current_user_request": self._truncate_context_text(user_message, 1800),
+            "model": model or "",
+            "request_mode": str((request_context or {}).get("mode") or ""),
+            "history_policy": {
+                "recent_messages_limit": CONTEXT_MEMORY_MAX_MESSAGES,
+                "text_limit_per_message": CONTEXT_TEXT_LIMIT,
+                "max_bundle_chars": CONTEXT_BUNDLE_MAX_TEXT_CHARS,
+                "raw_logs_policy": "artifact_only",
+                "agent_context_rule": (
+                    "Each agent receives this bounded ContextBundle plus its role-specific contract. "
+                    "Raw stdout, stderr, browser traces, and model transcripts stay in artifacts."
+                ),
+            },
+            "recent_messages": self._summarize_chat_history(chat_sessions, session_id),
+            "working_memory": {
+                "last_user_message": self._truncate_context_text(memory.get("last_user_message") or user_message, 1800),
+                "last_plan_goal": self._truncate_context_text((last_plan or {}).get("goal") or "", 800),
+                "last_decision": {
+                    "decision": str((last_decision or {}).get("decision") or ""),
+                    "reason": self._truncate_context_text((last_decision or {}).get("reason") or "", 600),
+                    "next_agent": str((last_decision or {}).get("next_agent") or ""),
+                },
+                "last_verdict": {
+                    "verdict": str((last_verdict or {}).get("verdict") or ""),
+                    "root_cause": self._truncate_context_text((last_verdict or {}).get("root_cause") or "", 600),
+                    "repair_instruction": self._truncate_context_text((last_verdict or {}).get("repair_instruction") or "", 600),
+                },
+                "open_failures": open_failures[-6:],
+            },
+            "artifact_index": self._context_artifact_index(workspace),
+            "search_report_count": len(list(search_reports or [])),
+            "previous_verdict_count": len(list(previous_verdicts or [])),
+        }
+        return self._bounded_context_bundle(bundle)
+
+    def _persist_context_bundle(self, workspace: Path, context_bundle: Mapping[str, Any]) -> str:
+        return self._write_json_file(workspace, ".harness/context/context_bundle.json", context_bundle)
+
+    async def _classify_intent_with_llm(
+        self,
+        user_message: str,
+        workspace: Optional[Path] = None,
+        *,
+        model: Optional[str] = None,
+    ) -> str:
+        text = (user_message or "").strip()
+        if not text:
+            return "DIRECT_ANSWER"
+        if self.vllm_client is None:
+            logger.warning("Harness Router has no LLM client; defaulting to CODE_WORKFLOW for non-empty request.")
+            return "CODE_WORKFLOW"
+
+        payload = {
+            "user_request": text,
+            "workspace": str(workspace or ""),
+            "has_harness_state": bool(workspace and (workspace / ".harness" / "state.json").exists()),
+        }
+        messages = [
+            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        raw_content = ""
+        try:
+            stream = await self.vllm_client.chat_completion(
+                messages=messages,
+                tools=None,
+                temperature=0.0,
+                max_tokens=400,
+                stream=True,
+                model=model,
+            )
+            async for chunk in stream:
+                if isinstance(chunk, dict) and "__obs_phase" in chunk:
+                    continue
+                if "choices" not in chunk or not chunk["choices"]:
+                    continue
+                raw_content += chunk["choices"][0].get("delta", {}).get("content") or ""
+        except Exception as exc:
+            logger.warning(f"Harness Router LLM classification failed: {exc}")
+            return "CODE_WORKFLOW"
+
+        parsed: Optional[Dict[str, Any]] = None
+        try:
+            obj = json.loads(strip_provider_thinking(raw_content))
+            if isinstance(obj, dict):
+                parsed = obj
+        except Exception:
+            start = raw_content.find("{")
+            end = raw_content.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    obj = json.loads(strip_provider_thinking(raw_content[start:end + 1]))
+                    if isinstance(obj, dict):
+                        parsed = obj
+                except Exception:
+                    parsed = None
+
+        route = str((parsed or {}).get("route") or "").strip().upper()
+        allowed_routes = {"DIRECT_ANSWER", "SEARCH_ANSWER", "CODE_WORKFLOW", "DOC_WORKFLOW", "FILE_WORKFLOW"}
+        if route in allowed_routes:
+            return route
+        logger.warning(f"Harness Router returned invalid route {route!r}; defaulting to CODE_WORKFLOW.")
+        return "CODE_WORKFLOW"
+
     def _final_answer(
         self,
         plan_contract: Mapping[str, Any],
         patch_result: Optional[Mapping[str, Any]],
         run_report: Optional[Mapping[str, Any]],
         verdict: Mapping[str, Any],
+        workspace: Optional[Path] = None,
     ) -> str:
         verdict_name = str(verdict.get("verdict") or "")
         summary = (verdict.get("display_summary") or {}).get("summary") or verdict.get("root_cause") or ""
@@ -441,10 +718,29 @@ class HarnessRuntime:
         if verdict_name == "PASS":
             lines.append("## 完成情况")
             lines.append(f"- **结果**：{summary or '任务已通过验收。'}")
+            
+            changed_files = set()
             if patch_result:
-                changed_files = [str(item) for item in patch_result.get("changed_files", []) or []]
-                if changed_files:
-                    lines.append("- **修改文件**：" + "、".join(changed_files[:8]))
+                for item in patch_result.get("changed_files", []) or []:
+                    changed_files.add(str(item))
+                    
+            if workspace and workspace.exists():
+                allowed_files = plan_contract.get("allowed_files") or []
+                for pattern in allowed_files:
+                    path = str(pattern).strip()
+                    # Only check concrete file paths explicitly designated by the Planner LLM
+                    if not path or any(token in path for token in ("*", "?", "[")):
+                        continue
+                    p = workspace / path
+                    if p.is_file() and p.stat().st_size > 0:
+                        changed_files.add(path)
+                                    
+            if changed_files:
+                links = []
+                for f in sorted(list(changed_files))[:15]:
+                    links.append(f"[{f}](/preview/local-file?path={urllib.parse.quote(f)})")
+                lines.append("- **相关文件**：" + "、".join(links))
+                
             if run_report:
                 lines.append(f"- **验证状态**：{run_report.get('status') or 'UNKNOWN'}")
         else:
@@ -474,14 +770,19 @@ class HarnessRuntime:
         request_context: Optional[Mapping[str, Any]],
         previous_failures: Optional[List[str]] = None,
         search_reports: Optional[List[Mapping[str, Any]]] = None,
+        context_bundle: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
+        project_summary = self._planner_project_summary(workspace, existing_files)
+        if context_bundle:
+            project_summary["context_bundle"] = dict(context_bundle)
         return {
             "task_context": {
                 "user_request": user_message,
                 "workspace": str(workspace),
-                "project_summary": self._planner_project_summary(workspace, existing_files),
+                "project_summary": project_summary,
                 "constraints": self._planner_constraints(request_context),
                 "search_reports": list(search_reports or []),
+                "context_bundle": dict(context_bundle or {}),
             },
             "previous_failures": list(previous_failures or []),
         }
@@ -497,6 +798,7 @@ class HarnessRuntime:
         user_message: str,
         run_report: Optional[Mapping[str, Any]] = None,
         eval_verdict: Optional[Mapping[str, Any]] = None,
+        context_bundle: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         external = dict((plan_contract.get("external_research") or {}))
         report = dict(run_report or {})
@@ -534,6 +836,7 @@ class HarnessRuntime:
                 "error_summary": str(report.get("summary") or ""),
                 "root_cause": str(verdict.get("root_cause") or ""),
                 "current_assumption": str(reason or ""),
+                "context_bundle": dict(context_bundle or {}),
             },
             "permissions": {
                 "allow_web_search": True,
@@ -553,6 +856,7 @@ class HarnessRuntime:
         last_run_report: Mapping[str, Any],
         eval_verdict: Mapping[str, Any],
         round_id: int,
+        context_bundle: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         return {
             "schema_version": "1.0",
@@ -573,6 +877,7 @@ class HarnessRuntime:
             "search_reports": list(search_reports or []),
             "run_report": dict(last_run_report or {}),
             "eval_verdict": dict(eval_verdict or {}),
+            "context_bundle": dict(context_bundle or {}),
             "repair_source_context": self._repair_source_context(
                 workspace, plan_contract, last_run_report
             ),
@@ -587,6 +892,7 @@ class HarnessRuntime:
         search_reports: List[Dict[str, Any]],
         artifact_info: Mapping[str, Any],
         round_id: int,
+        context_bundle: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         run_dir = f".harness/runs/run_{round_id:03d}"
         return {
@@ -613,6 +919,7 @@ class HarnessRuntime:
             "permissions": dict((self.harness_engine.default_policy(str(workspace)).get("agent_permissions") or {}).get("Runner") or {}),
             "search_reports": list(search_reports or []),
             "artifact_info": dict(artifact_info or {}),
+            "context_bundle": dict(context_bundle or {}),
         }
 
     def _build_evaluator_input(
@@ -625,6 +932,7 @@ class HarnessRuntime:
         previous_verdicts: List[Dict[str, Any]],
         round_id: int,
         diff_path: str,
+        context_bundle: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         artifacts = run_report.get("artifacts") if isinstance(run_report.get("artifacts"), Mapping) else {}
         return {
@@ -643,6 +951,7 @@ class HarnessRuntime:
             },
             "screenshots": list(artifacts.get("screenshots") or []),
             "previous_eval_verdicts": list(previous_verdicts or []),
+            "context_bundle": dict(context_bundle or {}),
         }
 
     async def _planner_only_stream(
@@ -659,6 +968,17 @@ class HarnessRuntime:
         planner = PlannerAgent(self.vllm_client)
         workspace = self._workspace_path(request_context)
         existing_files = self._get_workspace_files_if_small(request_context)
+        context_bundle = self._build_context_bundle(
+            session_id=session_id,
+            chat_sessions=chat_sessions,
+            workspace=workspace,
+            user_message=user_message,
+            model=model,
+            request_context=request_context,
+            previous_failures=[],
+            search_reports=[],
+            previous_verdicts=[],
+        )
         planner_input = self._build_planner_input(
             user_message=user_message,
             workspace=workspace,
@@ -666,6 +986,7 @@ class HarnessRuntime:
             request_context=request_context,
             previous_failures=[],
             search_reports=[],
+            context_bundle=context_bundle,
         )
         self.harness_engine.validate_agent_input("Planner", planner_input)
         async for chunk in planner.plan(
@@ -713,65 +1034,10 @@ class HarnessRuntime:
                 "session_id": session_id,
             }
         )
-        final_text = self._final_answer(plan_contract, None, None, {"verdict": "PASS", "display_summary": {"summary": "PlanContract 已生成。"}})
+        final_text = self._final_answer(plan_contract, None, None, {"verdict": "PASS", "display_summary": {"summary": "PlanContract 已生成。"}}, workspace)
         self._append_assistant_message(chat_sessions, session_id, final_text)
         yield self._sse({"type": "answer_delta", "delta": final_text, "session_id": session_id})
         yield self._sse({"done": True, "session_id": session_id})
-
-    def _classify_intent(self, user_message: str) -> str:
-        """Rule-based intent classification for the Harness Router.
-
-        CODE_WORKFLOW and DOC_WORKFLOW trigger the workflow pipeline.
-        DIRECT_ANSWER streams a reply directly without entering the Agent loop.
-        Rules are pure regex — zero latency, no extra LLM call.
-        """
-        text = (user_message or "").strip()
-        if not text:
-            return "DIRECT_ANSWER"
-
-        DOC_SIGNALS = (
-            r"(pptx?|powerpoint|slide|slides|presentation|deck|keynote|docx?|word|markdown|\bmd\b"
-            r"|\u5e7b\u706f\u7247|\u6f14\u793a\u6587\u7a3f|\u7b80\u62a5|\u6587\u6863|\u6587\u6848|\u65b9\u6848|\u89c4\u8303|\u62a5\u544a|\u7b56\u5212)"
-        )
-        DOC_ACTIONS = (
-            r"(\u751f\u6210|\u521b\u5efa|\u5236\u4f5c|\u505a|\u5199|\u7ed9\u6211|\u5e2e\u6211|\u6574\u7406|\u66f4\u65b0|\u4fee\u6539|create|make|write|generate|build)"
-        )
-        if re.search(DOC_SIGNALS, text, re.IGNORECASE) and re.search(DOC_ACTIONS, text, re.IGNORECASE):
-            return "DOC_WORKFLOW"
-
-        # Explicit engineering/code task signals → always run the pipeline
-        CODE_SIGNALS = (
-            r"(\u751f\u6210|\u521b\u5efa|\u5b9e\u73b0|\u4fee\u590d|\u4fee\u6539|\u6784\u5efa|\u6dfb\u52a0|\u91cd\u6784|\u4f18\u5316\u4ee3\u7801"
-            r"|\u8fd0\u884c|\u542f\u52a8|\u6d4b\u8bd5|\u90e8\u7f72|\u722c\u866b|\u7f16\u5199|\u5199\u4e00\u4e2a|\u5199\u4e2a|\u7ed9\u6211|\u5e2e\u6211"
-            r"|\u8dd1\u901a|\u5168\u94fe\u8def|\u5de5\u4f5c\u6d41|harness"
-            r"|game|\u6e38\u620f|\u7f51\u9875|\u811a\u672c|\u63a5\u53e3|api|\u9875\u9762|\u7ec4\u4ef6|html|css|react|vue|vite"
-            r"|fastapi|flask|django|express|node|python|playwright|ppt|\u8c03\u8bd5|debug|fix|build|create|make|write|generate)"
-        )
-        if re.search(CODE_SIGNALS, text, re.IGNORECASE):
-            return "CODE_WORKFLOW"
-
-        SEARCH_SIGNALS = (
-            r"(\u6700\u65b0|\u4eca\u5929|\u73b0\u5728|\u5f53\u524d|\u67e5\u4e00\u4e0b|\u641c\u4e00\u4e0b|\u8054\u7f51|\u5b98\u7f51|\u4ef7\u683c|\u653f\u7b56|latest|current|today|search|look up)"
-        )
-
-        if re.search(SEARCH_SIGNALS, text, re.IGNORECASE):
-            return "SEARCH_ANSWER"
-
-        # Very short messages are almost always conversational
-        if len(text) < 25:
-            return "DIRECT_ANSWER"
-
-        # Question patterns that don't imply coding work
-        SIMPLE_QUESTION = (
-            r"^(\u4ec0\u4e48\u662f|.*\u662f\u4ec0\u4e48|.*\u662f\u4ec0\u4e48\u610f\u601d|.*\u600e\u4e48\u7528|.*\u6709\u4ec0\u4e48\u533a\u522b"
-            r"|.*\u80fd\u89e3\u91ca|.*\u80fd\u8bf4\u660e|.*\u600e\u4e48\u8fd0\u4f5c|.*\u662f\u5982\u4f55\u5de5\u4f5c"
-            r"|what\s+is|how\s+does|explain|what\s+does|can\s+you\s+explain|difference\s+between).{0,100}$"
-        )
-        if re.search(SIMPLE_QUESTION, text, re.IGNORECASE) and len(text) < 160:
-            return "DIRECT_ANSWER"
-
-        # Default to workflow for anything ambiguous that is longer than a quick question
-        return "CODE_WORKFLOW"
 
     async def _direct_answer_stream(
         self,
@@ -781,6 +1047,7 @@ class HarnessRuntime:
         user_message: str,
         model: Optional[str],
         route: Optional[str] = "DIRECT_ANSWER",
+        extra_context: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a direct LLM answer without invoking the 5-agent pipeline."""
         if route:
@@ -790,6 +1057,19 @@ class HarnessRuntime:
         messages = list(chat_sessions.get(session_id, []))
         if not messages:
             messages = [{"role": "user", "content": user_message}]
+        if extra_context:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Use the following bounded SearchReport as evidence. "
+                        "Answer the user's question directly, cite source titles/URLs when present, "
+                        "and do not invent facts outside the report.\n\n"
+                        f"{extra_context}"
+                    ),
+                },
+                *messages,
+            ]
 
         accumulated = ""
         try:
@@ -823,6 +1103,77 @@ class HarnessRuntime:
         if accumulated.strip():
             self._append_assistant_message(chat_sessions, session_id, accumulated)
         yield self._sse({"done": True, "session_id": session_id})
+
+    async def _search_answer_stream(
+        self,
+        *,
+        session_id: str,
+        chat_sessions: Dict[str, List[Dict[str, Any]]],
+        user_message: str,
+        model: Optional[str],
+        workspace: Path,
+    ) -> AsyncGenerator[str, None]:
+        """Run the Search Agent for research-only questions, then compose an answer."""
+        yield self._sse({"type": "route", "route": "SEARCH_ANSWER", "session_id": session_id})
+        self.harness_engine.create_scaffold(workspace)
+        task_id = f"search_answer_{session_id.replace('-', '')[:12] or 'runtime'}"
+        context_bundle = self._build_context_bundle(
+            session_id=session_id,
+            chat_sessions=chat_sessions,
+            workspace=workspace,
+            user_message=user_message,
+            model=model,
+            request_context=None,
+            previous_failures=[],
+            search_reports=[],
+            previous_verdicts=[],
+        )
+        self._persist_context_bundle(workspace, context_bundle)
+        search_input = {
+            "task_id": task_id,
+            "round_id": 1,
+            "search_id": "search_001",
+            "user_request": user_message,
+            "research_questions": [{"id": "Q1", "question": user_message, "priority": "high"}],
+            "queries": [user_message],
+            "allowed_domains": [],
+            "harness_gate": {"opened": True, "reason": "SEARCH_ANSWER route"},
+            "context": {"context_bundle": context_bundle},
+        }
+        tools = []
+        if self.skill_manager and hasattr(self.skill_manager, "get_anthropic_tools"):
+            tools = self.skill_manager.get_anthropic_tools()
+        search_agent = SearchAgent(self.vllm_client, self.skill_manager)
+        async for event in search_agent.search(
+            session_id,
+            search_input,
+            tools=tools,
+            model=model,
+            max_iterations=4,
+        ):
+            yield event
+        search_report = search_agent.last_search_report or {}
+        search_dir = ".harness/search/search_001"
+        self._write_json_file(workspace, f"{search_dir}/search_report.json", search_report)
+        self._write_json_file(workspace, f"{search_dir}/sources.json", search_report.get("sources") or [])
+        yield self._sse(
+            {
+                "type": "agent_summary",
+                "role": "Search",
+                "summary": search_report.get("query_summary") or "SearchReport 已生成。",
+                "payload": search_report,
+                "session_id": session_id,
+            }
+        )
+        async for chunk in self._direct_answer_stream(
+            session_id=session_id,
+            chat_sessions=chat_sessions,
+            user_message=user_message,
+            model=model,
+            route=None,
+            extra_context=json.dumps(search_report, ensure_ascii=False),
+        ):
+            yield chunk
 
     async def chat_stream(
         self,
@@ -872,7 +1223,7 @@ class HarnessRuntime:
             # Intent Router: for default strategy, skip the 5-agent pipeline
             # for simple conversational queries that don't require code changes.
             if strategy in ("agent", "default", "", None):
-                intent = self._classify_intent(user_message)
+                intent = await self._classify_intent_with_llm(user_message, workspace=workspace, model=selected_model)
                 if intent == "DIRECT_ANSWER":
                     async for chunk in self._direct_answer_stream(
                         session_id=session_id,
@@ -884,28 +1235,36 @@ class HarnessRuntime:
                         yield chunk
                     return
                 if intent == "SEARCH_ANSWER":
-                    # This lightweight path keeps Search/Answer questions out of
-                    # Planner/Generator/Runner/Evaluator. The answer composer can
-                    # still use the model's own current-context capabilities; no
-                    # project files or patch workflow are invoked.
-                    yield self._sse({"type": "route", "route": "SEARCH_ANSWER", "session_id": session_id})
-                    async for chunk in self._direct_answer_stream(
+                    async for chunk in self._search_answer_stream(
                         session_id=session_id,
                         chat_sessions=chat_sessions,
                         user_message=user_message,
                         model=selected_model,
-                        route=None,
+                        workspace=workspace,
                     ):
                         yield chunk
                     return
-                # CODE_WORKFLOW / DOC_WORKFLOW fall through to the controlled pipeline below.
-                yield self._sse({"type": "route", "route": intent if intent in ("CODE_WORKFLOW", "DOC_WORKFLOW") else "CODE_WORKFLOW", "session_id": session_id})
+                # CODE_WORKFLOW / DOC_WORKFLOW / FILE_WORKFLOW fall through to the controlled pipeline below.
+                workflow_routes = {"CODE_WORKFLOW", "DOC_WORKFLOW", "FILE_WORKFLOW"}
+                yield self._sse({"type": "route", "route": intent if intent in workflow_routes else "CODE_WORKFLOW", "session_id": session_id})
 
             existing_files = self._get_workspace_files_if_small(request_context)
             self.harness_engine.create_scaffold(workspace)
             budgets = self.harness_engine.default_budgets()
             provisional_task_id = f"task_{session_id.replace('-', '')[:12] or 'runtime'}"
             planner = PlannerAgent(self.vllm_client)
+            context_bundle = self._build_context_bundle(
+                session_id=session_id,
+                chat_sessions=chat_sessions,
+                workspace=workspace,
+                user_message=user_message,
+                model=selected_model,
+                request_context=request_context,
+                previous_failures=[],
+                search_reports=[],
+                previous_verdicts=[],
+            )
+            self._persist_context_bundle(workspace, context_bundle)
             planner_input = self._build_planner_input(
                 user_message=user_message,
                 workspace=workspace,
@@ -913,6 +1272,7 @@ class HarnessRuntime:
                 request_context=request_context,
                 previous_failures=[],
                 search_reports=[],
+                context_bundle=context_bundle,
             )
             self._write_json_file(
                 workspace,
@@ -1014,6 +1374,18 @@ class HarnessRuntime:
             while True:
                 if self.harness_engine.should_search(user_request=user_message, plan=plan_contract) and not search_reports:
                     search_call_count += 1
+                    context_bundle = self._build_context_bundle(
+                        session_id=session_id,
+                        chat_sessions=chat_sessions,
+                        workspace=workspace,
+                        user_message=user_message,
+                        model=selected_model,
+                        request_context=request_context,
+                        previous_failures=[],
+                        search_reports=search_reports,
+                        previous_verdicts=previous_verdicts,
+                    )
+                    self._persist_context_bundle(workspace, context_bundle)
                     search_input = self._build_search_input(
                         plan_contract=plan_contract,
                         round_id=round_id,
@@ -1021,6 +1393,7 @@ class HarnessRuntime:
                         triggered_by="Planner",
                         reason=str(((plan_contract.get("external_research") or {}).get("reason") or user_message)),
                         user_message=user_message,
+                        context_bundle=context_bundle,
                     )
                     search_dir = f".harness/search/{search_input['search_id']}"
                     self._write_harness_state(
@@ -1091,6 +1464,18 @@ class HarnessRuntime:
                         replan_round += 1
                         round_id += 1
                         replan_reason = str(search_report.get("query_summary") or search_report.get("status") or "Search evidence was insufficient.")
+                        context_bundle = self._build_context_bundle(
+                            session_id=session_id,
+                            chat_sessions=chat_sessions,
+                            workspace=workspace,
+                            user_message=user_message,
+                            model=selected_model,
+                            request_context=request_context,
+                            previous_failures=[replan_reason],
+                            search_reports=search_reports,
+                            previous_verdicts=previous_verdicts,
+                        )
+                        self._persist_context_bundle(workspace, context_bundle)
                         planner = PlannerAgent(self.vllm_client)
                         planner_input = self._build_planner_input(
                             user_message="\n\n".join(part for part in [user_message, "[Search Failure]", replan_reason] if part),
@@ -1099,6 +1484,7 @@ class HarnessRuntime:
                             request_context=request_context,
                             previous_failures=[replan_reason],
                             search_reports=search_reports,
+                            context_bundle=context_bundle,
                         )
                         self._write_harness_state(
                             workspace,
@@ -1135,6 +1521,18 @@ class HarnessRuntime:
                 if not skip_generator:
                     before_patch_snapshot = self._capture_allowed_text_snapshot(workspace, plan_contract)
                     generator = GeneratorAgent(self.vllm_client, self.skill_manager)
+                    context_bundle = self._build_context_bundle(
+                        session_id=session_id,
+                        chat_sessions=chat_sessions,
+                        workspace=workspace,
+                        user_message=user_message,
+                        model=selected_model,
+                        request_context=request_context,
+                        previous_failures=[],
+                        search_reports=search_reports,
+                        previous_verdicts=previous_verdicts,
+                    )
+                    self._persist_context_bundle(workspace, context_bundle)
                     generator_input = self._build_generator_input(
                         workspace=workspace,
                         plan_contract=plan_contract,
@@ -1142,6 +1540,7 @@ class HarnessRuntime:
                         last_run_report=last_run_report,
                         eval_verdict=previous_verdicts[-1] if previous_verdicts else {},
                         round_id=round_id,
+                        context_bundle=context_bundle,
                     )
                     self._write_harness_state(
                         workspace,
@@ -1197,6 +1596,8 @@ class HarnessRuntime:
                             last_patch_result,
                         )
                     self._write_json_file(workspace, f"{run_root}/output/patch_result.json", last_patch_result)
+                    self.session_context_cache[session_id]["last_plan_contract"] = plan_contract
+                    self.session_context_cache[session_id]["last_patch_result"] = last_patch_result
                     yield self._agent_summary_event(
                         role="Generator",
                         payload=last_patch_result,
@@ -1261,6 +1662,18 @@ class HarnessRuntime:
                                 "last_harness_decision": decision,
                             }
                         )
+                        context_bundle = self._build_context_bundle(
+                            session_id=session_id,
+                            chat_sessions=chat_sessions,
+                            workspace=workspace,
+                            user_message=user_message,
+                            model=selected_model,
+                            request_context=request_context,
+                            previous_failures=[str(final_verdict.get("root_cause") or "")],
+                            search_reports=search_reports,
+                            previous_verdicts=previous_verdicts,
+                        )
+                        self._persist_context_bundle(workspace, context_bundle)
                         if decision["decision"] == "CALL_GENERATOR":
                             repair_round += 1
                             round_id += 1
@@ -1269,6 +1682,18 @@ class HarnessRuntime:
                             replan_round += 1
                             round_id += 1
                             replan_reason = str(final_verdict.get("root_cause") or final_verdict.get("repair_instruction") or "")
+                            context_bundle = self._build_context_bundle(
+                                session_id=session_id,
+                                chat_sessions=chat_sessions,
+                                workspace=workspace,
+                                user_message=user_message,
+                                model=selected_model,
+                                request_context=request_context,
+                                previous_failures=[replan_reason] if replan_reason else [],
+                                search_reports=search_reports,
+                                previous_verdicts=previous_verdicts,
+                            )
+                            self._persist_context_bundle(workspace, context_bundle)
                             planner = PlannerAgent(self.vllm_client)
                             planner_input = self._build_planner_input(
                                 user_message="\n\n".join(part for part in [user_message, "[Empty Generator Patch]", replan_reason] if part),
@@ -1277,6 +1702,7 @@ class HarnessRuntime:
                                 request_context=request_context,
                                 previous_failures=[replan_reason] if replan_reason else [],
                                 search_reports=search_reports,
+                                context_bundle=context_bundle,
                             )
                             self._write_harness_state(
                                 workspace,
@@ -1357,6 +1783,18 @@ class HarnessRuntime:
                         replan_round += 1
                         round_id += 1
                         replan_reason = str(last_patch_result.get("replan_reason") or last_patch_result.get("summary") or "Generator requested replan.")
+                        context_bundle = self._build_context_bundle(
+                            session_id=session_id,
+                            chat_sessions=chat_sessions,
+                            workspace=workspace,
+                            user_message=user_message,
+                            model=selected_model,
+                            request_context=request_context,
+                            previous_failures=[replan_reason],
+                            search_reports=search_reports,
+                            previous_verdicts=previous_verdicts,
+                        )
+                        self._persist_context_bundle(workspace, context_bundle)
                         planner = PlannerAgent(self.vllm_client)
                         planner_input = self._build_planner_input(
                             user_message="\n\n".join(part for part in [user_message, "[Generator Replan]", replan_reason] if part),
@@ -1365,6 +1803,7 @@ class HarnessRuntime:
                             request_context=request_context,
                             previous_failures=[replan_reason],
                             search_reports=search_reports,
+                            context_bundle=context_bundle,
                         )
                         self._write_harness_state(
                             workspace,
@@ -1401,6 +1840,18 @@ class HarnessRuntime:
 
                 artifact_info = self._build_artifact_info(workspace, plan_contract)
                 runner = RunnerAgent(self.vllm_client, self.skill_manager)
+                context_bundle = self._build_context_bundle(
+                    session_id=session_id,
+                    chat_sessions=chat_sessions,
+                    workspace=workspace,
+                    user_message=user_message,
+                    model=selected_model,
+                    request_context=request_context,
+                    previous_failures=[],
+                    search_reports=search_reports,
+                    previous_verdicts=previous_verdicts,
+                )
+                self._persist_context_bundle(workspace, context_bundle)
                 runner_input = self._build_runner_input(
                     workspace=workspace,
                     plan_contract=plan_contract,
@@ -1408,6 +1859,7 @@ class HarnessRuntime:
                     search_reports=search_reports,
                     artifact_info=artifact_info,
                     round_id=round_id,
+                    context_bundle=context_bundle,
                 )
                 run_root = f".harness/runs/run_{round_id:03d}"
                 self._write_harness_state(
@@ -1433,6 +1885,7 @@ class HarnessRuntime:
                 last_run_report = runner.last_run_report
                 self.harness_engine.validate_schema(last_run_report, "RunReport")
                 self._write_json_file(workspace, f"{run_root}/output/run_report.json", last_run_report)
+                self.session_context_cache[session_id]["last_run_report"] = last_run_report
                 yield self._agent_summary_event(
                     role="Runner",
                     payload=last_run_report,
@@ -1441,6 +1894,18 @@ class HarnessRuntime:
                 )
 
                 evaluator = EvaluatorAgent(self.vllm_client)
+                context_bundle = self._build_context_bundle(
+                    session_id=session_id,
+                    chat_sessions=chat_sessions,
+                    workspace=workspace,
+                    user_message=user_message,
+                    model=selected_model,
+                    request_context=request_context,
+                    previous_failures=[],
+                    search_reports=search_reports,
+                    previous_verdicts=previous_verdicts,
+                )
+                self._persist_context_bundle(workspace, context_bundle)
                 evaluation_input = self._build_evaluator_input(
                     plan_contract=plan_contract,
                     patch_result=last_patch_result,
@@ -1449,6 +1914,7 @@ class HarnessRuntime:
                     previous_verdicts=previous_verdicts,
                     round_id=round_id,
                     diff_path=last_diff_path,
+                    context_bundle=context_bundle,
                 )
                 self._write_harness_state(
                     workspace,
@@ -1473,6 +1939,7 @@ class HarnessRuntime:
                 final_verdict = evaluator.last_verdict
                 self.harness_engine.validate_schema(final_verdict, "EvalVerdict")
                 self._write_json_file(workspace, f"{run_root}/output/eval_verdict.json", final_verdict)
+                self.session_context_cache[session_id]["last_eval_verdict"] = final_verdict
                 yield self._agent_summary_event(
                     role="Evaluator",
                     payload=final_verdict,
@@ -1506,6 +1973,18 @@ class HarnessRuntime:
                         "last_harness_decision": decision,
                     }
                 )
+                context_bundle = self._build_context_bundle(
+                    session_id=session_id,
+                    chat_sessions=chat_sessions,
+                    workspace=workspace,
+                    user_message=user_message,
+                    model=selected_model,
+                    request_context=request_context,
+                    previous_failures=[str(final_verdict.get("root_cause") or "")],
+                    search_reports=search_reports,
+                    previous_verdicts=previous_verdicts,
+                )
+                self._persist_context_bundle(workspace, context_bundle)
 
                 if decision["decision"] == "PASS":
                     self._write_harness_state(
@@ -1553,6 +2032,18 @@ class HarnessRuntime:
                         )
                         break
                     search_call_count += 1
+                    context_bundle = self._build_context_bundle(
+                        session_id=session_id,
+                        chat_sessions=chat_sessions,
+                        workspace=workspace,
+                        user_message=user_message,
+                        model=selected_model,
+                        request_context=request_context,
+                        previous_failures=[str(final_verdict.get("root_cause") or "")],
+                        search_reports=search_reports,
+                        previous_verdicts=previous_verdicts,
+                    )
+                    self._persist_context_bundle(workspace, context_bundle)
                     search_input = self._build_search_input(
                         plan_contract=plan_contract,
                         round_id=round_id,
@@ -1562,6 +2053,7 @@ class HarnessRuntime:
                         user_message=user_message,
                         run_report=last_run_report,
                         eval_verdict=final_verdict,
+                        context_bundle=context_bundle,
                     )
                     search_dir = f".harness/search/{search_input['search_id']}"
                     self._write_harness_state(
@@ -1637,6 +2129,18 @@ class HarnessRuntime:
                             break
                         replan_round += 1
                         replan_reason = str(search_report.get("query_summary") or search_report.get("status") or "Search evidence was insufficient.")
+                        context_bundle = self._build_context_bundle(
+                            session_id=session_id,
+                            chat_sessions=chat_sessions,
+                            workspace=workspace,
+                            user_message=user_message,
+                            model=selected_model,
+                            request_context=request_context,
+                            previous_failures=[replan_reason],
+                            search_reports=search_reports,
+                            previous_verdicts=previous_verdicts,
+                        )
+                        self._persist_context_bundle(workspace, context_bundle)
                         planner = PlannerAgent(self.vllm_client)
                         planner_input = self._build_planner_input(
                             user_message="\n\n".join(part for part in [user_message, "[Evaluator Search]", replan_reason] if part),
@@ -1645,6 +2149,7 @@ class HarnessRuntime:
                             request_context=request_context,
                             previous_failures=[replan_reason],
                             search_reports=search_reports,
+                            context_bundle=context_bundle,
                         )
                         self._write_harness_state(
                             workspace,
@@ -1687,6 +2192,18 @@ class HarnessRuntime:
                     replan_round += 1
                     round_id += 1
                     replan_reason = str(final_verdict.get("root_cause") or final_verdict.get("repair_instruction") or "")
+                    context_bundle = self._build_context_bundle(
+                        session_id=session_id,
+                        chat_sessions=chat_sessions,
+                        workspace=workspace,
+                        user_message=user_message,
+                        model=selected_model,
+                        request_context=request_context,
+                        previous_failures=[replan_reason] if replan_reason else [],
+                        search_reports=search_reports,
+                        previous_verdicts=previous_verdicts,
+                    )
+                    self._persist_context_bundle(workspace, context_bundle)
                     planner = PlannerAgent(self.vllm_client)
                     planner_input = self._build_planner_input(
                         user_message="\n\n".join(part for part in [user_message, "[Previous EvalVerdict]", replan_reason] if part),
@@ -1695,6 +2212,7 @@ class HarnessRuntime:
                         request_context=request_context,
                         previous_failures=[replan_reason] if replan_reason else [],
                         search_reports=search_reports,
+                        context_bundle=context_bundle,
                     )
                     self._write_harness_state(
                         workspace,
@@ -1740,7 +2258,7 @@ class HarnessRuntime:
                 )
                 break
 
-            final_answer = self._final_answer(plan_contract, last_patch_result, last_run_report, final_verdict)
+            final_answer = self._final_answer(plan_contract, last_patch_result, last_run_report, final_verdict, workspace)
             self._append_assistant_message(chat_sessions, session_id, final_answer)
             yield self._sse({"type": "answer_delta", "delta": final_answer, "session_id": session_id})
             yield self._sse({"done": True, "session_id": session_id})

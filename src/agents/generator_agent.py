@@ -1,6 +1,7 @@
 import hashlib
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Tuple
 
@@ -34,6 +35,80 @@ _SKIP_PREFIXES = (
     "tmp/",
     "__pycache__/",
 )
+
+_BINARY_FILE_SUFFIXES = {
+    ".pptx",
+    ".ppt",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".zip",
+    ".gz",
+    ".tar",
+    ".mp4",
+    ".mov",
+    ".mp3",
+    ".wav",
+}
+
+
+def _strip_provider_thinking(text: str) -> str:
+    return re.sub(r"<think>[\s\S]*?</think>", "", str(text or ""), flags=re.IGNORECASE).lstrip()
+
+
+def _read_utf8_text_for_tool(path: Path, normalized_path: str) -> Tuple[bool, str]:
+    try:
+        size = path.stat().st_size
+    except Exception:
+        size = 0
+    suffix = path.suffix.lower()
+    if suffix in _BINARY_FILE_SUFFIXES:
+        return False, (
+            f"Binary artifact {normalized_path} ({size} bytes) cannot be displayed or edited as UTF-8 text. "
+            "Use Runner artifact checks for this file instead of text read/replace operations."
+        )
+    try:
+        return True, path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False, (
+            f"File {normalized_path} is not valid UTF-8 text ({size} bytes). "
+            "Treat it as a binary artifact and verify existence/format with Runner commands."
+        )
+
+
+def _example_path_for_policy(allowed: List[str]) -> str:
+    for item in allowed:
+        path = str(item or "").strip().replace("\\", "/")
+        if not path:
+            continue
+        if not any(token in path for token in ("*", "?", "[")) and not path.endswith("/"):
+            return path
+    for item in allowed:
+        path = str(item or "").strip().replace("\\", "/")
+        if path in {"*.pptx", "**/*.pptx"}:
+            return "presentation.pptx"
+        if path in {"*.docx", "**/*.docx"}:
+            return "document.docx"
+        if path in {"*.xlsx", "**/*.xlsx"}:
+            return "workbook.xlsx"
+        if path in {"*.pdf", "**/*.pdf"}:
+            return "document.pdf"
+        if path in {"*.py", "**/*.py"}:
+            return "script.py"
+        if path in {"*.html", "**/*.html"}:
+            return "index.html"
+        if path.startswith("docs/"):
+            return "docs/output.md"
+        if path.startswith("output/"):
+            return "output/artifact.md"
+    return "output.txt"
 
 
 def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
@@ -145,10 +220,15 @@ def _parse_tool_arguments(raw_args: str) -> Tuple[Dict[str, Any], Optional[str]]
     return dict(parsed), None
 
 
-def _invalid_tool_call_feedback(error: str, *, force_patch_envelope: bool = False) -> str:
+def _invalid_tool_call_feedback(
+    error: str,
+    *,
+    force_patch_envelope: bool = False,
+    example_path: str = "output.txt",
+) -> str:
     base = (
         f"{error} Retry the file tool with one valid JSON object only. "
-        "Use workspace-relative paths like 'index.html' or 'src/App.tsx', never absolute paths, "
+        f"Use workspace-relative paths allowed by PlanContract, such as '{example_path}', never absolute paths, "
         "and escape embedded quotes or newlines inside content/file_text. "
         "If you need to inspect the workspace, use command='view' with path='.'."
     )
@@ -363,8 +443,10 @@ class GeneratorAgent:
         writing: bool,
     ) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
         path_text = str(raw_path or "").strip()
+        allowed, forbidden = self._path_policy(generator_input)
+        example_path = _example_path_for_policy(allowed)
         if not path_text:
-            return None, None, "Missing path. Use a workspace-relative file path such as 'index.html'."
+            return None, None, f"Missing path. Use a workspace-relative file path allowed by PlanContract, such as '{example_path}'."
         workspace = self._workspace_path()
         candidate = Path(path_text).expanduser()
         if candidate.is_absolute():
@@ -372,12 +454,11 @@ class GeneratorAgent:
             try:
                 path_text = str(resolved_candidate.relative_to(workspace)).replace("\\", "/") or "."
             except ValueError:
-                return None, None, "Path must be workspace-relative. Use a path like 'index.html', not an absolute path."
+                return None, None, f"Path must be workspace-relative. Use a path like '{example_path}', not an absolute path."
         else:
             path_text = str(Path(path_text)).replace("\\", "/") or "."
         if writing and path_text == ".":
             return None, None, "Path must point to a file, not the workspace root '.'."
-        allowed, forbidden = self._path_policy(generator_input)
         if writing and not self.harness.is_path_allowed(path_text, allowed, forbidden, workspace):
             return None, None, f"Path is outside Generator allowed_files or forbidden by policy: {path_text}"
         full_path = (workspace / path_text).resolve(strict=False)
@@ -401,7 +482,9 @@ class GeneratorAgent:
                 return True, self._render_directory_view(full_path, workspace=self._workspace_path())
             if not full_path.exists() or not full_path.is_file():
                 return False, f"File does not exist: {normalized_path}"
-            text = full_path.read_text(encoding="utf-8")
+            is_text, text = _read_utf8_text_for_tool(full_path, normalized_path)
+            if not is_text:
+                return True, text
             view_range = tool_args.get("view_range")
             if isinstance(view_range, list) and len(view_range) == 2:
                 start = max(1, int(view_range[0]))
@@ -411,7 +494,7 @@ class GeneratorAgent:
             return True, text
 
         if command in {"create", "write", "write_file"}:
-            content = str(tool_args.get("file_text") if tool_args.get("file_text") is not None else tool_args.get("content") or "")
+            content = _strip_provider_thinking(str(tool_args.get("file_text") if tool_args.get("file_text") is not None else tool_args.get("content") or ""))
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding="utf-8")
             return True, f"Wrote {normalized_path} ({len(content)} chars)."
@@ -422,10 +505,12 @@ class GeneratorAgent:
             old_str_val = tool_args.get("old_str") if tool_args.get("old_str") is not None else tool_args.get("old_text")
             new_str_val = tool_args.get("new_str") if tool_args.get("new_str") is not None else tool_args.get("new_text")
             old_str = str(old_str_val or "")
-            new_str = str(new_str_val or "")
+            new_str = _strip_provider_thinking(str(new_str_val or ""))
             if not old_str:
                 return False, "old_str is required for str_replace."
-            text = full_path.read_text(encoding="utf-8")
+            is_text, text = _read_utf8_text_for_tool(full_path, normalized_path)
+            if not is_text:
+                return False, text
             occurrences = text.count(old_str)
             if occurrences == 1:
                 full_path.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
@@ -479,8 +564,11 @@ class GeneratorAgent:
             if not full_path.exists() or not full_path.is_file():
                 return False, f"File does not exist: {normalized_path}"
             insert_line = int(tool_args.get("insert_line") or 0)
-            new_str = str(tool_args.get("new_str") or tool_args.get("content") or tool_args.get("file_text") or "")
-            lines = full_path.read_text(encoding="utf-8").splitlines()
+            new_str = _strip_provider_thinking(str(tool_args.get("new_str") or tool_args.get("content") or tool_args.get("file_text") or ""))
+            is_text, text = _read_utf8_text_for_tool(full_path, normalized_path)
+            if not is_text:
+                return False, text
+            lines = text.splitlines()
             index = max(0, min(insert_line, len(lines)))
             lines[index:index] = new_str.splitlines()
             full_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -521,6 +609,8 @@ class GeneratorAgent:
         invalid_tool_call_count = 0
         incomplete_json_retry_count = 0
         transient_model_error_count = 0
+        allowed_paths, _ = self._path_policy(generator_input)
+        example_path = _example_path_for_policy(allowed_paths)
 
         for iteration in range(max_iterations):
             assistant_message: Dict[str, Any] = {"role": "assistant", "content": ""}
@@ -571,6 +661,7 @@ class GeneratorAgent:
                     feedback = _invalid_tool_call_feedback(
                         "Provider rejected the previous tool call before execution because the tool arguments were not valid JSON.",
                         force_patch_envelope=invalid_tool_call_count >= 2,
+                        example_path=example_path,
                     )
                     yield self._sse(
                         {
@@ -693,6 +784,7 @@ class GeneratorAgent:
                     tool_result = _invalid_tool_call_feedback(
                         parse_error,
                         force_patch_envelope=invalid_tool_call_count >= 2,
+                        example_path=example_path,
                     )
                     correction_messages.append(
                         {

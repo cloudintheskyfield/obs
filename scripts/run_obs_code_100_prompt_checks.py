@@ -156,7 +156,11 @@ def check_search_and_web() -> list[Check]:
     return [
         Check("findskills allowlist", skills == EXPECTED_SKILLS, f"{len(skills)} active skills match Harness allowlist."),
         Check("web search skills", {"web-search-free", "search", "web-scraper-pro", "firecrawl-scraper", "skill-lookup"}.issubset(skills), "Search role has only the allowlisted web skills."),
-        Check("latest info gate", "latest" in engine and "current" in engine, "Search gate detects current/latest external uncertainty."),
+        Check(
+            "llm search gate",
+            "LLM-routed research requests" in engine and "external_research" in engine and "needs_search" in engine,
+            "Search gate relies on Router/Planner/Evaluator structured decisions instead of keyword matching.",
+        ),
         Check("browser runner", "playwright" in runner and "browser_console" in runner, "Runner can perform browser checks and collect console evidence."),
     ]
 

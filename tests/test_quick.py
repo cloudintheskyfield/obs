@@ -3,8 +3,12 @@
 import asyncio
 import httpx
 import json
+import os
 
-async def test_api():
+import pytest
+
+
+async def run_api_smoke():
     base_url = "http://127.0.0.1:8002"
     
     # 测试健康检查
@@ -71,5 +75,11 @@ async def test_api():
             print(f"Error: {result.get('error')}")
         print()
 
+def test_api():
+    if os.getenv("OBS_RUN_LIVE_API_TESTS") != "1":
+        pytest.skip("Live API smoke test; set OBS_RUN_LIVE_API_TESTS=1 when the backend is running.")
+    asyncio.run(run_api_smoke())
+
+
 if __name__ == "__main__":
-    asyncio.run(test_api())
+    asyncio.run(run_api_smoke())

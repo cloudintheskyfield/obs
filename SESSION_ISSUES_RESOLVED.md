@@ -36,3 +36,37 @@
 * **解决方案**：
   * 修改了 `src/agents/planner_agent.py` 中的组装逻辑，将 `verify_generated_files` 命令强制追加到执行列表的最末尾。
   * 放宽了验证逻辑：将其改为 `required: False`，并调整判断条件，只需允许生成的文件列表中有**任何一个**非空文件生成即可判定为成功。
+
+## 8. 前端 UI：模型 `<think>` 标签在流式输出时外漏
+* **问题描述**：在模型思考并进行流式输出（Streaming）时，前端直接将 `<think>` 标签以纯文本渲染在了界面上。原因是原正则表达式要求匹配到闭合的 `</think>` 才会将其隐藏。
+* **解决方案**：更新了 `ui/src/lib/formatting.js` 中的 `normalizeDisplayText` 逻辑，将匹配正则调整为支持非闭合标签（`(?:<\/think>|$)`），从而在流式输出的任何阶段都能动态过滤掉 `<think>` 块。
+
+## 9. 前端 UI：刷新页面后聊天列表滚动到最顶端
+* **问题描述**：刷新页面时，聊天记录自动滚动到了最顶端，而不是保持在最新的底部。这是由于 React 中负责滚动恢复的 `useEffect` 在组件初次挂载（此时会话数据尚未从后端获取完全）时就错误执行了。
+* **解决方案**：修改了 `ui/src/App.jsx` 中的自动滚动逻辑，在 Hook 中增加了 `if (!currentSession) return;` 的阻塞守卫，确保 DOM 完全获取到列表数据并渲染后再执行到底部的滚动恢复。
+
+## 10. Harness 路由：输入“继续”等短指令的意图判定过于强硬
+* **问题描述**：为了修复短指令不执行任务的问题，曾将“继续”等指令强硬路由至 `CODE_WORKFLOW`。但这带来了一个新问题：如果上一个任务只是普通的聊天问答（`DIRECT_ANSWER`）且被意外中断，输入“继续”本应只恢复问答，却被错误地引入了繁重的 Agent 工作流中。系统缺乏基于上下文的“断点”判断机制。
+* **解决方案**：升级了 `src/agents/harness_runtime.py` 中的意图分类器 `_classify_intent`，引入了**上下文感知（Context-aware）**能力。现在当系统捕捉到 `继续`、`continue` 等指令时，会主动读取工作区中的 `.harness/state.json` 文件（作为 Checkpoint）：
+  * 如果当前存在尚未 `PASS` 的工作流状态（例如 `FAIL_HARD` 或 `BLOCKED`），则判定为修复接管，路由至 `CODE_WORKFLOW`。
+  * 如果状态不存在或是已完成的纯聊天上下文，则平滑降级，路由回 `DIRECT_ANSWER` 继续普通对话。
+
+## 11. Harness 引擎：致命错误 (INFRA/FAIL_HARD) 缺乏自愈能力
+* **问题描述**：当 Runner 或 Evaluator 遭遇诸如环境依赖缺失、端口占用或编译失败等严重问题时，会直接抛出 `INFRA` 或 `FAIL_HARD` 导致整个任务彻底挂起。系统缺乏将这些环境报错抛给大模型进行诊断和自我修复的闭环机制。
+* **解决方案**：
+  * 重构了 `src/agents/harness_engine.py` 中的状态机路由核心 `build_harness_decision`。拦截所有的 `INFRA` 和 `FAIL_HARD` 判定，将其转换并降级为 `CALL_PLANNER`（重新规划）。
+  * 将故障堆栈作为 `previous_failures` 输入给 Planner，让大模型充当架构师分析报错原因（例如发现缺少 `python-pptx` 库从而在脚本中加上 `pip install`）。
+  * 在 `DEFAULT_BUDGETS` 中将全局重规化预算（`max_replan_rounds`）由 1 提升至 3，赋予 Agent 在彻底失败前多次试错并自我修复的能力。
+
+## 12. Planner 强制要求验证 index.html (INFRA 错误与残留逻辑)
+* **问题描述**：在生成 PPT 的任务中，Planner 强行输出了一条针对 `index.html` 的测试验证命令。这是因为在空项目或非 Web 项目中，`_default_allowed_files` 默认模版被硬编码填充了 Web 开发目录（包含 `index.html`），导致生成的 `verify_generated_files` 命令强制检查不相关的网页文件。且因之前修改了后端 Python 代码但**未重启后端服务（Uvicorn）**，导致之前第 7 项的“非强制弹性验证”补丁未能生效。
+* **解决方案**：
+  * 从 `src/agents/planner_agent.py` 的 `_default_allowed_files` 中移除了无脑 fallback 到 `["src/**", "index.html"...]` 的硬编码逻辑。现在对于空项目，将由大模型（Planner）完全自主推导应该允许哪些文件。
+  * 重启了后端 Uvicorn 进程，确保上述所有（包括第 7、10、11 项）Python 核心代码层的修改被动态加载并生效。
+
+## 13. 最终结果卡片：缺少可直接点击下载的产物超链接
+* **问题描述**：当任务顺利通过验收并生成文件（例如 PPT 或 Python 脚本）后，模型只在回复中列出了修改的纯文本文件名，用户无法在聊天界面直接点击并下载或预览生成的交付产物。之前曾尝试用 15 分钟的修改时间窗口去全盘扫描，但这种方式既耗时也不精准。
+* **解决方案**：
+  * 扩展了 `src/api.py` 中的 `PREVIEW_ASSET_ALLOWED_SUFFIXES` 白名单，将 `.pptx`、`.py`、`.docx`、`.xlsx` 等文件后缀加入，使得后端 API `/preview/local-file` 可以直接分发这些文件。
+  * 升级了 `src/agents/harness_runtime.py` 中的 `_final_answer` 模块，去除了暴力的时间扫描。现在系统会直接读取大模型（Planner）在规划契约（`allowed_files`）中显式写明的**具体文件名**。只要大模型规划的这些产物文件确实存在且非空，系统就会将它们转换为形如 `[filename](/preview/local-file?path=...)` 的 Markdown 超链接。
+  * 通过这种方式，最终在界面上呈现的修改文件列表变成了可以直接点击下载/预览的高亮超链接。

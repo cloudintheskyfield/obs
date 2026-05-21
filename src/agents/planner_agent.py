@@ -124,6 +124,9 @@ PLANNER_SYSTEM_PROMPT = (
     "- Do not claim the task is completed or verified. Only define how Generator and Runner should implement and verify it.\n"
     "- For web, UI, frontend, or game requests, include build checks and browser smoke tests when the project supports them.\n"
     "- For game or highly interactive UI requests, prefer a sequence that covers page_load plus at least one interaction or state-observation check.\n"
+    "- You, the Planner model, must decide when browser smoke tests are needed; Harness will not infer them from keyword or regex matching.\n"
+    "- You, the Planner model, must decide exact output artifact filenames for document, slide, spreadsheet, PDF, web, and script tasks.\n"
+    "- If allowed_files contains globs such as '*.pptx' or 'output/**', include executable test_commands that check the exact expected artifact path you plan Generator to create.\n"
     "- For backend or Python requests, include appropriate tests such as pytest, python -m pytest, python -m compileall, or a minimal smoke command when available.\n\n"
 
     "package_json_policy rules:\n"
@@ -182,11 +185,6 @@ _EXECUTABLE_COMMANDS = {
     "cargo",
 }
 
-_BROWSER_DESCRIPTION_RE = re.compile(
-    r"(浏览器|打开.*\.html|直接打开|页面打开|page\s*load|browser|visit|open\s+.*\.html)",
-    re.IGNORECASE,
-)
-
 
 def _normalize_string_list(value: Any) -> List[str]:
     if isinstance(value, list):
@@ -242,8 +240,6 @@ def _is_executable_shell_command(cmd: str) -> bool:
         return True
     if executable_name in _EXECUTABLE_COMMANDS:
         return True
-    if _BROWSER_DESCRIPTION_RE.search(text):
-        return False
     return False
 
 
@@ -276,21 +272,6 @@ def _normalize_command_specs(value: Any) -> List[Dict[str, Any]]:
             }
         )
     return commands
-
-
-def _browser_descriptions_from_commands(value: Any) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    descriptions: List[str] = []
-    for item in value:
-        cmd = ""
-        if isinstance(item, Mapping):
-            cmd = str(item.get("cmd") or item.get("command") or item.get("description") or "").strip()
-        else:
-            cmd = str(item).strip()
-        if cmd and not _is_executable_shell_command(cmd) and _BROWSER_DESCRIPTION_RE.search(cmd):
-            descriptions.append(cmd)
-    return descriptions
 
 
 def _normalize_smoke_tests(value: Any) -> List[Dict[str, Any]]:
@@ -384,6 +365,7 @@ def _default_allowed_files(existing_files: Optional[List[str]]) -> List[str]:
         candidates.append("index.html")
     if not candidates:
         candidates = ["src/**", "app/**", "components/**", "public/**", "index.html"]
+
     seen = set()
     result: List[str] = []
     for item in candidates:
@@ -427,8 +409,10 @@ def _concrete_allowed_files(allowed_files: List[str]) -> List[str]:
     return result[:6]
 
 
-def _default_file_output_commands(allowed_files: List[str]) -> List[Dict[str, Any]]:
+def _default_file_output_commands(allowed_files: List[str], goal: str = "", task_id: str = "") -> List[Dict[str, Any]]:
     concrete_files = _concrete_allowed_files(allowed_files)
+    seen = set()
+    concrete_files = [path for path in concrete_files if not (path in seen or seen.add(path))]
     if not concrete_files:
         return []
     files_literal = repr(concrete_files)
@@ -515,93 +499,10 @@ def _html_targets_from_contract(contract: Mapping[str, Any]) -> List[str]:
     return result
 
 
-_GAME_REQUEST_RE = re.compile(
-    r"(game|小游戏|游戏|跑酷|忍者|platformer|arcade|canvas|playable|interactive)",
-    re.IGNORECASE,
-)
-
-
-def _is_game_or_interactive_request(user_message: str) -> bool:
-    return bool(_GAME_REQUEST_RE.search(str(user_message or "")))
-
-
 def _ensure_game_smoke_tests(
     goal: str, smoke_tests: List[Dict[str, Any]], allowed_files: List[str]
 ) -> List[Dict[str, Any]]:
-    if not _is_game_or_interactive_request(goal):
-        return smoke_tests
-
-    tests = [dict(item) for item in smoke_tests]
-    ids = {str(item.get("id") or "").strip() for item in tests}
-    actions = {str(item.get("action") or "").strip() for item in tests}
-
-    html_files = [f for f in allowed_files if str(f).endswith(".html")]
-    default_target = html_files[0] if html_files else "http://localhost:8080"
-
-    if "page_load" not in ids:
-        tests.insert(
-            0,
-            {
-                "id": "page_load",
-                "type": "browser",
-                "action": "goto",
-                "target": default_target,
-                "expect": {
-                    "page_loaded": True,
-                    "no_fatal_console_error": True,
-                },
-                "timeout_sec": 15,
-                "required": True,
-            },
-        )
-
-    if "evaluate" not in actions:
-        tests.append(
-            {
-                "id": "game_surface_visible",
-                "type": "browser",
-                "action": "evaluate",
-                "target": "((document.body.innerText || '').trim().length > 0 || document.querySelector('canvas') !== null)",
-                "expect": {"result": True},
-                "timeout_sec": 10,
-                "required": True,
-            }
-        )
-
-    if "click" not in actions:
-        tests.append(
-            {
-                "id": "primary_action_click",
-                "type": "browser",
-                "action": "click",
-                "selector_candidates": [
-                    "button[data-testid='start']",
-                    "#start",
-                    ".start",
-                    "button",
-                    "[role='button']",
-                    "canvas",
-                ],
-                "expect": {"no_fatal_console_error": True},
-                "timeout_sec": 10,
-                "required": False,
-            }
-        )
-
-    if "keyboard" not in actions:
-        tests.append(
-            {
-                "id": "primary_action_key",
-                "type": "browser",
-                "action": "keyboard",
-                "key": "Space",
-                "expect": {"no_fatal_console_error": True},
-                "timeout_sec": 10,
-                "required": False,
-            }
-        )
-
-    return tests
+    return [dict(item) for item in smoke_tests]
 
 
 def _default_smoke_tests(existing_files: Optional[List[str]]) -> List[Dict[str, Any]]:
@@ -624,27 +525,6 @@ def _default_smoke_tests(existing_files: Optional[List[str]]) -> List[Dict[str, 
             }
         ]
     return []
-
-def _browser_smoke_tests_from_descriptions(descriptions: List[str], allowed_files: List[str]) -> List[Dict[str, Any]]:
-    if not descriptions:
-        return []
-    html_files = [f for f in allowed_files if str(f).endswith(".html")]
-    target = html_files[0] if html_files else "http://localhost:8080"
-    tests: List[Dict[str, Any]] = []
-    for index, description in enumerate(descriptions, start=1):
-        tests.append(
-            {
-                "id": f"browser_from_command_{index}",
-                "type": "browser",
-                "action": "goto",
-                "target": target,
-                "expect": {"note": description, "page_loaded": True},
-                "timeout_sec": 15,
-                "required": True,
-            }
-        )
-    return tests
-
 
 def _default_dev_server(
     existing_files: Optional[List[str]], planned_outputs: Optional[List[str]] = None
@@ -765,7 +645,7 @@ def _default_plan_contract(user_message: str, existing_files: Optional[List[str]
     allowed_files = _default_allowed_files(existing_files)
     required_files_to_inspect = list((existing_files or [])[:8])
     test_commands = [
-        *_default_file_output_commands(allowed_files),
+        *_default_file_output_commands(allowed_files, user_message, "task_plan_001"),
         *_default_test_commands(existing_files),
     ]
     smoke_tests = _ensure_game_smoke_tests(
@@ -840,12 +720,12 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
     contract["forbidden_files"] = _normalize_string_list(source.get("forbidden_files")) or base["forbidden_files"]
     contract["required_files_to_inspect"] = _normalize_string_list(source.get("required_files_to_inspect")) or base["required_files_to_inspect"]
     contract["test_commands"] = _normalize_command_specs(source.get("test_commands")) or base["test_commands"]
-    output_commands = _default_file_output_commands(contract["allowed_files"])
+    output_commands = _default_file_output_commands(contract["allowed_files"], contract["goal"], contract["task_id"])
     if output_commands:
         existing_cmds = {str(item.get("cmd") or "") for item in contract["test_commands"]}
         contract["test_commands"] = [
-            *contract["test_commands"],
             *[item for item in output_commands if str(item.get("cmd") or "") not in existing_cmds],
+            *contract["test_commands"],
         ]
     contract["test_commands"] = _prune_stale_output_checks(
         contract["test_commands"],
@@ -866,18 +746,13 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
         "timeout_sec": int(dev_server.get("timeout_sec", default_dev_server.get("timeout_sec", 60)) or 60),
     }
 
-    browser_descriptions = _browser_descriptions_from_commands(source.get("test_commands"))
-    converted_smoke_tests = _browser_smoke_tests_from_descriptions(browser_descriptions, contract["allowed_files"])
     if "smoke_tests" in source:
         source_smoke_tests = _normalize_smoke_tests(source.get("smoke_tests"))
     else:
         source_smoke_tests = []
     contract["smoke_tests"] = _ensure_game_smoke_tests(
         contract["goal"],
-        [
-            *source_smoke_tests,
-            *converted_smoke_tests,
-        ],
+        source_smoke_tests,
         contract["allowed_files"],
     )
     if contract["smoke_tests"] and not contract["dev_server"].get("enabled"):

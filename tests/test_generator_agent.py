@@ -290,6 +290,31 @@ def test_generator_view_workspace_root_returns_directory_listing(tmp_path: Path)
     assert "- src/" in content
 
 
+def test_generator_file_tool_handles_binary_artifacts_without_utf8_crash(tmp_path: Path) -> None:
+    agent = GeneratorAgent(vllm_client=None, skill_manager=_DummySkillManager(tmp_path))
+    binary_path = tmp_path / "deck.pptx"
+    binary_path.write_bytes(b"PK\x03\x04demo-data\xb5\x00binary")
+    generator_input = {
+        "plan_contract": {"allowed_files": ["*.pptx"], "forbidden_files": []},
+        "harness_constraints": {"allowed_write_paths": ["*.pptx"], "forbidden_write_paths": []},
+    }
+
+    success, view_result = asyncio.run(
+        agent._execute_harness_file_tool({"command": "view", "path": "deck.pptx"}, generator_input)
+    )
+    replace_success, replace_result = asyncio.run(
+        agent._execute_harness_file_tool(
+            {"command": "str_replace", "path": "deck.pptx", "old_str": "demo", "new_str": "updated"},
+            generator_input,
+        )
+    )
+
+    assert success is True
+    assert "Binary artifact deck.pptx" in view_result
+    assert replace_success is False
+    assert "Binary artifact deck.pptx" in replace_result
+
+
 
 def test_generator_recovers_after_malformed_tool_arguments(tmp_path: Path) -> None:
     agent = GeneratorAgent(vllm_client=_MalformedThenValidToolCallingVllm(), skill_manager=_DummySkillManager(tmp_path))
@@ -696,3 +721,55 @@ def test_generator_retries_transient_model_stream_errors(tmp_path: Path) -> None
 
     assert vllm.calls == 4
     assert agent.last_patch_result["created_files"] == ["index.html"]
+
+
+def test_generator_path_feedback_uses_plan_specific_example(tmp_path: Path) -> None:
+    agent = GeneratorAgent(vllm_client=None, skill_manager=_DummySkillManager(tmp_path))
+    generator_input = {
+        "workspace": str(tmp_path),
+        "plan_contract": {
+            "allowed_files": ["*.py", "*.pptx", "README.md"],
+            "forbidden_files": [".env", ".harness/**"],
+        },
+        "harness_constraints": {
+            "allowed_write_paths": ["*.py", "*.pptx", "README.md"],
+            "forbidden_write_paths": [".env", ".harness/**"],
+        },
+    }
+
+    success, message = asyncio.run(agent._execute_harness_file_tool({"command": "create", "file_text": "content"}, generator_input))
+
+    assert not success
+    assert "index.html" not in message
+    assert "README.md" in message
+
+
+def test_generator_strips_provider_thinking_before_writing_files(tmp_path: Path) -> None:
+    agent = GeneratorAgent(vllm_client=None, skill_manager=_DummySkillManager(tmp_path))
+    generator_input = {
+        "workspace": str(tmp_path),
+        "plan_contract": {
+            "allowed_files": ["README.md"],
+            "forbidden_files": [".env", ".harness/**"],
+        },
+        "harness_constraints": {
+            "allowed_write_paths": ["README.md"],
+            "forbidden_write_paths": [".env", ".harness/**"],
+        },
+    }
+
+    success, message = asyncio.run(
+        agent._execute_harness_file_tool(
+            {
+                "command": "create",
+                "path": "README.md",
+                "file_text": "<think>private reasoning</think>\n# 文旅主题PPT生成器\n",
+            },
+            generator_input,
+        )
+    )
+
+    assert success, message
+    content = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "<think>" not in content
+    assert content.startswith("# 文旅主题PPT生成器")

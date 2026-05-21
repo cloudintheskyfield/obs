@@ -42,10 +42,6 @@ const VALID_PERMISSION_MODES = ["ask", "auto"];
 const VALID_THEME_MODES = ["system", "light", "dark"];
 const CREATE_GUIDED_TIMEOUT_MS = 5000;
 const CREATE_GUIDED_FLOW_ENABLED = false;
-const CREATE_GAME_REQUEST_PATTERN = /(game|游戏|僵尸|zombie|迷宫|maze|射击|shoot|fps|生存|boss|关卡|穿越火线|cf)/i;
-const CREATE_WEB_REQUEST_PATTERN = /(网页|web|网站|前端|html|css|react|vue|vite|dashboard|landing\s*page)/i;
-const CREATE_API_REQUEST_PATTERN = /(接口|api|后端|backend|server|服务|fastapi|flask|django|express|node)/i;
-const CREATE_SCRIPT_REQUEST_PATTERN = /(脚本|script|cli|工具|tool|自动化|automation|爬虫|crawler|parser|转换|converter|generator)/i;
 
 function resolveDefaultApiBaseUrl() {
     const { protocol, origin, hostname } = window.location;
@@ -574,112 +570,8 @@ function upgradeSession(session) {
     return next;
 }
 
-function isSimpleChat(content) {
-    return /^(hi|hello|hey|你好|嗨|在吗|早上好|下午好|晚上好)\W*$/i.test((content || "").trim());
-}
-
 function buildCreateGuidedQuestions(content) {
-    const text = String(content || "").trim();
-    if (!text) {
-        return [];
-    }
-    const questions = [];
-    const hasWebPlatform = /(web|网页|浏览器|html|canvas|webgl|three\.?js|phaser|react|vite)/i.test(text);
-    const hasDesktopPlatform = /(桌面|desktop|electron|pc客户端)/i.test(text);
-    const hasMobilePlatform = /(移动端|mobile|ios|android|手机)/i.test(text);
-    const hasSingleMode = /(单人|single\s*-?player|solo|pve)/i.test(text);
-    const hasMultiMode = /(多人|联机|在线|online|coop|co-op|局域网|pvp)/i.test(text);
-    const hasGameStack = /(three\.?js|phaser|canvas|webgl|babylon|unity)/i.test(text);
-    const hasFrontendStack = /(react|vue|svelte|next\.?js|nuxt|html|vite)/i.test(text);
-    const hasBackendStack = /(fastapi|flask|django|express|nest|spring|laravel)/i.test(text);
-    const hasScriptRuntime = /(python|node|bun|deno|bash|shell)/i.test(text);
-    const prefers3d = /(3d|fps|第一人称|third\s*-?person|穿越火线|cf|zombie|僵尸|three\.?js|webgl)/i.test(text);
-
-    if (CREATE_GAME_REQUEST_PATTERN.test(text)) {
-        if (!hasWebPlatform && !hasDesktopPlatform && !hasMobilePlatform) {
-            questions.push({
-                key: "platform",
-                title: "你希望这个游戏运行在哪个平台？",
-                description: "5 秒内不选择会自动采用默认方案。",
-                options: [
-                    { value: "Web 浏览器", label: "Web 浏览器", hint: "HTML5 / WebGL，最容易直接预览", isDefault: true },
-                    { value: "桌面端 Electron", label: "桌面端", hint: "适合封装成本地客户端" },
-                    { value: "移动端 H5", label: "移动端", hint: "优先触屏与竖屏适配" },
-                ],
-                defaultValue: "Web 浏览器",
-            });
-        }
-        if (!hasSingleMode && !hasMultiMode) {
-            questions.push({
-                key: "mode",
-                title: "你希望优先实现哪种玩法模式？",
-                description: "默认先做最容易跑通的主流方案。",
-                options: [
-                    { value: "单人模式", label: "单人模式", hint: "先做 AI 敌人与可玩主循环", isDefault: true },
-                    { value: "多人在线模式", label: "多人在线", hint: "需要房间、同步和服务器支持" },
-                    { value: "单人 + 多人", label: "两种都要", hint: "范围更大，开发时间更长" },
-                ],
-                defaultValue: "单人模式",
-            });
-        }
-        if (!hasGameStack) {
-            questions.push({
-                key: "stack",
-                title: "你希望优先使用什么技术栈？",
-                description: "默认会选最贴近当前任务体验的方案。",
-                options: prefers3d
-                    ? [
-                        { value: "Three.js（3D）", label: "Three.js（3D）", hint: "适合 FPS / 3D 场景", isDefault: true },
-                        { value: "Phaser.js（2.5D / 2D）", label: "Phaser.js", hint: "开发效率更高" },
-                        { value: "纯 JavaScript + Canvas", label: "纯 JS + Canvas", hint: "零依赖，适合轻量原型" },
-                    ]
-                    : [
-                        { value: "Phaser.js（2.5D / 2D）", label: "Phaser.js", hint: "适合快速做可玩原型", isDefault: true },
-                        { value: "Three.js（3D）", label: "Three.js（3D）", hint: "更强的 3D 表现" },
-                        { value: "纯 JavaScript + Canvas", label: "纯 JS + Canvas", hint: "实现更轻量" },
-                    ],
-                defaultValue: prefers3d ? "Three.js（3D）" : "Phaser.js（2.5D / 2D）",
-            });
-        }
-    } else if (CREATE_WEB_REQUEST_PATTERN.test(text) && !hasFrontendStack) {
-        questions.push({
-            key: "frontend_stack",
-            title: "你希望这个页面优先用什么前端方案？",
-            description: "默认采用当前项目里最顺手的主流方案。",
-            options: [
-                { value: "React + Vite", label: "React + Vite", hint: "当前项目前端就是这个栈", isDefault: true },
-                { value: "纯 HTML + CSS + JavaScript", label: "纯 HTML", hint: "更轻量，适合单页原型" },
-                { value: "Vue + Vite", label: "Vue + Vite", hint: "适合组件化页面" },
-            ],
-            defaultValue: "React + Vite",
-        });
-    } else if (CREATE_API_REQUEST_PATTERN.test(text) && !hasBackendStack) {
-        questions.push({
-            key: "backend_stack",
-            title: "你希望这个后端优先用什么框架？",
-            description: "默认采用最主流、也最适合当前仓库的方案。",
-            options: [
-                { value: "FastAPI", label: "FastAPI", hint: "Python API 开发很高效", isDefault: true },
-                { value: "Flask", label: "Flask", hint: "更轻量的 Python 后端" },
-                { value: "Express", label: "Express", hint: "Node.js 生态更常见" },
-            ],
-            defaultValue: "FastAPI",
-        });
-    } else if (CREATE_SCRIPT_REQUEST_PATTERN.test(text) && !hasScriptRuntime) {
-        questions.push({
-            key: "script_runtime",
-            title: "你希望这个工具优先用什么运行时？",
-            description: "默认会选最通用、最容易维护的方案。",
-            options: [
-                { value: "Python", label: "Python", hint: "适合自动化、解析和脚本工具", isDefault: true },
-                { value: "Node.js", label: "Node.js", hint: "适合 CLI 和工程脚本" },
-                { value: "Bash", label: "Bash", hint: "适合简单串联命令" },
-            ],
-            defaultValue: "Python",
-        });
-    }
-
-    return questions.slice(0, 3);
+    return [];
 }
 
 function buildCreateGuidedRequest(baseContent, answers) {
@@ -941,9 +833,6 @@ function cleanSessionArtifactTitle(session) {
     return raw
         .replace(/<think>[\s\S]*?<\/think>/giu, "")
         .replace(/[*_`#]+/g, "")
-        .replace(/^(请|帮我|帮忙|麻烦)?\s*(创建|生成|做|实现|制作|写|建|开发|继续)\s*/u, "")
-        .replace(/^(一个|一款|一个像|一个类似|类似|重新)\s*/u, "")
-        .replace(/^(网页|浏览器|web|html5|小游戏|游戏|页面|应用)\s*/iu, "")
         .replace(/[：:]/g, " ")
         .replace(/[，,].*$/u, "")
         .replace(/[。！!？?].*$/u, "")
@@ -1111,11 +1000,12 @@ function latestAssistantSummary(session) {
 }
 
 function inferProjectTags(session, previewUrl) {
-    const source = `${session?.title || ""} ${firstUserPrompt(session)} ${previewUrl || ""}`.toLowerCase();
     const tags = [];
-    if (/(game|游戏|zombie|僵尸|fps|maze|迷宫)/i.test(source)) tags.push("游戏");
-    if (/(react|vue|html|网页|web|dashboard|landing)/i.test(source)) tags.push("网页");
-    if (/(tool|工具|script|脚本|automation|自动化)/i.test(source)) tags.push("工具");
+    const routeMode = String(session?.routeMode || "");
+    if (routeMode === "DOC_WORKFLOW") tags.push("文档产物");
+    if (routeMode === "FILE_WORKFLOW") tags.push("文件任务");
+    if (routeMode === "CODE_WORKFLOW") tags.push("代码项目");
+    if (previewUrl) tags.push("可预览");
     if (!tags.length) tags.push("创意原型");
     return tags.slice(0, 3);
 }
@@ -1661,7 +1551,11 @@ function App() {
         if (!el || !currentSessionId || pendingScrollRestoreRef.current !== currentSessionId) {
             return;
         }
+        if (!currentSession) {
+            return;
+        }
         restoringScrollRef.current = true;
+        // Request animation frame gives the DOM time to render the list before we scroll.
         requestAnimationFrame(() => {
             const saved = threadScrollPositionsRef.current[currentSessionId];
             if (typeof saved === "number") {
@@ -1675,7 +1569,7 @@ function App() {
             restoringScrollRef.current = false;
             pendingScrollRestoreRef.current = null;
         });
-    }, [currentSessionId, currentSession?.transcript?.length]);
+    }, [currentSessionId, currentSession?.transcript?.length, currentSession]);
 
     useEffect(() => {
         const el = chatMessagesRef.current;

@@ -27,12 +27,15 @@ class _DummySkillManager:
 
 
 class _FakeVllmClient:
-    def __init__(self, *, require_search: bool = False) -> None:
+    def __init__(self, *, require_search: bool = False, route: str = "CODE_WORKFLOW") -> None:
         self.require_search = require_search
+        self.route = route
 
     async def chat_completion(self, *, messages, tools=None, temperature=0.1, max_tokens=1600, stream=True, model=None):
         system_prompt = str(messages[0].get("content") or "")
-        if "Planner Agent" in system_prompt:
+        if "Harness Router" in system_prompt:
+            payload = {"route": self.route, "confidence": 0.99, "reason": "test-controlled semantic route"}
+        elif "Planner Agent" in system_prompt:
             payload = {
                 "task_id": "task_runtime_e2e",
                 "goal": "验证 Harness runtime 全链路",
@@ -292,10 +295,12 @@ def test_runtime_builds_spec_shaped_harness_inputs(tmp_path: Path) -> None:
         last_run_report={},
         eval_verdict={},
         round_id=1,
+        context_bundle={"session_id": "test-session", "recent_messages": []},
     )
     assert generator_input["project_files_snapshot"]["src/App.tsx"].startswith("export default")
     assert generator_input["harness_constraints"]["allowed_write_paths"] == ["src/**"]
     assert generator_input["harness_constraints"]["forbidden_write_paths"][0] == ".env"
+    assert generator_input["context_bundle"]["session_id"] == "test-session"
 
     runner_input = runtime._build_runner_input(
         workspace=tmp_path,
@@ -304,10 +309,12 @@ def test_runtime_builds_spec_shaped_harness_inputs(tmp_path: Path) -> None:
         search_reports=[],
         artifact_info={"description": "Verify core functionality"},
         round_id=1,
+        context_bundle={"session_id": "test-session", "recent_messages": []},
     )
     assert runner_input["runner_limits"]["max_command_retries"] == 0
     assert runner_input["runner_limits"]["max_dev_server_retries"] == 2
     assert runner_input["permissions"]["can_write_project_files"] is False
+    assert runner_input["context_bundle"]["session_id"] == "test-session"
 
     evaluator_input = runtime._build_evaluator_input(
         plan_contract=plan_contract,
@@ -317,9 +324,51 @@ def test_runtime_builds_spec_shaped_harness_inputs(tmp_path: Path) -> None:
         previous_verdicts=[],
         round_id=1,
         diff_path=".harness/runs/run_001/diff.patch",
+        context_bundle={"session_id": "test-session", "recent_messages": []},
     )
     assert evaluator_input["git_diff_summary"]["diff_path"] == ".harness/runs/run_001/diff.patch"
     assert evaluator_input["screenshots"] == [".harness/runs/run_001/screenshots/page.png"]
+    assert evaluator_input["context_bundle"]["session_id"] == "test-session"
+
+
+def test_runtime_context_bundle_bounds_history_and_indexes_artifacts(tmp_path: Path) -> None:
+    run_output = tmp_path / ".harness" / "runs" / "run_001" / "output"
+    run_output.mkdir(parents=True)
+    (run_output / "run_report.json").write_text('{"status":"PASSED"}\n', encoding="utf-8")
+    (tmp_path / ".harness" / "plan.json").write_text('{"goal":"demo"}\n', encoding="utf-8")
+
+    chat_sessions = {
+        "ctx-session": [
+            {"role": "user", "content": f"<think>hidden {index}</think>" + ("x" * 2400)}
+            for index in range(12)
+        ]
+    }
+    runtime = HarnessRuntime(vllm_client=None, skill_manager=_DummySkillManager(tmp_path))
+    runtime.session_context_cache["ctx-session"] = {
+        "last_user_message": "latest",
+        "last_plan_contract": {"goal": "bounded context"},
+        "last_eval_verdict": {"verdict": "FIXABLE", "root_cause": "needs repair"},
+    }
+
+    bundle = runtime._build_context_bundle(
+        session_id="ctx-session",
+        chat_sessions=chat_sessions,
+        workspace=tmp_path,
+        user_message="当前请求",
+        model="minimax-m2",
+        request_context={"mode": "agent"},
+        previous_failures=["first failure"],
+        search_reports=[],
+        previous_verdicts=[{"verdict": "FIXABLE"}],
+    )
+
+    assert bundle["schema_version"] == "1.0"
+    assert len(bundle["recent_messages"]) == 8
+    assert all("<think>" not in item["content"] for item in bundle["recent_messages"])
+    assert all(len(item["content"]) <= 1200 for item in bundle["recent_messages"])
+    artifact_paths = {item["path"] for item in bundle["artifact_index"]}
+    assert ".harness/runs/run_001/output/run_report.json" in artifact_paths
+    assert bundle["working_memory"]["open_failures"][-1] == "needs repair"
 
 
 def test_runtime_adds_repair_source_context_from_browser_stack(
@@ -392,10 +441,21 @@ def test_runtime_runs_full_harness_chain_and_persists_evidence(tmp_path: Path) -
     assert decisions[-1]["decision"] == "PASS"
 
     state = json.loads((tmp_path / ".harness" / "state.json").read_text(encoding="utf-8"))
+    context_bundle = json.loads((tmp_path / ".harness" / "context" / "context_bundle.json").read_text(encoding="utf-8"))
+    planner_input = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "input" / "planner_input.json").read_text(encoding="utf-8"))
+    generator_input = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "input" / "generator_input.json").read_text(encoding="utf-8"))
+    runner_input = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "input" / "runner_input.json").read_text(encoding="utf-8"))
+    evaluator_input = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "input" / "evaluator_input.json").read_text(encoding="utf-8"))
     run_report = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "output" / "run_report.json").read_text(encoding="utf-8"))
     eval_verdict = json.loads((tmp_path / ".harness" / "runs" / "run_001" / "output" / "eval_verdict.json").read_text(encoding="utf-8"))
 
     assert state["state"] == "PASS"
+    assert context_bundle["session_id"] == "runtime-e2e"
+    assert context_bundle["recent_messages"][0]["content"] == "跑通 Harness 全链路"
+    assert planner_input["task_context"]["context_bundle"]["session_id"] == "runtime-e2e"
+    assert generator_input["context_bundle"]["session_id"] == "runtime-e2e"
+    assert runner_input["context_bundle"]["session_id"] == "runtime-e2e"
+    assert evaluator_input["context_bundle"]["session_id"] == "runtime-e2e"
     assert run_report["status"] == "PASSED"
     assert "harness-runtime-ok" in run_report["commands"][0]["stdout_tail"]
     assert eval_verdict["verdict"] == "PASS"
@@ -432,11 +492,48 @@ def test_runtime_runs_search_gate_chain_before_generator(tmp_path: Path) -> None
 
 
 def test_intent_router_keeps_doc_and_harness_tasks_out_of_direct_path(tmp_path: Path) -> None:
-    runtime = HarnessRuntime(vllm_client=_FakeVllmClient(), skill_manager=_DummySkillManager(tmp_path))
+    cases = [
+        ("你好", "DIRECT_ANSWER"),
+        ("给我一个ppt 宣传北京旅游的", "DOC_WORKFLOW"),
+        ("请读取 input/sales.csv，按月份和品类汇总销售额，生成 Excel 文件，并添加一个柱状图。", "DOC_WORKFLOW"),
+        ("请阅读 input/paper.pdf，生成一份 Markdown 总结。", "DOC_WORKFLOW"),
+        ("跑通 Harness 全链路", "CODE_WORKFLOW"),
+        ("确认 Playwright Python 中 page.locator() 是否需要 await，以及 locator.click() 的正确 async 写法。", "SEARCH_ANSWER"),
+        ("请把 input/downloads 目录中的文件按扩展名分类到 output/sorted 下，先 dry-run，再执行。", "FILE_WORKFLOW"),
+        ("请查看 input/ui_screenshot.png，指出这个 OBS Code 前端页面在亮色模式下有哪些可读性和层级问题。", "DIRECT_ANSWER"),
+    ]
 
-    assert runtime._classify_intent("你好") == "DIRECT_ANSWER"
-    assert runtime._classify_intent("给我一个ppt 宣传北京旅游的") == "DOC_WORKFLOW"
-    assert runtime._classify_intent("跑通 Harness 全链路") == "CODE_WORKFLOW"
+    for message, expected_route in cases:
+        runtime = HarnessRuntime(
+            vllm_client=_FakeVllmClient(route=expected_route),
+            skill_manager=_DummySkillManager(tmp_path),
+        )
+        assert asyncio.run(runtime._classify_intent_with_llm(message, workspace=tmp_path)) == expected_route
+
+
+def test_search_answer_route_uses_search_agent_without_generator_runner(tmp_path: Path) -> None:
+    runtime = HarnessRuntime(vllm_client=_FakeVllmClient(require_search=True, route="SEARCH_ANSWER"), skill_manager=_DummySkillManager(tmp_path))
+
+    async def collect_events() -> list[dict]:
+        events = []
+        async for chunk in runtime.chat_stream(
+            session_id="runtime-search-answer",
+            chat_sessions={"runtime-search-answer": [{"role": "user", "content": "确认 Playwright Python 中 page.locator() 是否需要 await，以及 locator.click() 的正确 async 写法。"}]},
+            mode="agent",
+            request_context={"workspace_runtime_path": str(tmp_path)},
+        ):
+            if chunk.startswith("data: "):
+                events.append(json.loads(chunk.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    routes = [event.get("route") for event in events if event.get("type") == "route"]
+    roles = [event.get("role") for event in events if event.get("type") in {"agent_step", "agent_summary"}]
+    assert routes == ["SEARCH_ANSWER"]
+    assert "Search" in roles
+    assert "Generator" not in roles
+    assert "Runner" not in roles
+    assert (tmp_path / ".harness" / "search" / "search_001" / "search_report.json").exists()
 
 
 def test_runtime_retries_generator_when_patch_envelope_is_empty(tmp_path: Path) -> None:

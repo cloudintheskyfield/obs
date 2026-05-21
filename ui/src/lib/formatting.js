@@ -33,7 +33,7 @@ export function normalizeDisplayText(text, { preserveCodeFences = true } = {}) {
         return "";
     }
     raw = raw.replace(/<obs:(?:todo|done)>.*?<\/obs:(?:todo|done)>/gs, "");
-    raw = raw.replace(/<think>[\s\S]*?<\/think>/giu, "");
+    raw = raw.replace(/<think>[\s\S]*?(?:<\/think>|$)/giu, "");
     raw = raw
         .replace(/^\s*\n+/, "")
         .replace(/[ \t]+\n/g, "\n")
