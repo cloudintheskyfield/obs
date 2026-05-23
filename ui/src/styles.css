@@ -51,13 +51,13 @@ html[data-theme="light"] {
     --text-disabled: #9ca3af;
     --text-inverse: #ffffff;
 
-    --bg-app: #f6f7f9;
-    --bg-sidebar: #ffffff;
-    --bg-main: #f8fafc;
+    --bg-app: #ffffff;
+    --bg-sidebar: #f9fafb;
+    --bg-main: #ffffff;
     --bg-card: #ffffff;
     --bg-card-muted: #f3f4f6;
     --bg-hover: #eef2f7;
-    --bg-active: #e8f0ff;
+    --bg-active: #f3f4f6;
 
     --border-subtle: #e5e7eb;
     --border-default: #d1d5db;
@@ -80,9 +80,9 @@ html[data-theme="light"] {
     --error-soft: #fee2e2;
     --error-border: #fca5a5;
 
-    --blocked: #c2410c;
-    --blocked-soft: #ffedd5;
-    --blocked-border: #fdba74;
+    --blocked: #d97706;
+    --blocked-soft: #fffbeb;
+    --blocked-border: #fde68a;
 
     --running: #7c3aed;
     --running-soft: #ede9fe;
@@ -92,7 +92,7 @@ html[data-theme="light"] {
     --code-text: #111827;
     --code-border: #d1d5db;
 
-    --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
     --shadow-floating: 0 8px 24px rgba(16, 24, 40, 0.12);
 }
 
@@ -4373,8 +4373,8 @@ html[data-theme="light"] .app-shell {
 }
 
 html[data-theme="light"] .sidebar {
-    background: #fbfbfa;
-    border-right: 1px solid #ececea;
+    background: #f9fafb;
+    border-right: 1px solid #f3f4f6;
     box-shadow: none;
 }
 
@@ -4817,13 +4817,13 @@ html[data-theme="dark"] .codex-progress-dot {
 
 /* Harness iteration: stronger Codex-like light-mode hierarchy */
 html[data-theme="light"] {
-    --bg-app: #f6f7f9;
-    --bg-sidebar: #ffffff;
-    --bg-main: #f8fafc;
+    --bg-app: #ffffff;
+    --bg-sidebar: #f9fafb;
+    --bg-main: #ffffff;
     --bg-card: #ffffff;
     --bg-card-muted: #f3f4f6;
     --bg-hover: #eef2f7;
-    --bg-active: #e8f0ff;
+    --bg-active: #f3f4f6;
     --text-primary: #111827;
     --text-secondary: #374151;
     --text-muted: #6b7280;
@@ -4845,16 +4845,16 @@ html[data-theme="light"] {
     --error: #dc2626;
     --error-soft: #fee2e2;
     --error-border: #fca5a5;
-    --blocked: #c2410c;
-    --blocked-soft: #ffedd5;
-    --blocked-border: #fdba74;
+    --blocked: #d97706;
+    --blocked-soft: #fffbeb;
+    --blocked-border: #fde68a;
     --running: #7c3aed;
     --running-soft: #ede9fe;
     --running-border: #c4b5fd;
     --code-bg: #f3f4f6;
     --code-text: #111827;
     --code-border: #d1d5db;
-    --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
     --shadow-floating: 0 8px 24px rgba(16, 24, 40, 0.12);
 
     --bg: var(--bg-app);
@@ -4928,8 +4928,8 @@ html[data-theme="light"] .session-item:hover {
 
 html[data-theme="light"] .session-item.active {
     background: var(--bg-active);
-    border-color: var(--accent-border);
-    box-shadow: inset 3px 0 0 var(--accent), var(--shadow-card);
+    border-color: #e5e7eb;
+    box-shadow: var(--shadow-card);
 }
 
 html[data-theme="light"] .session-item.active .session-active-indicator {
@@ -4991,9 +4991,9 @@ html[data-theme="light"] .tiny-pill,
 html[data-theme="light"] .small-tool,
 html[data-theme="light"] .icon-button,
 html[data-theme="light"] .files-changed-dropdown-summary {
-    border-color: var(--border-default);
-    background: var(--bg-card);
-    color: var(--text-secondary);
+    border-color: #e5e7eb;
+    background: #ffffff;
+    color: #4b5563;
 }
 
 html[data-theme="light"] .small-tool:hover,

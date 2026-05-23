@@ -115,8 +115,11 @@ export function renderMarkdown(text) {
         s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
         s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
         s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
-        // named links [text](url)
-        s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>');
+        // named links [text](url) - handle both absolute and relative paths
+        s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, text, url) => {
+            const target = url.startsWith('/') ? '' : ' target="_blank" rel="noreferrer noopener"';
+            return `<a href="${url}"${target}>${text}</a>`;
+        });
         // bare URLs (not already inside an <a>)
         s = s.replace(/(^|[\s(])((https?:\/\/)[^\s<>"&]+)/g, (_, pre, url) =>
             `${pre}<a href="${url}" target="_blank" rel="noreferrer noopener">${url}</a>`);

@@ -1426,15 +1426,15 @@ html[data-theme="light"] .harness-user-stage.pending .harness-user-stage-body {
 }
 
 html[data-theme="light"] .harness-user-stage.success .harness-user-stage-body {
-  border-color: var(--success-border, #86efac);
+  border-color: #e5e7eb;
   border-left: 4px solid var(--success, #16a34a);
-  background: var(--success-soft, #dcfce7);
+  background: #ffffff;
 }
 
 html[data-theme="light"] .harness-user-stage.error .harness-user-stage-body {
-  border-color: var(--blocked-border, #fdba74);
-  border-left: 4px solid var(--blocked, #c2410c);
-  background: var(--blocked-soft, #ffedd5);
+  border-color: #e5e7eb;
+  border-left: 3px solid var(--blocked, #d97706);
+  background: #fffbeb;
 }
 
 html[data-theme="light"] .harness-user-stage-index {
@@ -1455,14 +1455,14 @@ html[data-theme="light"] .harness-user-stage-status.success {
 }
 
 html[data-theme="light"] .harness-user-stage-status.error {
-  background: var(--blocked-soft, #ffedd5);
-  color: var(--blocked, #c2410c);
+  background: var(--blocked-soft, #fffbeb);
+  color: var(--blocked, #d97706);
 }
 
 html[data-theme="light"] .harness-issue-card.blocked {
-  border-color: var(--blocked-border, #fdba74);
-  border-left-color: var(--blocked, #c2410c);
-  background: var(--blocked-soft, #ffedd5);
+  border-color: #e5e7eb;
+  border-left: 2px solid var(--blocked, #d97706);
+  background: #ffffff;
   color: var(--text-primary, #111827);
 }
 
@@ -1471,7 +1471,7 @@ html[data-theme="light"] .harness-issue-card.blocked strong {
 }
 
 html[data-theme="light"] .harness-next-step-inline {
-  color: var(--blocked, #c2410c);
+  color: var(--blocked, #d97706);
 }
 
 html[data-theme="light"] .harness-final-card strong {
@@ -1488,21 +1488,23 @@ html[data-theme="light"] .task-header-meta span {
 }
 
 html[data-theme="light"] .harness-current-action-card {
-  border-color: var(--running-border, #c4b5fd);
-  border-left-color: var(--running, #7c3aed);
-  background: var(--running-soft, #ede9fe);
+  border-color: #e5e7eb;
+  border-left-color: #e5e7eb;
+  background: #ffffff;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .harness-current-action-card.blocked {
-  border-color: var(--blocked-border, #fdba74);
-  border-left-color: var(--blocked, #c2410c);
-  background: var(--blocked-soft, #ffedd5);
+  border-color: #e5e7eb;
+  border-left: 2px solid var(--blocked, #d97706);
+  background: #ffffff;
 }
 
 html[data-theme="light"] .harness-current-action-card.done {
-  border-color: var(--success-border, #86efac);
-  border-left-color: var(--success, #16a34a);
-  background: var(--success-soft, #dcfce7);
+  border-color: #e5e7eb;
+  border-left-color: #e5e7eb;
+  background: #f9fafb;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .harness-current-action-card strong,
@@ -1551,9 +1553,9 @@ html[data-theme="light"] .harness-detail-tablist button {
 
 html[data-theme="light"] .harness-detail-tablist button.active,
 html[data-theme="light"] .harness-detail-tablist button:hover {
-  border-color: var(--accent-border, #93c5fd);
-  background: var(--accent-soft, #dbeafe);
-  color: var(--accent, #2563eb);
+  border-color: transparent;
+  background: #f3f4f6;
+  color: #111827;
 }
 
 html[data-theme="light"] .harness-detail-panel pre {
@@ -1610,9 +1612,9 @@ html[data-theme="light"] .agent-process-timeline li.success {
 }
 
 html[data-theme="light"] .agent-process-timeline li.error {
-  border-left: 3px solid var(--blocked, #c2410c);
-  background: var(--blocked-soft, #ffedd5);
-  border-color: var(--blocked-border, #fdba74);
+  border-left: 2px solid var(--blocked, #d97706);
+  background: #ffffff;
+  border-color: #e5e7eb;
 }
 
 html[data-theme="light"] .agent-process-role {
@@ -1649,12 +1651,12 @@ html[data-theme="light"] .harness-stage-chip.success span {
 }
 
 html[data-theme="light"] .harness-stage-chip.error {
-  border-color: var(--blocked-border, #fdba74);
-  background: var(--blocked-soft, #ffedd5);
+  border-color: var(--blocked-border, #fde68a);
+  background: var(--blocked-soft, #fffbeb);
 }
 
 html[data-theme="light"] .harness-stage-chip.error span {
-  color: var(--blocked, #c2410c);
+  color: var(--blocked, #d97706);
 }
 
 /* ============================================================================
@@ -1675,9 +1677,9 @@ html[data-theme="light"] .reasoning-step.expanded.done {
 
 html[data-theme="light"] .reasoning-step.expanded.blocked,
 html[data-theme="light"] .reasoning-step.expanded.error {
-  border-left-color: var(--blocked, #c2410c);
-  background: var(--blocked-soft, #ffedd5);
-  border-color: var(--blocked-border, #fdba74);
+  border-left-color: var(--blocked, #d97706);
+  background: #ffffff;
+  border-color: #e5e7eb;
 }
 
 /* ============================================================================
@@ -1687,8 +1689,8 @@ html[data-theme="light"] .reasoning-step.expanded.error {
 html[data-theme="light"] .thread-item.active,
 html[data-theme="light"] .session-item.active,
 html[data-theme="light"] .thread-card.active {
-  background: var(--bg-active, #e8f0ff);
-  border-color: var(--accent-border, #93c5fd);
+  background: var(--bg-active, #f3f4f6);
+  border-color: #e5e7eb;
 }
 
 html[data-theme="light"] .thread-item.active .thread-title,
@@ -1717,7 +1719,7 @@ html[data-theme="light"] .agent-process-overview-value.done {
 }
 
 html[data-theme="light"] .agent-process-overview-value.blocked {
-  color: var(--blocked, #c2410c);
+  color: var(--blocked, #d97706);
 }
 
 html[data-theme="light"] .agent-process-overview-note {
@@ -1745,8 +1747,8 @@ html[data-theme="light"] .agent-process-status-dot.done {
 }
 
 html[data-theme="light"] .agent-process-status-dot.blocked {
-  background: var(--blocked, #c2410c);
-  box-shadow: 0 0 0 4px var(--blocked-soft, #ffedd5);
+  background: var(--blocked, #d97706);
+  box-shadow: 0 0 0 4px var(--blocked-soft, #fffbeb);
 }
 
 html[data-theme="light"] .agent-process-statusbar strong {
@@ -1766,9 +1768,9 @@ html[data-theme="light"] .agent-process-live.done {
 }
 
 html[data-theme="light"] .agent-process-live.blocked {
-  border-color: var(--blocked-border, #fdba74);
-  background: var(--blocked-soft, #ffedd5);
-  color: var(--blocked, #c2410c);
+  border-color: var(--blocked-border, #fde68a);
+  background: var(--blocked-soft, #fffbeb);
+  color: var(--blocked, #d97706);
 }
 
 /* ============================================================================
