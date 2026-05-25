@@ -745,7 +745,8 @@ class HarnessRuntime:
         router_chat_sessions = chat_sessions or {router_session_id: [{"role": "user", "content": user_message}]}
         
         # 加载用于更新记忆的大模型 System Prompt 文件
-        prompt_path = Path(__file__).parent / "identity" / "memory_updater.prompt.md"
+        from utils.paths import identity_prompts_root
+        prompt_path = identity_prompts_root() / "memory_updater.prompt.md"
         if not prompt_path.exists():
             return
             

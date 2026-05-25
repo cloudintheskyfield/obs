@@ -8,8 +8,20 @@ def app_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def src_root() -> Path:
+    return app_root() / "src"
+
 def src_skills_root() -> Path:
-    return app_root() / "src" / "skills"
+    return src_root() / "skills"
+
+def agents_root() -> Path:
+    return src_root() / "agents"
+
+def identity_prompts_root() -> Path:
+    return agents_root() / "identity"
+
+def skill_registry_path() -> Path:
+    return src_root() / "skill_registry.json"
 
 def frontend_root() -> Path:
     return app_root() / "ui"

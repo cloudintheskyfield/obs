@@ -4,7 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_skills_root = Path(__file__).resolve().parent
+from utils.paths import src_skills_root
+_skills_root = src_skills_root()
 if str(_skills_root) not in sys.path:
     sys.path.insert(0, str(_skills_root))
 

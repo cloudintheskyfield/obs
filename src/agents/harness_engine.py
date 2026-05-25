@@ -541,18 +541,6 @@ class HarnessEngine:
         ],
     )
 
-    STRATEGY_BY_MODE = {
-        "agent": "default",
-        "create": "create",
-        "plan": "planner_only",
-    }
-
-    RUNTIME_MODE_BY_STRATEGY = {
-        "default": "agent",
-        "create": "create",
-        "planner_only": "agent",
-    }
-
     THIRD_PARTY_ERROR_TYPES = {
         "UNKNOWN_API_USAGE",
         "DEPENDENCY_VERSION_ERROR",
@@ -652,7 +640,8 @@ class HarnessEngine:
 
     def load_agent_prompt(self, role: str, fallback: str = "") -> str:
         prompt_name = f"{str(role or '').strip().lower()}.prompt.md"
-        prompt_path = Path(__file__).resolve().parent / "identity" / prompt_name
+        from utils.paths import identity_prompts_root
+        prompt_path = identity_prompts_root() / prompt_name
         try:
             prompt_text = prompt_path.read_text(encoding="utf-8").strip()
         except OSError:
@@ -716,13 +705,8 @@ class HarnessEngine:
             return "GENERATE"
         return "GENERATE"
 
-    def strategy_for_mode(self, mode: Optional[str]) -> str:
-        normalized = (mode or "agent").strip() or "agent"
-        return self.STRATEGY_BY_MODE.get(normalized, "default")
-
-    def runtime_mode_for_strategy(self, strategy: Optional[str]) -> str:
-        normalized = (strategy or "default").strip() or "default"
-        return self.RUNTIME_MODE_BY_STRATEGY.get(normalized, "agent")
+    def default_strategy(self) -> str:
+        return "default"
 
     def architecture_signature(self) -> Dict[str, Any]:
         return {
@@ -738,7 +722,7 @@ class HarnessEngine:
             "state_machine": self.state_machine(),
             "error_taxonomy": dict(self.ERROR_TAXONOMY),
             "schemas": {key: list(value) for key, value in self.SCHEMA_REQUIRED_FIELDS.items()},
-            "strategy_routes": dict(self.STRATEGY_BY_MODE),
+            "strategy_routes": {"agent": self.default_strategy()},
             "phase_order": list(self.STATES),
             "artifact_layout": self.artifact_layout(),
             "ui_model": {
@@ -1374,13 +1358,12 @@ class HarnessEngine:
 
     def system_addendum(
         self,
-        active_mode: str,
         user_message: str,
         tool_names: List[str],
         harness_strategy: Optional[str] = None,
     ) -> str:
         tool_line = ", ".join(tool_names) if tool_names else "none"
-        strategy = harness_strategy or self.strategy_for_mode(active_mode)
+        strategy = harness_strategy or self.default_strategy()
         roles = "\n".join(
             f"- {role.name} ({role.role}): {role.goal} Handoff: {role.handoff}."
             for role in self.ROLES
@@ -1392,7 +1375,6 @@ class HarnessEngine:
         return (
             "[OBS Harness Orchestrator Contract]\n"
             "All agent inputs and outputs must go through Harness. Agents never call each other directly.\n"
-            f"Current UI mode is only a harness strategy: {active_mode or 'agent'}.\n"
             f"Current harness strategy: {strategy}.\n"
             f"Available tools this turn: {tool_line}.\n"
             f"Current user request excerpt: {(user_message or '')[:300]}\n\n"

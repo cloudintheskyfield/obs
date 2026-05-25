@@ -78,7 +78,8 @@ class SkillLoader:
         if from_cwd:
             return from_cwd
 
-        from_module = self._find_upwards(Path(__file__).resolve().parent, project_rel)
+        from utils.paths import src_skills_root
+        from_module = self._find_upwards(src_skills_root(), project_rel)
         if from_module:
             return from_module
 

@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from loguru import logger
 import httpx
 
@@ -55,23 +55,13 @@ uvicorn_access = logging.getLogger("uvicorn.access")
 uvicorn_access.disabled = True
 
 # Pydantic models
-class SkillExecuteRequest(BaseModel):
-    tool_name: str
-    parameters: Dict[str, Any] = {}
-
-
 class ChatStreamRequest(BaseModel):
-    tool_name: Optional[str] = None  # 工具名称，通常是 "chat"，代表这是一次普通的对话请求
-    parameters: Dict[str, Any] = {}  # 扩展参数字典，通常包含请求字段的冗余副本或特定的额外配置
+    model_config = ConfigDict(extra="forbid")
+
     message: Optional[str] = None  # 用户在输入框中输入的纯文本内容
     message_parts: Optional[List[Dict[str, Any]]] = None  # 结构化消息体，例如包含用户上传的图片(data_url)和文本的组合
     session_id: Optional[str] = None  # 前端生成的会话 ID，对应左侧边栏的每一个 Thread (对话卡片)
-    mode: Optional[str] = None  # 对话模式，例如 "agent" (默认的智能体模式) 或 "create" (用于生成新应用的模式)
     permission_mode: Optional[str] = None  # 权限模式："ask" (危险操作需用户手动点击确认) 或 "auto" (全自动执行，无需确认)
-    permission_confirmed: Optional[bool] = None  # 布尔值，当 permission_mode 不是 "ask" 时通常传 True，表示已自动授权
-    context: Optional[str] = None  # 附加的上下文文本信息，供大模型参考
-    tool_context: Optional[str] = None  # 前端每次发送前收集的工作区概览（例如当前目录下有哪些文件），作为底层环境提示
-    thinking_mode: Optional[bool] = None  # 是否开启了“思考”模式（让大模型先展示内部的推理过程，然后再输出结果）
     workspace_path: Optional[str] = None  # 可选项：用于强制指定本次对话的工作区绝对路径
     model: Optional[str] = None  # 用户在前端顶部选择的大模型名称，例如 "MiniMax-M2" 或 "gpt-5.5"
 
@@ -1327,7 +1317,8 @@ async def search_skill_store(q: str = "", include_github: bool = False):
     import unicodedata
 
     # Load registry
-    registry_path = Path(__file__).parent / "skill_registry.json"
+    from utils.paths import skill_registry_path
+    registry_path = skill_registry_path()
     try:
         with open(registry_path, "r", encoding="utf-8") as f:
             registry = json.load(f)
@@ -1923,25 +1914,12 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
     if vllm_client is None:
         return JSONResponse({"success": False, "error": "VLLM client not initialized"})
 
-    params = request_data.parameters or {}
-    message = request_data.message if request_data.message is not None else params.get("message", "")
-    session_id = request_data.session_id if request_data.session_id is not None else params.get("session_id", "default")
-    mode = request_data.mode if request_data.mode is not None else params.get("mode", "agent")
-    permission_mode = (
-        request_data.permission_mode
-        if request_data.permission_mode is not None
-        else params.get("permission_mode", "ask")
-    )
-    permission_confirmed = bool(
-        request_data.permission_confirmed
-        if request_data.permission_confirmed is not None
-        else params.get("permission_confirmed", False)
-    )
-    context = request_data.context if request_data.context is not None else params.get("context", "")
-    tool_context = request_data.tool_context if request_data.tool_context is not None else params.get("tool_context", "workspace")
-    workspace_path = request_data.workspace_path if request_data.workspace_path is not None else params.get("workspace_path")
-    message_parts = request_data.message_parts if request_data.message_parts is not None else params.get("message_parts")
-    selected_model = request_data.model if request_data.model is not None else params.get("model") or config.vllm.model
+    message = request_data.message or ""
+    session_id = request_data.session_id or "default"
+    permission_mode = request_data.permission_mode or "ask"
+    workspace_path = request_data.workspace_path
+    message_parts = request_data.message_parts
+    selected_model = request_data.model or config.vllm.model
     temporal_context = _get_runtime_temporal_context()
     
     async def generate():
@@ -1955,7 +1933,7 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                 if skill_manager is not None:
                     skill_manager.set_workspace(request_workspace["runtime_path"])
 
-                # 添加用户消息到会话历史
+                # 添加用户消息到会话历史 # TODO 记忆修复 完全看不到任务中的细节，下次用户询问上次问题细节什么都看不到
                 chat_sessions[session_id].append({
                     "role": "user",
                     "content": message,
@@ -1967,16 +1945,14 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                 async for chunk in harness_runtime.chat_stream(
                     session_id,
                     chat_sessions,
-                    mode=mode,
                     permission_mode=permission_mode,
-                    permission_confirmed=permission_confirmed,
-                    context=context,
-                    tool_context=tool_context,
+                    permission_confirmed=permission_mode != "ask",
+                    context="",
+                    tool_context="workspace",
                     enabled_skills=None,
                     request_context={
                     **temporal_context,
                     "session_id": session_id,
-                    "mode": mode,
                     "permission_mode": permission_mode,
                     "location": location,
                         "workspace_display_path": request_workspace["path"],
@@ -2012,188 +1988,6 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                     logger.warning(f"Failed to persist session state for {session_id}: {persist_exc}")
     
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-@app.post("/execute")
-async def execute_skill(request_data: SkillExecuteRequest):
-    """执行技能"""
-    if skill_manager is None:
-        return JSONResponse({"success": False, "error": "Skill manager not initialized"})
-    
-    # 处理聊天请求
-    if request_data.tool_name == "chat":
-        message = request_data.parameters.get("message", "")
-        session_id = request_data.parameters.get("session_id", "default")
-        
-        if vllm_client is None:
-            return JSONResponse({
-                "success": False,
-                "error": "VLLM client not initialized"
-            })
-        
-        try:
-            # 获取或创建会话历史
-            if session_id not in chat_sessions:
-                chat_sessions[session_id] = [
-                    {
-                        "role": "system",
-                        "content": """你是OBS Code智能助手。
-
-**工具使用规则**：
-当用户询问天气、新闻、股票等实时信息时，直接输出：
-<tool_call>
-{"tool": "web_search", "query": "搜索内容"}
-</tool_call>
-
-**处理搜索结果**：
-1. 如果搜索结果包含"**天气查询指南**"、"**新闻资讯指南**"等标题：
-   - 说明搜索API暂时无法获取实时数据
-   - 提取结果中的**推荐网站**和**快速查询方式**
-   - 用友好的语言告知用户可以通过这些途径获取准确信息
-   
-2. 如果搜索结果包含实际数据：
-   - 直接基于数据回答用户
-
-**回复示例**：
-"我为您查询了天气信息。由于API限制，建议您通过以下方式查看：中国天气网、微信小程序等都能提供实时准确的天气数据。"
-
-用简洁、友好的Markdown格式回复。"""
-                    }
-                ]
-            
-            # 添加用户消息
-            chat_sessions[session_id].append({
-                "role": "user",
-                "content": message
-            })
-            
-            # 调用VLLM API (不传递tools参数)
-            response = await vllm_client.chat_completion(
-                messages=chat_sessions[session_id],
-                temperature=0.7,
-                max_tokens=2000
-            )
-            
-            # 检查响应
-            if "choices" in response and response["choices"]:
-                assistant_message = normalize_llm_message_content(
-                    response["choices"][0]["message"].get("content")
-                )
-                
-                # 检查是否包含tool_call标签
-                import re
-                tool_call_match = re.search(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', assistant_message, re.DOTALL)
-                
-                if tool_call_match:
-                    try:
-                        # 解析工具调用
-                        tool_data = json.loads(tool_call_match.group(1))
-                        tool_name = tool_data.get("tool")
-                        tool_query = tool_data.get("query", "")
-                        
-                        # 保存助手的工具请求
-                        chat_sessions[session_id].append({
-                            "role": "assistant",
-                            "content": assistant_message
-                        })
-                        
-                        # 执行工具
-                        logger.info(f"Executing tool: {tool_name} with query: {tool_query}")
-                        tool_result = await _execute_tool_call(tool_name, {"query": tool_query}, session_id=session_id)
-                        
-                        # 添加工具结果到历史
-                        chat_sessions[session_id].append({
-                            "role": "user",
-                            "content": f"[工具执行结果]\n{tool_result}\n\n请基于以上搜索结果回答我之前的问题。"
-                        })
-                        
-                        # 第二次调用获取最终答案
-                        final_response = await vllm_client.chat_completion(
-                            messages=chat_sessions[session_id],
-                            temperature=0.7,
-                            max_tokens=2000
-                        )
-                        
-                        if "choices" in final_response and final_response["choices"]:
-                            final_message = normalize_llm_message_content(
-                                final_response["choices"][0]["message"].get("content")
-                            )
-                            
-                            chat_sessions[session_id].append({
-                                "role": "assistant",
-                                "content": final_message
-                            })
-                            
-                            return JSONResponse({
-                                "success": True,
-                                "content": final_message,
-                                "error": None,
-                                "metadata": {
-                                    "type": "chat",
-                                    "session_id": session_id,
-                                    "model": config.vllm.model,
-                                    "used_tool": tool_name
-                                }
-                            })
-                    except Exception as e:
-                        logger.error(f"Tool call error: {e}")
-                        # 工具调用失败，返回原始回复
-                        chat_sessions[session_id].append({
-                            "role": "assistant",
-                            "content": assistant_message
-                        })
-                        
-                        return JSONResponse({
-                            "success": True,
-                            "content": assistant_message,
-                            "error": None,
-                            "metadata": {
-                                "type": "chat",
-                                "session_id": session_id,
-                                "model": config.vllm.model
-                            }
-                        })
-                else:
-                    # 没有工具调用，直接返回
-                    chat_sessions[session_id].append({
-                        "role": "assistant",
-                        "content": assistant_message
-                    })
-                    
-                    return JSONResponse({
-                        "success": True,
-                        "content": assistant_message,
-                        "error": None,
-                        "metadata": {
-                            "type": "chat",
-                            "session_id": session_id,
-                            "model": config.vllm.model
-                        }
-                    })
-            else:
-                return JSONResponse({
-                    "success": False,
-                    "error": "Invalid response from VLLM"
-                })
-                
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            print(f"Chat error: {error_detail}")
-            return JSONResponse({
-                "success": False,
-                "error": f"Chat failed: {str(e)}"
-            })
-    
-    try:
-        result = await skill_manager.execute_skill(request_data.tool_name, **request_data.parameters)
-        return JSONResponse({
-            "success": result.success,
-            "content": result.content,
-            "error": result.error,
-            "metadata": result.metadata
-        })
-    except Exception as e:
-        return JSONResponse({"success": False, "error": str(e)})
 
 # 导出app实例
 __all__ = ["app"]
