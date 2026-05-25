@@ -733,28 +733,41 @@ class HarnessRuntime:
         chat_sessions: Optional[Mapping[str, List[Dict[str, Any]]]] = None,
         model: Optional[str] = None,
     ) -> None:
+        """
+        在每次路由前调用，自动总结历史记忆（historical_summary）、近期记忆（recent_summary）以及关键画像（key_memories）。
+        它会将当前总结与最新的聊天记录发送给大模型，生成更新后的 JSON 总结并覆盖原有的缓存。
+        """
         if self.vllm_client is None:
             return
 
+        # 获取或初始化路由器的 Session ID 和完整的对话历史记录
         router_session_id = session_id or "__router__"
         router_chat_sessions = chat_sessions or {router_session_id: [{"role": "user", "content": user_message}]}
         
+        # 加载用于更新记忆的大模型 System Prompt 文件
         prompt_path = Path(__file__).parent / "identity" / "memory_updater.prompt.md"
         if not prompt_path.exists():
             return
             
         system_prompt = prompt_path.read_text(encoding="utf-8")
         
+        # 构建给大模型的输入内容 payload，其中包含了：
+        # - current_user_request: 当前用户的请求文本
+        # - long_range_memory: 之前的记忆总结（包含 historical_summary, recent_summary, key_memories）
+        # - recent_dialogue: 最近几轮的对话记录（默认最多包含8条历史消息）
         payload = self._router_memory_input(
             session_id=router_session_id,
             chat_sessions=router_chat_sessions,
             user_message=user_message,
         )
         
+        # 检查是否已有历史/近期总结。如果没有，说明可能是第一次总结，或者很久前遗留的空状态。
         memory = self.session_context_cache.get(router_session_id) or {}
         has_summary = bool(memory.get("historical_summary") or memory.get("recent_summary"))
         
         if not has_summary:
+            # 如果没有总结（冷启动），为了防止丢失很久以前的上下文，
+            # 临时将 recent_dialogue 的最大提取条数放宽到 1000 条，把尽可能多的历史长对话塞给大模型做初始总结。
             payload["recent_dialogue"] = self._router_recent_dialogue(
                 router_chat_sessions,
                 router_session_id,
@@ -762,6 +775,8 @@ class HarnessRuntime:
                 current_user_request=user_message,
             )
         
+        # 构造发给大模型的最终消息列表
+        # 这里使用了 _format_router_memory_input 把 JSON payload 转换成了排版良好的 Markdown 文本
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": self._format_router_memory_input(payload)},
@@ -769,6 +784,7 @@ class HarnessRuntime:
         
         raw_content = ""
         try:
+            # 异步请求大模型，不使用任何外部 Tools，仅执行总结任务
             stream = await self.vllm_client.chat_completion(
                 messages=messages,
                 tools=None,
@@ -786,10 +802,12 @@ class HarnessRuntime:
                 
             parsed: Optional[Dict[str, Any]] = None
             try:
+                # 尝试直接把大模型返回的文本（并过滤掉 provider 的 thinking 标签）解析为 JSON
                 obj = json.loads(strip_provider_thinking(raw_content))
                 if isinstance(obj, dict):
                     parsed = obj
             except Exception:
+                # 如果直接解析失败（例如大模型在 JSON 外面包裹了 markdown 代码块或者额外文字），尝试用正则提取花括号中的内容再解析
                 start = raw_content.find("{")
                 end = raw_content.rfind("}")
                 if start >= 0 and end > start:
@@ -800,6 +818,7 @@ class HarnessRuntime:
                     except Exception:
                         pass
                         
+            # 解析成功后，将更新后的各部分总结写回到 session_context_cache 缓存中
             if parsed:
                 if "historical_summary" in parsed:
                     self.session_context_cache.setdefault(session_id, {})["historical_summary"] = parsed["historical_summary"]
