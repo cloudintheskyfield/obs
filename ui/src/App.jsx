@@ -2728,7 +2728,6 @@ function App() {
                     mode: requestMode,
                     model: selectedModel,
                     tool_context: selectedToolContext,
-                    enabled_skills: effectiveSelectedSkills,
                     message_parts: messageParts,
                     context,
                     parameters: {
@@ -2740,7 +2739,6 @@ function App() {
                         mode: requestMode,
                         model: selectedModel,
                         tool_context: selectedToolContext,
-                        enabled_skills: effectiveSelectedSkills,
                         message_parts: messageParts,
                         context
                     }

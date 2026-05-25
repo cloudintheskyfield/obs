@@ -72,7 +72,6 @@ class ChatStreamRequest(BaseModel):
     context: Optional[str] = None  # 附加的上下文文本信息，供大模型参考
     tool_context: Optional[str] = None  # 前端每次发送前收集的工作区概览（例如当前目录下有哪些文件），作为底层环境提示
     thinking_mode: Optional[bool] = None  # 是否开启了“思考”模式（让大模型先展示内部的推理过程，然后再输出结果）
-    enabled_skills: Optional[List[str]] = None  # 前端界面上勾选启用的技能列表，如 ["web-scraper-pro", "desktop-commander"]
     workspace_path: Optional[str] = None  # 可选项：用于强制指定本次对话的工作区绝对路径
     model: Optional[str] = None  # 用户在前端顶部选择的大模型名称，例如 "MiniMax-M2" 或 "gpt-5.5"
 
@@ -1940,7 +1939,6 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
     )
     context = request_data.context if request_data.context is not None else params.get("context", "")
     tool_context = request_data.tool_context if request_data.tool_context is not None else params.get("tool_context", "workspace")
-    enabled_skills = request_data.enabled_skills if request_data.enabled_skills is not None else params.get("enabled_skills")
     workspace_path = request_data.workspace_path if request_data.workspace_path is not None else params.get("workspace_path")
     message_parts = request_data.message_parts if request_data.message_parts is not None else params.get("message_parts")
     selected_model = request_data.model if request_data.model is not None else params.get("model") or config.vllm.model
@@ -1974,7 +1972,7 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                     permission_confirmed=permission_confirmed,
                     context=context,
                     tool_context=tool_context,
-                    enabled_skills=enabled_skills or [],
+                    enabled_skills=None,
                     request_context={
                     **temporal_context,
                     "session_id": session_id,
