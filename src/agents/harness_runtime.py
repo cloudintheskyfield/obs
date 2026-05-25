@@ -25,22 +25,7 @@ MODEL_CONTEXT_WINDOWS = {
 CONTEXT_MEMORY_MAX_MESSAGES = 8
 CONTEXT_TEXT_LIMIT = 1200
 CONTEXT_BUNDLE_MAX_TEXT_CHARS = 12_000
-
-ROUTER_SYSTEM_PROMPT = (
-    "You are the Harness Router for OBS Code. Decide the execution route for exactly one user request.\n"
-    "Return exactly one compact JSON object and no markdown.\n"
-    "Allowed routes: DIRECT_ANSWER, SEARCH_ANSWER, CODE_WORKFLOW, DOC_WORKFLOW, FILE_WORKFLOW.\n\n"
-    "Route meanings:\n"
-    "- DIRECT_ANSWER: answer conversationally without editing files or running the Harness workflow.\n"
-    "- SEARCH_ANSWER: use Search only for current external facts, official docs, or version-sensitive API usage.\n"
-    "- CODE_WORKFLOW: run the five-agent Harness for code, UI, app, backend, debugging, tests, or project workflow changes.\n"
-    "- DOC_WORKFLOW: run the five-agent Harness for documents, slides, spreadsheets, PDFs, Markdown reports, and generated files whose main deliverable is a document artifact.\n"
-    "- FILE_WORKFLOW: run the five-agent Harness for file organization, copying, moving, renaming, sorting, or batch filesystem operations.\n\n"
-    "Make a semantic judgment from the whole request and project context. Do not rely on keyword matching.\n"
-    "Prefer workflow routes when the user asks you to create, modify, fix, run, test, or verify artifacts in the workspace.\n"
-    "Prefer DIRECT_ANSWER only when no workspace change or external lookup is needed.\n"
-    "Return JSON with fields: route, confidence, reason."
-)
+OUTERMOST_ROUTER_ROUTES = {"WORKFLOW", "DIRECT_ANSWER"}
 
 
 def strip_provider_thinking(text: str) -> str:
@@ -92,6 +77,9 @@ class HarnessRuntime:
 
     def _phase(self, key: str, **overrides: Any) -> str:
         return self._sse(self.request_lifecycle.phase_payload(key, **overrides))
+
+    def _status(self, status: str, **overrides: Any) -> str:
+        return self._sse(self.request_lifecycle.status_payload(status, **overrides))
 
     def _agent_summary_event(
         self,
@@ -480,6 +468,83 @@ class HarnessRuntime:
             summary.append(item)
         return summary
 
+    def _router_recent_dialogue(
+        self,
+        chat_sessions: Mapping[str, List[Dict[str, Any]]],
+        session_id: str,
+        *,
+        max_messages: int = CONTEXT_MEMORY_MAX_MESSAGES,
+        current_user_request: str = "",
+    ) -> List[Dict[str, str]]:
+        dialogue: List[Dict[str, str]] = []
+        skipped_current_request = False
+        for message in reversed(list(chat_sessions.get(session_id) or [])):
+            role = str(message.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = self._truncate_context_text(message.get("content"))
+            if not content.strip():
+                continue
+            if (
+                not skipped_current_request
+                and role == "user"
+                and content.strip() == str(current_user_request or "").strip()
+            ):
+                skipped_current_request = True
+                continue
+            dialogue.append({"role": role, "content": content})
+            if len(dialogue) >= max_messages:
+                break
+        return list(reversed(dialogue))
+
+    def _router_memory_input(
+        self,
+        *,
+        session_id: str,
+        chat_sessions: Mapping[str, List[Dict[str, Any]]],
+        user_message: str,
+    ) -> Dict[str, Any]:
+        memory = dict(self.session_context_cache.get(session_id) or {})
+        return {
+            "current_user_request": self._truncate_context_text(user_message, 1800),
+            "long_range_memory": {
+                "historical_summary": self._truncate_context_text(memory.get("historical_summary") or "", 2400),
+                "recent_summary": self._truncate_context_text(memory.get("recent_summary") or "", 1600),
+                "key_memories": self._truncate_context_text(memory.get("key_memories") or "", 1600),
+            },
+            "recent_dialogue": self._router_recent_dialogue(
+                chat_sessions,
+                session_id,
+                current_user_request=user_message,
+            ),
+        }
+
+    def _format_router_memory_input(self, payload: Mapping[str, Any]) -> str:
+        memory = payload.get("long_range_memory") if isinstance(payload.get("long_range_memory"), Mapping) else {}
+        recent_dialogue = payload.get("recent_dialogue") if isinstance(payload.get("recent_dialogue"), list) else []
+        lines = [
+            "Current user request:",
+            self._truncate_context_text(payload.get("current_user_request") or "", 1800) or "(empty)",
+            "",
+            "Long-range memory:",
+            f"- historical_summary: {self._truncate_context_text((memory or {}).get('historical_summary') or '', 2400) or '(none)'}",
+            f"- recent_summary: {self._truncate_context_text((memory or {}).get('recent_summary') or '', 1600) or '(none)'}",
+            f"- key_memories: {self._truncate_context_text((memory or {}).get('key_memories') or '', 1600) or '(none)'}",
+            "",
+            "Recent dialogue:",
+        ]
+        if recent_dialogue:
+            for item in recent_dialogue:
+                if not isinstance(item, Mapping):
+                    continue
+                role = str(item.get("role") or "unknown").strip() or "unknown"
+                content = self._truncate_context_text(item.get("content") or "")
+                if content:
+                    lines.append(f"- {role}: {content}")
+        else:
+            lines.append("- (none)")
+        return "\n".join(lines)
+
     def _context_artifact_index(self, workspace: Path, *, max_items: int = 24) -> List[Dict[str, Any]]:
         harness_dir = workspace / ".harness"
         if not harness_dir.exists():
@@ -602,7 +667,6 @@ class HarnessRuntime:
             "workspace": str(workspace),
             "current_user_request": self._truncate_context_text(user_message, 1800),
             "model": model or "",
-            "request_mode": str((request_context or {}).get("mode") or ""),
             "history_policy": {
                 "recent_messages_limit": CONTEXT_MEMORY_MAX_MESSAGES,
                 "text_limit_per_message": CONTEXT_TEXT_LIMIT,
@@ -638,28 +702,146 @@ class HarnessRuntime:
     def _persist_context_bundle(self, workspace: Path, context_bundle: Mapping[str, Any]) -> str:
         return self._write_json_file(workspace, ".harness/context/context_bundle.json", context_bundle)
 
+    def _router_system_prompt(self) -> str:
+        return self.harness_engine.load_agent_prompt("router")
+
+    def _normalize_router_decision(self, payload: Optional[Mapping[str, Any]], *, fallback_route: str = "WORKFLOW") -> Dict[str, Any]:
+        route = str((payload or {}).get("route") or "").strip().upper()
+        if route not in OUTERMOST_ROUTER_ROUTES:
+            route = fallback_route if fallback_route in OUTERMOST_ROUTER_ROUTES else "WORKFLOW"
+
+        try:
+            confidence = float((payload or {}).get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+
+        reason = str((payload or {}).get("reason") or "").strip()
+        if not reason:
+            reason = "Defaulted to Harness workflow." if route == "WORKFLOW" else "Pure direct answer."
+        return {
+            "route": route,
+            "confidence": confidence,
+            "reason": self._truncate_context_text(reason, 160),
+        }
+
+    async def _update_memory_summaries(
+        self,
+        user_message: str,
+        *,
+        session_id: str = "",
+        chat_sessions: Optional[Mapping[str, List[Dict[str, Any]]]] = None,
+        model: Optional[str] = None,
+    ) -> None:
+        if self.vllm_client is None:
+            return
+
+        router_session_id = session_id or "__router__"
+        router_chat_sessions = chat_sessions or {router_session_id: [{"role": "user", "content": user_message}]}
+        
+        prompt_path = Path(__file__).parent / "identity" / "memory_updater.prompt.md"
+        if not prompt_path.exists():
+            return
+            
+        system_prompt = prompt_path.read_text(encoding="utf-8")
+        
+        payload = self._router_memory_input(
+            session_id=router_session_id,
+            chat_sessions=router_chat_sessions,
+            user_message=user_message,
+        )
+        
+        memory = self.session_context_cache.get(router_session_id) or {}
+        has_summary = bool(memory.get("historical_summary") or memory.get("recent_summary"))
+        
+        if not has_summary:
+            payload["recent_dialogue"] = self._router_recent_dialogue(
+                router_chat_sessions,
+                router_session_id,
+                max_messages=1000,
+                current_user_request=user_message,
+            )
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": self._format_router_memory_input(payload)},
+        ]
+        
+        raw_content = ""
+        try:
+            stream = await self.vllm_client.chat_completion(
+                messages=messages,
+                tools=None,
+                temperature=0.0,
+                max_tokens=800,
+                stream=True,
+                model=model,
+            )
+            async for chunk in stream:
+                if isinstance(chunk, dict) and "__obs_phase" in chunk:
+                    continue
+                if "choices" not in chunk or not chunk["choices"]:
+                    continue
+                raw_content += chunk["choices"][0].get("delta", {}).get("content") or ""
+                
+            parsed: Optional[Dict[str, Any]] = None
+            try:
+                obj = json.loads(strip_provider_thinking(raw_content))
+                if isinstance(obj, dict):
+                    parsed = obj
+            except Exception:
+                start = raw_content.find("{")
+                end = raw_content.rfind("}")
+                if start >= 0 and end > start:
+                    try:
+                        obj = json.loads(strip_provider_thinking(raw_content[start:end + 1]))
+                        if isinstance(obj, dict):
+                            parsed = obj
+                    except Exception:
+                        pass
+                        
+            if parsed:
+                if "historical_summary" in parsed:
+                    self.session_context_cache.setdefault(session_id, {})["historical_summary"] = parsed["historical_summary"]
+                if "recent_summary" in parsed:
+                    self.session_context_cache.setdefault(session_id, {})["recent_summary"] = parsed["recent_summary"]
+                if "key_memories" in parsed:
+                    self.session_context_cache.setdefault(session_id, {})["key_memories"] = parsed["key_memories"]
+                    
+        except Exception as exc:
+            logger.warning(f"Memory Updater failed: {exc}")
+
     async def _classify_intent_with_llm(
         self,
         user_message: str,
-        workspace: Optional[Path] = None,
         *,
+        session_id: str = "",
+        chat_sessions: Optional[Mapping[str, List[Dict[str, Any]]]] = None,
         model: Optional[str] = None,
-    ) -> str:
+    ) -> Dict[str, Any]:
         text = (user_message or "").strip()
         if not text:
-            return "DIRECT_ANSWER"
+            return self._normalize_router_decision(
+                {"route": "DIRECT_ANSWER", "confidence": 1.0, "reason": "Empty request can be answered directly."},
+                fallback_route="DIRECT_ANSWER",
+            )
         if self.vllm_client is None:
-            logger.warning("Harness Router has no LLM client; defaulting to CODE_WORKFLOW for non-empty request.")
-            return "CODE_WORKFLOW"
+            logger.warning("Outermost Router has no LLM client; defaulting to WORKFLOW for non-empty request.")
+            return self._normalize_router_decision(
+                {"route": "WORKFLOW", "confidence": 0.0, "reason": "No router model available."},
+                fallback_route="WORKFLOW",
+            )
 
-        payload = {
-            "user_request": text,
-            "workspace": str(workspace or ""),
-            "has_harness_state": bool(workspace and (workspace / ".harness" / "state.json").exists()),
-        }
+        router_session_id = session_id or "__router__"
+        router_chat_sessions = chat_sessions or {router_session_id: [{"role": "user", "content": text}]}
+        payload = self._router_memory_input(
+            session_id=router_session_id,
+            chat_sessions=router_chat_sessions,
+            user_message=text,
+        )
         messages = [
-            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "system", "content": self._router_system_prompt()},
+            {"role": "user", "content": self._format_router_memory_input(payload)},
         ]
         raw_content = ""
         try:
@@ -678,8 +860,11 @@ class HarnessRuntime:
                     continue
                 raw_content += chunk["choices"][0].get("delta", {}).get("content") or ""
         except Exception as exc:
-            logger.warning(f"Harness Router LLM classification failed: {exc}")
-            return "CODE_WORKFLOW"
+            logger.warning(f"Outermost Router LLM classification failed: {exc}")
+            return self._normalize_router_decision(
+                {"route": "WORKFLOW", "confidence": 0.0, "reason": "Router model call failed."},
+                fallback_route="WORKFLOW",
+            )
 
         parsed: Optional[Dict[str, Any]] = None
         try:
@@ -697,12 +882,10 @@ class HarnessRuntime:
                 except Exception:
                     parsed = None
 
-        route = str((parsed or {}).get("route") or "").strip().upper()
-        allowed_routes = {"DIRECT_ANSWER", "SEARCH_ANSWER", "CODE_WORKFLOW", "DOC_WORKFLOW", "FILE_WORKFLOW"}
-        if route in allowed_routes:
-            return route
-        logger.warning(f"Harness Router returned invalid route {route!r}; defaulting to CODE_WORKFLOW.")
-        return "CODE_WORKFLOW"
+        decision = self._normalize_router_decision(parsed, fallback_route="WORKFLOW")
+        if not parsed or str((parsed or {}).get("route") or "").strip().upper() not in OUTERMOST_ROUTER_ROUTES:
+            logger.warning(f"Outermost Router returned invalid decision {parsed!r}; defaulting to WORKFLOW.")
+        return decision
 
     def _final_answer(
         self,
@@ -1052,7 +1235,7 @@ class HarnessRuntime:
         """Stream a direct LLM answer without invoking the 5-agent pipeline."""
         if route:
             yield self._sse({"type": "route", "route": route, "session_id": session_id})
-        yield self._phase("answering", session_id=session_id)
+        yield self._status("answering", session_id=session_id)
 
         messages = list(chat_sessions.get(session_id, []))
         if not messages:
@@ -1104,83 +1287,11 @@ class HarnessRuntime:
             self._append_assistant_message(chat_sessions, session_id, accumulated)
         yield self._sse({"done": True, "session_id": session_id})
 
-    async def _search_answer_stream(
-        self,
-        *,
-        session_id: str,
-        chat_sessions: Dict[str, List[Dict[str, Any]]],
-        user_message: str,
-        model: Optional[str],
-        workspace: Path,
-    ) -> AsyncGenerator[str, None]:
-        """Run the Search Agent for research-only questions, then compose an answer."""
-        yield self._sse({"type": "route", "route": "SEARCH_ANSWER", "session_id": session_id})
-        self.harness_engine.create_scaffold(workspace)
-        task_id = f"search_answer_{session_id.replace('-', '')[:12] or 'runtime'}"
-        context_bundle = self._build_context_bundle(
-            session_id=session_id,
-            chat_sessions=chat_sessions,
-            workspace=workspace,
-            user_message=user_message,
-            model=model,
-            request_context=None,
-            previous_failures=[],
-            search_reports=[],
-            previous_verdicts=[],
-        )
-        self._persist_context_bundle(workspace, context_bundle)
-        search_input = {
-            "task_id": task_id,
-            "round_id": 1,
-            "search_id": "search_001",
-            "user_request": user_message,
-            "research_questions": [{"id": "Q1", "question": user_message, "priority": "high"}],
-            "queries": [user_message],
-            "allowed_domains": [],
-            "harness_gate": {"opened": True, "reason": "SEARCH_ANSWER route"},
-            "context": {"context_bundle": context_bundle},
-        }
-        tools = []
-        if self.skill_manager and hasattr(self.skill_manager, "get_anthropic_tools"):
-            tools = self.skill_manager.get_anthropic_tools()
-        search_agent = SearchAgent(self.vllm_client, self.skill_manager)
-        async for event in search_agent.search(
-            session_id,
-            search_input,
-            tools=tools,
-            model=model,
-            max_iterations=4,
-        ):
-            yield event
-        search_report = search_agent.last_search_report or {}
-        search_dir = ".harness/search/search_001"
-        self._write_json_file(workspace, f"{search_dir}/search_report.json", search_report)
-        self._write_json_file(workspace, f"{search_dir}/sources.json", search_report.get("sources") or [])
-        yield self._sse(
-            {
-                "type": "agent_summary",
-                "role": "Search",
-                "summary": search_report.get("query_summary") or "SearchReport 已生成。",
-                "payload": search_report,
-                "session_id": session_id,
-            }
-        )
-        async for chunk in self._direct_answer_stream(
-            session_id=session_id,
-            chat_sessions=chat_sessions,
-            user_message=user_message,
-            model=model,
-            route=None,
-            extra_context=json.dumps(search_report, ensure_ascii=False),
-        ):
-            yield chunk
-
     async def chat_stream(
         self,
         session_id: str,
         chat_sessions: Dict[str, List[Dict[str, Any]]],
         *,
-        mode: str = "agent",
         permission_mode: str = "ask",
         permission_confirmed: bool = False,
         context: str = "",
@@ -1194,7 +1305,7 @@ class HarnessRuntime:
             _ = context
             _ = tool_context
             user_message = normalize_llm_message_content(chat_sessions.get(session_id, [])[-1].get("content") if chat_sessions.get(session_id) else "")
-            strategy = self.harness_engine.strategy_for_mode(mode)
+            strategy = self.harness_engine.default_strategy()
             selected_model = str((request_context or {}).get("model") or "").strip() or None
             workspace = self._workspace_path(request_context)
             if self.skill_manager is not None and hasattr(self.skill_manager, "set_workspace"):
@@ -1203,27 +1314,25 @@ class HarnessRuntime:
             self.session_context_cache.setdefault(session_id, {})["last_user_message"] = user_message
             self.session_context_cache[session_id]["workspace"] = str(workspace)
 
-            if strategy == "create":
-                yield self._phase("create", session_id=session_id)
-            else:
-                yield self._phase("prep_context", session_id=session_id)
-
-            if strategy == "planner_only":
-                async for chunk in self._planner_only_stream(
-                    session_id=session_id,
-                    chat_sessions=chat_sessions,
-                    user_message=user_message,
-                    request_context=request_context,
-                    enabled_skills=enabled_skills,
-                    model=selected_model,
-                ):
-                    yield chunk
-                return
+            yield self._status("loading_context", session_id=session_id)  # 向前端 UI 推送一个“加载状态”的动画提示
 
             # Intent Router: for default strategy, skip the 5-agent pipeline
             # for simple conversational queries that don't require code changes.
             if strategy in ("agent", "default", "", None):
-                intent = await self._classify_intent_with_llm(user_message, workspace=workspace, model=selected_model)
+                yield self._status("routing", session_id=session_id)
+                await self._update_memory_summaries(
+                    user_message,
+                    session_id=session_id,
+                    chat_sessions=chat_sessions,
+                    model=selected_model,
+                )
+                router_decision = await self._classify_intent_with_llm(
+                    user_message,
+                    session_id=session_id,
+                    chat_sessions=chat_sessions,
+                    model=selected_model,
+                )
+                intent = str(router_decision.get("route") or "WORKFLOW").strip().upper()
                 if intent == "DIRECT_ANSWER":
                     async for chunk in self._direct_answer_stream(
                         session_id=session_id,
@@ -1234,19 +1343,8 @@ class HarnessRuntime:
                     ):
                         yield chunk
                     return
-                if intent == "SEARCH_ANSWER":
-                    async for chunk in self._search_answer_stream(
-                        session_id=session_id,
-                        chat_sessions=chat_sessions,
-                        user_message=user_message,
-                        model=selected_model,
-                        workspace=workspace,
-                    ):
-                        yield chunk
-                    return
-                # CODE_WORKFLOW / DOC_WORKFLOW / FILE_WORKFLOW fall through to the controlled pipeline below.
-                workflow_routes = {"CODE_WORKFLOW", "DOC_WORKFLOW", "FILE_WORKFLOW"}
-                yield self._sse({"type": "route", "route": intent if intent in workflow_routes else "CODE_WORKFLOW", "session_id": session_id})
+                yield self._sse({"type": "route", "route": "WORKFLOW", "router_decision": router_decision, "session_id": session_id})
+                yield self._status("planning", session_id=session_id)
 
             existing_files = self._get_workspace_files_if_small(request_context)
             self.harness_engine.create_scaffold(workspace)
@@ -1283,7 +1381,7 @@ class HarnessRuntime:
                     "user_request": user_message,
                     "workspace": str(workspace),
                     "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "mode": strategy,
+                    "harness_strategy": strategy,
                     "permission_policy": permission_mode,
                     "sandbox_mode": self.harness_engine.DEFAULT_POLICY.get("sandbox_mode"),
                 },
@@ -1294,7 +1392,7 @@ class HarnessRuntime:
                 {
                     "session_id": session_id,
                     "workspace": str(workspace),
-                    "mode": strategy,
+                    "harness_strategy": strategy,
                     "model": selected_model or "",
                 },
             )
