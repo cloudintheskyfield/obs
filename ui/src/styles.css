@@ -4487,7 +4487,6 @@ html[data-theme="light"] .message-list {
 }
 
 html[data-theme="light"] .message,
-html[data-theme="light"] .message.user,
 html[data-theme="light"] .message.assistant,
 html[data-theme="light"] .message.system,
 html[data-theme="light"] .message.thinking,
@@ -4501,10 +4500,27 @@ html[data-theme="light"] .message.agent-process {
     box-shadow: none;
 }
 
+html[data-theme="light"] .message.user {
+    padding: 14px 20px;
+    border: 0;
+    border-radius: 20px;
+    background: #f3f4f6;
+    box-shadow: none;
+    margin-left: auto;
+    max-width: min(85%, 900px);
+}
+
+html[data-theme="light"] .message.user .message-meta {
+    text-align: right;
+    width: 100%;
+    margin-bottom: 6px;
+}
+
+
 html[data-theme="light"] .message.user .message-body {
-    font-size: 20px;
-    line-height: 1.4;
-    font-weight: 600;
+    font-size: 15px;
+    line-height: 1.5;
+    font-weight: 400;
     color: #111827;
 }
 
