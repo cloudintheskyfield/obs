@@ -106,7 +106,7 @@ def _parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--backend-host", default=os.getenv("OBS_BACKEND_HOST", "0.0.0.0"))
-    parser.add_argument("--backend-port", type=int, default=int(os.getenv("OBS_BACKEND_PORT", "8000")))
+    parser.add_argument("--backend-port", type=int, default=int(os.getenv("OBS_BACKEND_PORT", "8213")))
     parser.add_argument("--frontend-host", default=os.getenv("OBS_FRONTEND_HOST", "0.0.0.0"))
     parser.add_argument("--frontend-port", type=int, default=int(os.getenv("OBS_FRONTEND_PORT", "5173")))
     parser.add_argument(
