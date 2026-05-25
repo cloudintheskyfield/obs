@@ -1140,12 +1140,12 @@ class HarnessRuntime:
                 "max_command_retries": 0,
                 "max_dev_server_retries": 2,
                 "max_smoke_test_steps": 10,
-                "overall_timeout_sec": int((self.harness_engine.DEFAULT_BUDGETS.get("timeouts") or {}).get("runner_sec", 300)),
-                "command_timeout_sec": int((self.harness_engine.DEFAULT_BUDGETS.get("timeouts") or {}).get("command_default_sec", 120)),
-                "dev_server_timeout_sec": int((self.harness_engine.DEFAULT_BUDGETS.get("timeouts") or {}).get("dev_server_sec", 60)),
-                "browser_test_timeout_sec": int((self.harness_engine.DEFAULT_BUDGETS.get("timeouts") or {}).get("browser_test_sec", 60)),
+                "overall_timeout_sec": int((self.harness_engine.get_budgets(str(workspace)).get("timeouts") or {}).get("runner_sec", 300)),
+                "command_timeout_sec": int((self.harness_engine.get_budgets(str(workspace)).get("timeouts") or {}).get("command_default_sec", 120)),
+                "dev_server_timeout_sec": int((self.harness_engine.get_budgets(str(workspace)).get("timeouts") or {}).get("dev_server_sec", 60)),
+                "browser_test_timeout_sec": int((self.harness_engine.get_budgets(str(workspace)).get("timeouts") or {}).get("browser_test_sec", 60)),
             },
-            "permissions": dict((self.harness_engine.default_policy(str(workspace)).get("agent_permissions") or {}).get("Runner") or {}),
+            "permissions": dict((self.harness_engine.get_policy(str(workspace)).get("agent_permissions") or {}).get("Runner") or {}),
             "search_reports": list(search_reports or []),
             "artifact_info": dict(artifact_info or {}),
             "context_bundle": dict(context_bundle or {}),
@@ -1533,8 +1533,8 @@ class HarnessRuntime:
                 yield self._status("planning", session_id=session_id)
 
             existing_files = self._get_workspace_files_if_small(request_context)
-            self.harness_engine.create_scaffold(workspace)
-            budgets = self.harness_engine.default_budgets()
+            self.harness_engine.create_scaffold(workspace)  # 始化工作区（Workspace），为 Harness 的 5-Agent 工作流搭建必要的脚手架目录和默认配置
+            budgets = self.harness_engine.get_budgets(str(workspace))
             provisional_task_id = f"task_{session_id.replace('-', '')[:12] or 'runtime'}"
             planner = PlannerAgent(self.vllm_client)
             context_bundle = await self._build_context_bundle(

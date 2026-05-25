@@ -805,6 +805,38 @@ class HarnessEngine:
 
     def default_budgets(self) -> Dict[str, Any]:
         return safe_loads(json.dumps(self.DEFAULT_BUDGETS))
+        
+    def get_policy(self, workspace_root: Optional[str] = None) -> Dict[str, Any]:
+        policy = self.default_policy(workspace_root)
+        if workspace_root:
+            try:
+                from pathlib import Path
+                policy_file = Path(workspace_root) / ".harness" / "policy.json"
+                if policy_file.exists():
+                    custom = safe_loads(policy_file.read_text(encoding="utf-8"))
+                    if isinstance(custom, dict):
+                        # Simple shallow merge at top-level
+                        policy.update(custom)
+            except Exception as e:
+                from loguru import logger
+                logger.warning(f"Failed to read custom policy from {workspace_root}: {e}")
+        return policy
+
+    def get_budgets(self, workspace_root: Optional[str] = None) -> Dict[str, Any]:
+        budgets = self.default_budgets()
+        if workspace_root:
+            try:
+                from pathlib import Path
+                budgets_file = Path(workspace_root) / ".harness" / "budgets.json"
+                if budgets_file.exists():
+                    custom = safe_loads(budgets_file.read_text(encoding="utf-8"))
+                    if isinstance(custom, dict):
+                        # Shallow merge
+                        budgets.update(custom)
+            except Exception as e:
+                from loguru import logger
+                logger.warning(f"Failed to read custom budgets from {workspace_root}: {e}")
+        return budgets
 
     def validate_schema(self, payload: Mapping[str, Any], schema_name: str) -> List[str]:
         required = self.SCHEMA_REQUIRED_FIELDS.get(schema_name)
