@@ -45,15 +45,7 @@ export default function RuntimePills({
 
     return (
         <header className="unified-bar">
-            <div className="mode-chips">
-                <span
-                    className="mode-chip mode-agent active"
-                    title="Unified OBS Agent: Planner -> Search Gate -> Generator -> Runner -> Evaluator harness"
-                >
-                    <i className="fas fa-robot" aria-hidden="true" />
-                    <span>Agent</span>
-                </span>
-            </div>
+
 
             {/* ── Centre: context meter + file changes (dropdown) ── */}
             <div className="unified-bar-context-cluster">
@@ -79,18 +71,7 @@ export default function RuntimePills({
                     </div>
                 </div>
 
-                {onToggleCreateHub ? (
-                    <button
-                        type="button"
-                        className={`create-hub-link${createHubOpen ? " active" : ""}`}
-                        title="打开 Create Hub 的发布、发现和排行榜"
-                        onClick={onToggleCreateHub}
-                        aria-expanded={Boolean(createHubOpen)}
-                    >
-                        <i className="fas fa-compass" aria-hidden="true" />
-                        <span>Create Hub</span>
-                    </button>
-                ) : null}
+
 
 	                {fileChangeSummary?.visible ? (
 	                    <details className="files-changed-dropdown">
@@ -141,28 +122,23 @@ export default function RuntimePills({
 	                    </details>
 	                ) : null}
 
-	                {taskStatus ? (
-	                    <span className={`workspace-status-pill ${taskStatus.status || "idle"}`} title={taskStatus.subtitle || ""}>
-	                        <i
-	                            className={`fas ${
-	                                taskStatus.status === "done"
-	                                    ? "fa-check"
-	                                    : taskStatus.status === "blocked"
-	                                    ? "fa-triangle-exclamation"
-	                                    : taskStatus.status === "running"
-	                                    ? "fa-spinner fa-spin"
-	                                    : "fa-circle"
-	                            }`}
-	                            aria-hidden="true"
-	                        />
-	                        <span>{taskStatus.label || "Idle"}</span>
-	                        {taskStatus.duration ? <em>{taskStatus.duration}</em> : null}
-	                    </span>
-	                ) : null}
+
 	            </div>
 
             {/* ── Right: icon actions ── */}
             <div className="unified-bar-actions">
+                {onToggleCreateHub ? (
+                    <button
+                        type="button"
+                        className={`create-hub-link${createHubOpen ? " active" : ""}`}
+                        title="打开 Create Hub 的发布、发现和排行榜"
+                        onClick={onToggleCreateHub}
+                        aria-expanded={Boolean(createHubOpen)}
+                    >
+                        <i className="fas fa-compass" aria-hidden="true" />
+                        <span>Create Hub</span>
+                    </button>
+                ) : null}
                 {onThemeToggle ? (
                     <button
                         className={`icon-button theme-toggle-button${themeMode !== "system" ? " active" : ""}`}

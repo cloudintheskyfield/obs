@@ -6,6 +6,7 @@ import RuntimePills from "./components/RuntimePills.jsx";
 import SkillsDrawer from "./components/SkillsDrawer.jsx";
 import TranscriptView from "./components/TranscriptView.jsx";
 import { formatWorkspaceBreadcrumb, normalizeDisplayText, shortenModel } from "./lib/formatting.js";
+import { createRequestIndicator, switchRequestStatus } from "./lib/requestStatus.js";
 
 const STORAGE_VERSION = "20260415-01";
 const SETTINGS_KEY = "obs-agent-settings";
@@ -2675,19 +2676,16 @@ function App() {
             ? Array.from(new Set([...selectedSkills, ...CREATE_MODE_SKILLS]))
             : selectedSkills;
         const effectivePermissionMode = normalizePermissionMode(permissionMode);
-        const { toolContext: selectedToolContext, context } = buildContextPayload("workspace", "");
         sendingSessionIdRef.current = sessionId;
         setIsSending(true);
         setSessionBadges((prev) => ({ ...prev, [sessionId]: "working" }));
         setCompletedLabel(null);
         sendStartTimeRef.current = Date.now();
-        setRequestIndicator({
-            active: true,
-            startedAt: Date.now(),
-            label: requestMode === "create"
+        setRequestIndicator(createRequestIndicator(
+            requestMode === "create"
                 ? "Scaffolding runnable app"
-                : (thinkingMode ? "Preparing request" : "Working on your request"),
-        });
+                : (thinkingMode ? "Preparing request" : "Working on your request")
+        ));
         if (requestMode === "create") {
             setPreviewOpen(true);
         }
@@ -2719,29 +2717,11 @@ function App() {
                 signal: controller.signal,
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    tool_name: "chat",
                     message: requestContent,
                     session_id: sessionId,
                     permission_mode: effectivePermissionMode,
-                    permission_confirmed: effectivePermissionMode !== "ask",
-                    thinking_mode: thinkingMode,
-                    mode: requestMode,
                     model: selectedModel,
-                    tool_context: selectedToolContext,
-                    message_parts: messageParts,
-                    context,
-                    parameters: {
-                        message: requestContent,
-                        session_id: sessionId,
-                        permission_mode: effectivePermissionMode,
-                        permission_confirmed: effectivePermissionMode !== "ask",
-                        thinking_mode: thinkingMode,
-                        mode: requestMode,
-                        model: selectedModel,
-                        tool_context: selectedToolContext,
-                        message_parts: messageParts,
-                        context
-                    }
+                    message_parts: messageParts
                 })
             });
 
@@ -2879,10 +2859,7 @@ function App() {
                         ...payload,
                         user_event: payload.user_event,
                     });
-                    setRequestIndicator((current) => current?.active ? {
-                        ...current,
-                        label: userFacingStep(payload).title || "Working",
-                    } : current);
+                    switchRequestStatus(setRequestIndicator, userFacingStep(payload).title);
                     return;
                 }
 
@@ -2899,10 +2876,7 @@ function App() {
                         nextAction: displaySummary?.nextStep || "",
                         round_id: payload.round_id,
                     });
-                    setRequestIndicator((current) => current?.active ? {
-                        ...current,
-                        label: displaySummary?.title || current.label,
-                    } : current);
+                    switchRequestStatus(setRequestIndicator, displaySummary?.title);
                     return;
                 }
 
@@ -2923,10 +2897,7 @@ function App() {
                         round_id: decision?.roundId || 0,
                     });
                     if (decision?.decision) {
-                        setRequestIndicator((current) => current?.active ? {
-                            ...current,
-                            label: decision.decision === "PASS" ? "已完成验收" : "准备进入下一步",
-                        } : current);
+                        switchRequestStatus(setRequestIndicator, decision.decision === "PASS" ? "已完成验收" : "准备进入下一步");
                     }
                     return;
                 }
@@ -2934,10 +2905,7 @@ function App() {
                 if (payload.type === "task_start") {
                     toolCallsReceived += 1;
                     const taskStep = userFacingStep(payload);
-                    setRequestIndicator((current) => current?.active ? {
-                        ...current,
-                        label: taskStep.title || "Working",
-                    } : current);
+                    switchRequestStatus(setRequestIndicator, taskStep.title);
                     if (!payload.agent_role) {
                         upsertAgentProcess({
                             ...payload,
@@ -3000,10 +2968,7 @@ function App() {
 
                 if (payload.type === "phase" || payload.type === "layer_start" || payload.type === "verification" || payload.type === "complete") {
                     if (payload.transient) {
-                        setRequestIndicator((current) => current?.active ? {
-                            ...current,
-                            label: payload.content || "Preparing request",
-                        } : current);
+                        switchRequestStatus(setRequestIndicator, payload.content, "Preparing request");
                         return;
                     }
                     appendTranscriptEntry(sessionId, {
@@ -3464,11 +3429,6 @@ function App() {
                                 >
                                     <span className="session-active-indicator" aria-hidden="true" />
                                     <div className="session-name">{session.title}</div>
-                                    <div className="session-meta-row">
-                                        <span className={`session-status-badge ${sessionMeta.status}`}>{sessionMeta.label}</span>
-                                        {sessionMeta.duration ? <span className="session-duration">{sessionMeta.duration}</span> : null}
-                                    </div>
-                                    <div className="session-preview">{preview.slice(0, 90)}</div>
                                     {sessionBadges[session.id] && (
                                         <span
                                             className={`session-activity-badge${sessionBadges[session.id] === "done" ? " done" : ""}${sessionBadges[session.id] === "fading" ? " fading" : ""}`}
