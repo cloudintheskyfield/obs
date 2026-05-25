@@ -4,6 +4,7 @@ FastAPI应用定义 - 独立模块
 """
 import logging
 import json
+from utils.json_utils import safe_loads, safe_load
 import asyncio
 import ipaddress
 import mimetypes
@@ -1321,7 +1322,7 @@ async def search_skill_store(q: str = "", include_github: bool = False):
     registry_path = skill_registry_path()
     try:
         with open(registry_path, "r", encoding="utf-8") as f:
-            registry = json.load(f)
+            registry = safe_load(f)
     except Exception as exc:
         return JSONResponse({"success": False, "error": f"Registry unavailable: {exc}"}, status_code=500)
 
@@ -1965,7 +1966,7 @@ async def chat_stream(request_data: ChatStreamRequest, request: Request):
                 ):
                     if chunk.startswith("data: "):
                         try:
-                            payload = json.loads(chunk[6:].strip())
+                            payload = safe_loads(chunk[6:].strip())
                             if payload.get("type") == "llm_log":
                                 _persist_llm_trace(session_id, payload)
                         except Exception:

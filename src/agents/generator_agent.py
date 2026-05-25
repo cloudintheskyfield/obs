@@ -1,6 +1,7 @@
 import hashlib
 import asyncio
 import json
+from utils.json_utils import safe_loads
 import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Tuple
@@ -116,7 +117,7 @@ def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
     try:
-        parsed = json.loads(text)
+        parsed = safe_loads(text)
         if isinstance(parsed, dict):
             return parsed
     except Exception:
@@ -146,7 +147,7 @@ def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
             if depth == 0:
                 candidate = text[start:idx + 1]
                 try:
-                    parsed = json.loads(candidate)
+                    parsed = safe_loads(candidate)
                 except Exception:
                     return None
                 return parsed if isinstance(parsed, dict) else None
@@ -212,7 +213,7 @@ def _parse_tool_arguments(raw_args: str) -> Tuple[Dict[str, Any], Optional[str]]
     if not text:
         return {}, None
     try:
-        parsed = json.loads(text)
+        parsed = safe_loads(text)
     except Exception as exc:
         return {}, f"Malformed tool arguments: {exc}"
     if not isinstance(parsed, Mapping):

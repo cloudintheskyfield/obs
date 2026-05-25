@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from utils.json_utils import safe_loads
 from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional
 
 from loguru import logger
@@ -22,7 +23,7 @@ def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
     try:
-        parsed = json.loads(text)
+        parsed = safe_loads(text)
         if isinstance(parsed, dict):
             return parsed
     except Exception:
@@ -52,7 +53,7 @@ def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
             if depth == 0:
                 candidate = text[start:idx + 1]
                 try:
-                    parsed = json.loads(candidate)
+                    parsed = safe_loads(candidate)
                 except Exception:
                     return None
                 return parsed if isinstance(parsed, dict) else None
@@ -223,7 +224,7 @@ class SearchAgent:
                 tool_name = tc["function"]["name"]
                 try:
                     raw_args = tc["function"]["arguments"]
-                    tool_args = json.loads(raw_args) if raw_args else {}
+                    tool_args = safe_loads(raw_args) if raw_args else {}
                 except Exception:
                     tool_args = {}
 

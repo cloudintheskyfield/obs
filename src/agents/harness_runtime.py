@@ -1,4 +1,5 @@
 import json
+from utils.json_utils import safe_loads
 import difflib
 import re
 import traceback
@@ -220,7 +221,7 @@ class HarnessRuntime:
         }
 
     def _json_safe(self, payload: Any) -> Any:
-        return json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+        return safe_loads(json.dumps(payload, ensure_ascii=False, default=str))
 
     def _read_text_file(self, workspace: Path, relative_path: str, *, max_bytes: int = 262_144) -> Optional[str]:
         path = workspace / relative_path
@@ -406,7 +407,7 @@ class HarnessRuntime:
         if not raw_chunk.startswith("data: "):
             return raw_chunk
         try:
-            payload = json.loads(raw_chunk[6:].strip())
+            payload = safe_loads(raw_chunk[6:].strip())
         except Exception:
             return raw_chunk
         if isinstance(payload, dict) and payload.get("type") in {"agent_step", "task_start", "task_complete"}:
@@ -641,7 +642,7 @@ class HarnessRuntime:
         return indexed
 
     async def _bounded_context_bundle(self, bundle: Mapping[str, Any]) -> Dict[str, Any]:
-        bounded = json.loads(json.dumps(bundle, ensure_ascii=False, default=str))
+        bounded = safe_loads(json.dumps(bundle, ensure_ascii=False, default=str))
         while len(json.dumps(bounded, ensure_ascii=False, default=str)) > CONTEXT_BUNDLE_MAX_TEXT_CHARS:
             artifacts = bounded.get("artifact_index")
             if isinstance(artifacts, list) and len(artifacts) > 8:
@@ -829,7 +830,7 @@ class HarnessRuntime:
             parsed: Optional[Dict[str, Any]] = None
             try:
                 # 尝试直接把大模型返回的文本（并过滤掉 provider 的 thinking 标签）解析为 JSON
-                obj = json.loads(strip_provider_thinking(raw_content))
+                obj = safe_loads(strip_provider_thinking(raw_content))
                 if isinstance(obj, dict):
                     parsed = obj
             except Exception:
@@ -838,7 +839,7 @@ class HarnessRuntime:
                 end = raw_content.rfind("}")
                 if start >= 0 and end > start:
                     try:
-                        obj = json.loads(strip_provider_thinking(raw_content[start:end + 1]))
+                        obj = safe_loads(strip_provider_thinking(raw_content[start:end + 1]))
                         if isinstance(obj, dict):
                             parsed = obj
                     except Exception:
@@ -913,7 +914,7 @@ class HarnessRuntime:
 
         parsed: Optional[Dict[str, Any]] = None
         try:
-            obj = json.loads(strip_provider_thinking(raw_content))
+            obj = safe_loads(strip_provider_thinking(raw_content))
             if isinstance(obj, dict):
                 parsed = obj
         except Exception:
@@ -921,7 +922,7 @@ class HarnessRuntime:
             end = raw_content.rfind("}")
             if start >= 0 and end > start:
                 try:
-                    obj = json.loads(strip_provider_thinking(raw_content[start:end + 1]))
+                    obj = safe_loads(strip_provider_thinking(raw_content[start:end + 1]))
                     if isinstance(obj, dict):
                         parsed = obj
                 except Exception:

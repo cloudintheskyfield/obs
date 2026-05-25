@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+from utils.json_utils import safe_loads
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -797,13 +798,13 @@ class HarnessEngine:
         }
 
     def default_policy(self, workspace_root: Optional[str] = None) -> Dict[str, Any]:
-        policy = json.loads(json.dumps(self.DEFAULT_POLICY))
+        policy = safe_loads(json.dumps(self.DEFAULT_POLICY))
         if workspace_root:
             policy["workspace_root"] = workspace_root
         return policy
 
     def default_budgets(self) -> Dict[str, Any]:
-        return json.loads(json.dumps(self.DEFAULT_BUDGETS))
+        return safe_loads(json.dumps(self.DEFAULT_BUDGETS))
 
     def validate_schema(self, payload: Mapping[str, Any], schema_name: str) -> List[str]:
         required = self.SCHEMA_REQUIRED_FIELDS.get(schema_name)

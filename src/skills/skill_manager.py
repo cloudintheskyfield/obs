@@ -1,6 +1,7 @@
 """Harness skill manager."""
 import os
 import json
+from utils.json_utils import safe_loads
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
@@ -560,7 +561,7 @@ class SkillManager:
         meta_file = skill_dir / "_meta.json"
         if meta_file.exists():
             try:
-                return json.loads(meta_file.read_text(encoding="utf-8"))
+                return safe_loads(meta_file.read_text(encoding="utf-8"))
             except Exception:
                 pass
         return {}

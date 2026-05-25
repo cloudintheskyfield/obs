@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+from utils.json_utils import safe_loads
 import re
 import shlex
 from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional
@@ -312,7 +313,7 @@ def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
     try:
-        parsed = json.loads(text)
+        parsed = safe_loads(text)
         if isinstance(parsed, dict):
             return parsed
     except Exception:
@@ -343,7 +344,7 @@ def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
             if depth == 0:
                 candidate = text[start:idx + 1]
                 try:
-                    parsed = json.loads(candidate)
+                    parsed = safe_loads(candidate)
                 except Exception:
                     return None
                 return parsed if isinstance(parsed, dict) else None

@@ -305,8 +305,9 @@ def load_config(config_file: Optional[str] = None) -> AgentConfig:
     if config_file and os.path.exists(config_file):
         try:
             import json
+from utils.json_utils import safe_load
             with open(config_file, 'r', encoding='utf-8') as f:
-                file_config = json.load(f)
+                file_config = safe_load(f)
             
             # 简单合并（文件配置覆盖环境变量）
             for key, value in file_config.items():

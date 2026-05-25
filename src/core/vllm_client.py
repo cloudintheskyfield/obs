@@ -1,6 +1,7 @@
 """VLLM客户端"""
 import base64
 import json
+from utils.json_utils import safe_loads
 import asyncio
 import random
 from typing import List, Dict, Any, Optional, Union
@@ -245,7 +246,7 @@ class VLLMClient:
                                                 )
                                             return
                                         try:
-                                            data = json.loads(data_str)
+                                            data = safe_loads(data_str)
                                             # Detect in-stream error objects (e.g. MiniMax 529 in SSE body)
                                             if data.get("type") == "error" or (
                                                 isinstance(data.get("error"), dict)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from utils.json_utils import safe_loads
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -104,7 +105,7 @@ class SessionStore:
                 if not line:
                     continue
                 try:
-                    records.append(json.loads(line))
+                    records.append(safe_loads(line))
                 except json.JSONDecodeError:
                     continue
         return records
@@ -114,7 +115,7 @@ class SessionStore:
         if not session_file.exists():
             return None
         try:
-            payload = json.loads(session_file.read_text(encoding="utf-8"))
+            payload = safe_loads(session_file.read_text(encoding="utf-8"))
             messages = payload.get("messages")
             if isinstance(messages, list):
                 return messages
@@ -130,7 +131,7 @@ class SessionStore:
             reverse=True,
         ):
             try:
-                payload = json.loads(file_path.read_text(encoding="utf-8"))
+                payload = safe_loads(file_path.read_text(encoding="utf-8"))
             except Exception:
                 continue
             messages = payload.get("messages")
@@ -162,7 +163,7 @@ class SessionStore:
         if not cache_file.exists():
             return None
         try:
-            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+            payload = safe_loads(cache_file.read_text(encoding="utf-8"))
             cache = payload.get("cache")
             if isinstance(cache, dict):
                 return cache
@@ -248,7 +249,7 @@ class SessionStore:
             reverse=True,
         ):
             try:
-                payload = json.loads(file_path.read_text(encoding="utf-8"))
+                payload = safe_loads(file_path.read_text(encoding="utf-8"))
                 session_id = str(payload.get("id") or file_path.stem)
                 seen_ids.add(session_id)
                 sessions.append(payload)
@@ -264,14 +265,14 @@ class SessionStore:
     def load_ui_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         session_file = self.ui_session_file(session_id)
         if session_file.exists():
-            return json.loads(session_file.read_text(encoding="utf-8"))
+            return safe_loads(session_file.read_text(encoding="utf-8"))
         messages = self.load_chat_session(session_id)
         if messages is None:
             return None
         chat_file = self.chat_session_file(session_id)
         updated_at = ""
         try:
-            payload = json.loads(chat_file.read_text(encoding="utf-8"))
+            payload = safe_loads(chat_file.read_text(encoding="utf-8"))
             updated_at = str(payload.get("updated_at") or "")
         except Exception:
             pass
@@ -302,7 +303,7 @@ class SessionStore:
             reverse=True,
         ):
             try:
-                projects.append(json.loads(file_path.read_text(encoding="utf-8")))
+                projects.append(safe_loads(file_path.read_text(encoding="utf-8")))
             except Exception:
                 continue
         return projects
@@ -311,7 +312,7 @@ class SessionStore:
         project_file = self.published_project_file(project_id)
         if not project_file.exists():
             return None
-        return json.loads(project_file.read_text(encoding="utf-8"))
+        return safe_loads(project_file.read_text(encoding="utf-8"))
 
     def save_published_project(self, project_id: str, payload: Dict[str, Any]) -> None:
         self.published_project_file(project_id).write_text(
@@ -334,7 +335,7 @@ class SessionStore:
         if not self.paths.workspace_state_file.exists():
             return None
         try:
-            return json.loads(self.paths.workspace_state_file.read_text(encoding="utf-8"))
+            return safe_loads(self.paths.workspace_state_file.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning(f"Failed to load workspace state: {exc}")
             return None
