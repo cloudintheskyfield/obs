@@ -1851,3 +1851,47 @@ html[data-theme="light"] .logs-header-action {
 html[data-theme="light"] .logs-header-action:hover {
   background: #f3f4f6;
 }
+
+
+/* ============================================================================
+   Light Mode: Request Loading Indicator Fixes
+   ============================================================================ */
+
+html[data-theme="light"] .request-loading-left {
+  background: #f9fafb;
+  border-color: #e5e7eb;
+  color: #374151;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+html[data-theme="light"] .request-loading-spinner {
+  color: #3b82f6;
+}
+
+html[data-theme="light"] .request-loading-timer {
+  color: #6b7280;
+}
+
+/* ============================================================================
+   Typography Refinement: Force macOS Native feel
+   ============================================================================ */
+   
+html[data-theme="light"] body,
+html[data-theme="light"] .message-body,
+html[data-theme="light"] .brand-name,
+html[data-theme="light"] .session-name,
+html[data-theme="light"] .message-list {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+html[data-theme="light"] .message.user .message-body p {
+  font-weight: 400; /* Revert the overly thick bold font for user messages */
+  font-size: 15px;  /* Slight tweak to match macOS feeling */
+  line-height: 1.5;
+  color: #111827;
+}
+
+html[data-theme="light"] .message.user .message-body {
+  font-weight: 400;
+}
+

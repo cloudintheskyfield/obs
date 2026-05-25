@@ -4502,10 +4502,10 @@ html[data-theme="light"] .message.agent-process {
 }
 
 html[data-theme="light"] .message.user .message-body {
-    font-size: clamp(20px, 2vw, 30px);
-    line-height: 1.35;
-    font-weight: 650;
-    color: #1f2328;
+    font-size: 20px;
+    line-height: 1.4;
+    font-weight: 600;
+    color: #111827;
 }
 
 html[data-theme="light"] .message-meta {
