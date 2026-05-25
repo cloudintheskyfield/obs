@@ -9,6 +9,7 @@ from loguru import logger
 from dotenv import load_dotenv
 
 from utils.paths import app_root, src_skills_root
+from utils.json_utils import safe_load
 
 
 def _runtime_data_root() -> Path:
@@ -304,8 +305,6 @@ def load_config(config_file: Optional[str] = None) -> AgentConfig:
     # 如果指定了配置文件，加载并合并
     if config_file and os.path.exists(config_file):
         try:
-            import json
-from utils.json_utils import safe_load
             with open(config_file, 'r', encoding='utf-8') as f:
                 file_config = safe_load(f)
             
