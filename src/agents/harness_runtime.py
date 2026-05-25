@@ -1283,28 +1283,37 @@ class HarnessRuntime:
             yield self._sse({"type": "route", "route": route, "session_id": session_id})
         yield self._status("answering", session_id=session_id)
 
-        messages = list(chat_sessions.get(session_id, []))
-        if not messages:
-            messages = [{"role": "user", "content": user_message}]
+        from utils.paths import identity_prompts_root
+        prompt_path = identity_prompts_root() / "direct_answer.prompt.md"
+        sys_prompt_content = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "You are a helpful AI assistant."
+
         if extra_context:
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Use the following bounded SearchReport as evidence. "
-                        "Answer the user's question directly, cite source titles/URLs when present, "
-                        "and do not invent facts outside the report.\n\n"
-                        f"{extra_context}"
-                    ),
-                },
-                *messages,
-            ]
+            sys_prompt_content += (
+                "\n\nUse the following bounded SearchReport as evidence. "
+                "Answer the user's question directly, cite source titles/URLs when present, "
+                "and do not invent facts outside the report.\n\n"
+                f"{extra_context}"
+            )
+
+        payload = await self._router_memory_input(
+            session_id=session_id,
+            chat_sessions=chat_sessions,
+            user_message=user_message,
+        )
+        user_content = await self._format_router_memory_input(payload)
+
+        messages = [
+            {"role": "system", "content": sys_prompt_content},
+            {"role": "user", "content": user_content},
+        ]
 
         accumulated = ""
+        in_think = False
+        buf = ""
+        
         try:
             stream = await self.vllm_client.chat_completion(messages=messages, model=model, stream=True)
             async for chunk in stream:
-                # Handle rate-limit wait chunks emitted by VLLMClient
                 if isinstance(chunk, dict) and chunk.get("__obs_phase"):
                     yield self._sse({"type": "phase", "transient": True, "content": "正在重试...", "session_id": session_id})
                     continue
@@ -1319,9 +1328,45 @@ class HarnessRuntime:
                         )
                 except Exception:
                     pass
+                    
                 if delta:
                     accumulated += delta
-                    yield self._sse({"type": "answer_delta", "delta": delta, "session_id": session_id})
+                    buf += delta
+                    
+                    while True:
+                        if not in_think:
+                            start_pos = buf.find("<think>")
+                            if start_pos != -1:
+                                if start_pos > 0:
+                                    yield self._sse({"type": "answer_delta", "delta": buf[:start_pos], "session_id": session_id})
+                                in_think = True
+                                buf = buf[start_pos+7:]
+                            else:
+                                safe_len = max(0, len(buf) - 6)
+                                if safe_len > 0:
+                                    yield self._sse({"type": "answer_delta", "delta": buf[:safe_len], "session_id": session_id})
+                                    buf = buf[safe_len:]
+                                break
+                        else:
+                            end_pos = buf.find("</think>")
+                            if end_pos != -1:
+                                if end_pos > 0:
+                                    yield self._sse({"type": "agent_thinking", "delta": buf[:end_pos], "session_id": session_id})
+                                in_think = False
+                                buf = buf[end_pos+8:]
+                            else:
+                                safe_len = max(0, len(buf) - 7)
+                                if safe_len > 0:
+                                    yield self._sse({"type": "agent_thinking", "delta": buf[:safe_len], "session_id": session_id})
+                                    buf = buf[safe_len:]
+                                break
+
+            if buf:
+                if in_think:
+                    yield self._sse({"type": "agent_thinking", "delta": buf, "session_id": session_id})
+                else:
+                    yield self._sse({"type": "answer_delta", "delta": buf, "session_id": session_id})
+                    
         except Exception as exc:
             logger.warning(f"Direct answer stream error: {exc}")
             fallback = "暂时无法回答，请稍后重试。"
