@@ -133,6 +133,7 @@ class VLLMConfig(BaseModel):
     model: str = "MiniMax-M2"
     timeout: int = 60
     max_retries: int = 3
+    max_context_length: int = 128000
 
 
 class GPT55Config(BaseModel):
@@ -143,6 +144,7 @@ class GPT55Config(BaseModel):
     model: str = "gpt-5.5"
     timeout: int = 60
     max_retries: int = 3
+    max_context_length: int = 128000
 
 
 class VisionVLLMConfig(BaseModel):
@@ -153,6 +155,7 @@ class VisionVLLMConfig(BaseModel):
     model: str = "qwen35-35b-a3b-judge"
     timeout: int = 60
     max_retries: int = 2
+    max_context_length: int = 32000
 
 
 class WebBrowsingConfig(BaseModel):
@@ -219,6 +222,8 @@ class AgentConfig(BaseModel):
             config.vllm.timeout = int(os.getenv("VLLM_TIMEOUT"))
         if os.getenv("VLLM_MAX_RETRIES"):
             config.vllm.max_retries = int(os.getenv("VLLM_MAX_RETRIES"))
+        if os.getenv("VLLM_MAX_CONTEXT_LENGTH"):
+            config.vllm.max_context_length = int(os.getenv("VLLM_MAX_CONTEXT_LENGTH"))
 
         # 视觉专用VLLM配置
         if os.getenv("VISION_VLLM_ENABLED"):
@@ -230,6 +235,8 @@ class AgentConfig(BaseModel):
             config.vision_vllm.api_key = os.getenv("VISION_VLLM_API_KEY")
         if os.getenv("VISION_VLLM_MODEL"):
             config.vision_vllm.model = os.getenv("VISION_VLLM_MODEL")
+        if os.getenv("VISION_VLLM_MAX_CONTEXT_LENGTH"):
+            config.vision_vllm.max_context_length = int(os.getenv("VISION_VLLM_MAX_CONTEXT_LENGTH"))
         
         # GPT-5.5配置
         if os.getenv("GPT55_ENABLED"):
@@ -241,6 +248,8 @@ class AgentConfig(BaseModel):
             config.gpt55.api_key = os.getenv("GPT55_API_KEY")
         if os.getenv("GPT55_MODEL"):
             config.gpt55.model = os.getenv("GPT55_MODEL")
+        if os.getenv("GPT55_MAX_CONTEXT_LENGTH"):
+            config.gpt55.max_context_length = int(os.getenv("GPT55_MAX_CONTEXT_LENGTH"))
         
         # 工作目录
         if os.getenv("WORK_DIR"):

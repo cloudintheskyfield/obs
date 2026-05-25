@@ -436,13 +436,38 @@ class HarnessRuntime:
         used_tokens = self._estimate_context_tokens(messages)
         return int(min(100, round((used_tokens / max_tokens) * 100)))
 
-    def _truncate_context_text(self, value: Any, limit: int = CONTEXT_TEXT_LIMIT) -> str:
+    async def _summarize_context_text(self, value: Any, limit: int = CONTEXT_TEXT_LIMIT) -> str:
         text = strip_provider_thinking(normalize_llm_message_content(value))
         if len(text) <= limit:
             return text
-        return text[: max(0, limit - 24)].rstrip() + "\n[context truncated]"
+            
+        if self.vllm_client is None:
+            return text[: max(0, limit - 24)].rstrip() + "\n[context truncated]"
+            
+        from utils.paths import identity_prompts_root
+        prompt_path = identity_prompts_root() / "chunk_summarizer.prompt.md"
+        sys_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "You are a concise AI context summarizer."
+        
+        max_context_chars = self._get_context_window_tokens() * 3
+        chunk_size = max(1000, max_context_chars - 8000)
+        
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        summaries = []
+        model_name = getattr(self.harness_engine.config.vllm, "model", "MiniMax-M2") if hasattr(self, "harness_engine") and hasattr(self.harness_engine, "config") else "MiniMax-M2"
+        
+        for i, chunk in enumerate(chunks):
+            prompt = f"{sys_prompt}\n\nCHUNK {i+1}/{len(chunks)}:\n{chunk}"
+            try:
+                summary = await self.vllm_client.generate_text(prompt, model=model_name, temperature=0.1)
+                summaries.append(summary)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Summarizer failed: {e}")
+                summaries.append(chunk[: max(0, limit // len(chunks) - 24)] + "\n[chunk truncated]")
+                
+        return "\n\n--- NEXT SUMMARY CHUNK ---\n\n".join(summaries)
 
-    def _summarize_chat_history(
+    async def _summarize_chat_history(
         self,
         chat_sessions: Mapping[str, List[Dict[str, Any]]],
         session_id: str,
@@ -456,7 +481,7 @@ class HarnessRuntime:
             item: Dict[str, Any] = {
                 "index": index,
                 "role": str(message.get("role") or "user"),
-                "content": self._truncate_context_text(content),
+                "content": await self._summarize_context_text(content),
             }
             if isinstance(content, list):
                 item["message_parts"] = len(content)
@@ -468,7 +493,7 @@ class HarnessRuntime:
             summary.append(item)
         return summary
 
-    def _router_recent_dialogue(
+    async def _router_recent_dialogue(
         self,
         chat_sessions: Mapping[str, List[Dict[str, Any]]],
         session_id: str,
@@ -482,7 +507,7 @@ class HarnessRuntime:
             role = str(message.get("role") or "").strip().lower()
             if role not in {"user", "assistant"}:
                 continue
-            content = self._truncate_context_text(message.get("content"))
+            content = await self._summarize_context_text(message.get("content"))
             if not content.strip():
                 continue
             if (
@@ -497,7 +522,7 @@ class HarnessRuntime:
                 break
         return list(reversed(dialogue))
 
-    def _router_memory_input(
+    async def _router_memory_input(
         self,
         *,
         session_id: str,
@@ -506,30 +531,30 @@ class HarnessRuntime:
     ) -> Dict[str, Any]:
         memory = dict(self.session_context_cache.get(session_id) or {})
         return {
-            "current_user_request": self._truncate_context_text(user_message, 1800),
+            "current_user_request": await self._summarize_context_text(user_message, 1800),
             "long_range_memory": {
-                "historical_summary": self._truncate_context_text(memory.get("historical_summary") or "", 2400),
-                "recent_summary": self._truncate_context_text(memory.get("recent_summary") or "", 1600),
-                "key_memories": self._truncate_context_text(memory.get("key_memories") or "", 1600),
+                "historical_summary": await self._summarize_context_text(memory.get("historical_summary") or "", 2400),
+                "recent_summary": await self._summarize_context_text(memory.get("recent_summary") or "", 1600),
+                "key_memories": await self._summarize_context_text(memory.get("key_memories") or "", 1600),
             },
-            "recent_dialogue": self._router_recent_dialogue(
+            "recent_dialogue": await self._router_recent_dialogue(
                 chat_sessions,
                 session_id,
                 current_user_request=user_message,
             ),
         }
 
-    def _format_router_memory_input(self, payload: Mapping[str, Any]) -> str:
+    async def _format_router_memory_input(self, payload: Mapping[str, Any]) -> str:
         memory = payload.get("long_range_memory") if isinstance(payload.get("long_range_memory"), Mapping) else {}
         recent_dialogue = payload.get("recent_dialogue") if isinstance(payload.get("recent_dialogue"), list) else []
         lines = [
             "Current user request:",
-            self._truncate_context_text(payload.get("current_user_request") or "", 1800) or "(empty)",
+            await self._summarize_context_text(payload.get("current_user_request") or "", 1800) or "(empty)",
             "",
             "Long-range memory:",
-            f"- historical_summary: {self._truncate_context_text((memory or {}).get('historical_summary') or '', 2400) or '(none)'}",
-            f"- recent_summary: {self._truncate_context_text((memory or {}).get('recent_summary') or '', 1600) or '(none)'}",
-            f"- key_memories: {self._truncate_context_text((memory or {}).get('key_memories') or '', 1600) or '(none)'}",
+            f"- historical_summary: {await self._summarize_context_text((memory or {}).get('historical_summary') or '', 2400) or '(none)'}",
+            f"- recent_summary: {await self._summarize_context_text((memory or {}).get('recent_summary') or '', 1600) or '(none)'}",
+            f"- key_memories: {await self._summarize_context_text((memory or {}).get('key_memories') or '', 1600) or '(none)'}",
             "",
             "Recent dialogue:",
         ]
@@ -538,7 +563,7 @@ class HarnessRuntime:
                 if not isinstance(item, Mapping):
                     continue
                 role = str(item.get("role") or "unknown").strip() or "unknown"
-                content = self._truncate_context_text(item.get("content") or "")
+                content = await self._summarize_context_text(item.get("content") or "")
                 if content:
                     lines.append(f"- {role}: {content}")
         else:
@@ -615,7 +640,7 @@ class HarnessRuntime:
             )
         return indexed
 
-    def _bounded_context_bundle(self, bundle: Mapping[str, Any]) -> Dict[str, Any]:
+    async def _bounded_context_bundle(self, bundle: Mapping[str, Any]) -> Dict[str, Any]:
         bounded = json.loads(json.dumps(bundle, ensure_ascii=False, default=str))
         while len(json.dumps(bounded, ensure_ascii=False, default=str)) > CONTEXT_BUNDLE_MAX_TEXT_CHARS:
             artifacts = bounded.get("artifact_index")
@@ -629,13 +654,13 @@ class HarnessRuntime:
                     key=lambda item: len(str(item.get("content") or "")) if isinstance(item, Mapping) else 0,
                 )
                 if isinstance(longest, dict) and len(str(longest.get("content") or "")) > 320:
-                    longest["content"] = self._truncate_context_text(longest.get("content"), 320)
+                    longest["content"] = await self._summarize_context_text(longest.get("content"), 320)
                     continue
             bounded["truncated"] = True
             break
         return bounded
 
-    def _build_context_bundle(
+    async def _build_context_bundle(
         self,
         *,
         session_id: str,
@@ -653,19 +678,19 @@ class HarnessRuntime:
         last_verdict = memory.get("last_eval_verdict") if isinstance(memory.get("last_eval_verdict"), Mapping) else {}
         last_decision = memory.get("last_harness_decision") if isinstance(memory.get("last_harness_decision"), Mapping) else {}
         open_failures = [
-            self._truncate_context_text(item, 600)
+            await self._summarize_context_text(item, 600)
             for item in (previous_failures or [])
             if str(item).strip()
         ]
         if last_verdict and str(last_verdict.get("verdict") or "").upper() not in {"", "PASS"}:
             root_cause = str(last_verdict.get("root_cause") or last_verdict.get("repair_instruction") or "").strip()
             if root_cause:
-                open_failures.append(self._truncate_context_text(root_cause, 600))
+                open_failures.append(await self._summarize_context_text(root_cause, 600))
         bundle = {
             "schema_version": "1.0",
             "session_id": session_id,
             "workspace": str(workspace),
-            "current_user_request": self._truncate_context_text(user_message, 1800),
+            "current_user_request": await self._summarize_context_text(user_message, 1800),
             "model": model or "",
             "history_policy": {
                 "recent_messages_limit": CONTEXT_MEMORY_MAX_MESSAGES,
@@ -677,19 +702,19 @@ class HarnessRuntime:
                     "Raw stdout, stderr, browser traces, and model transcripts stay in artifacts."
                 ),
             },
-            "recent_messages": self._summarize_chat_history(chat_sessions, session_id),
+            "recent_messages": await self._summarize_chat_history(chat_sessions, session_id),
             "working_memory": {
-                "last_user_message": self._truncate_context_text(memory.get("last_user_message") or user_message, 1800),
-                "last_plan_goal": self._truncate_context_text((last_plan or {}).get("goal") or "", 800),
+                "last_user_message": await self._summarize_context_text(memory.get("last_user_message") or user_message, 1800),
+                "last_plan_goal": await self._summarize_context_text((last_plan or {}).get("goal") or "", 800),
                 "last_decision": {
                     "decision": str((last_decision or {}).get("decision") or ""),
-                    "reason": self._truncate_context_text((last_decision or {}).get("reason") or "", 600),
+                    "reason": await self._summarize_context_text((last_decision or {}).get("reason") or "", 600),
                     "next_agent": str((last_decision or {}).get("next_agent") or ""),
                 },
                 "last_verdict": {
                     "verdict": str((last_verdict or {}).get("verdict") or ""),
-                    "root_cause": self._truncate_context_text((last_verdict or {}).get("root_cause") or "", 600),
-                    "repair_instruction": self._truncate_context_text((last_verdict or {}).get("repair_instruction") or "", 600),
+                    "root_cause": await self._summarize_context_text((last_verdict or {}).get("root_cause") or "", 600),
+                    "repair_instruction": await self._summarize_context_text((last_verdict or {}).get("repair_instruction") or "", 600),
                 },
                 "open_failures": open_failures[-6:],
             },
@@ -697,7 +722,7 @@ class HarnessRuntime:
             "search_report_count": len(list(search_reports or [])),
             "previous_verdict_count": len(list(previous_verdicts or [])),
         }
-        return self._bounded_context_bundle(bundle)
+        return await self._bounded_context_bundle(bundle)
 
     def _persist_context_bundle(self, workspace: Path, context_bundle: Mapping[str, Any]) -> str:
         return self._write_json_file(workspace, ".harness/context/context_bundle.json", context_bundle)
@@ -705,7 +730,7 @@ class HarnessRuntime:
     def _router_system_prompt(self) -> str:
         return self.harness_engine.load_agent_prompt("router")
 
-    def _normalize_router_decision(self, payload: Optional[Mapping[str, Any]], *, fallback_route: str = "WORKFLOW") -> Dict[str, Any]:
+    async def _normalize_router_decision(self, payload: Optional[Mapping[str, Any]], *, fallback_route: str = "WORKFLOW") -> Dict[str, Any]:
         route = str((payload or {}).get("route") or "").strip().upper()
         if route not in OUTERMOST_ROUTER_ROUTES:
             route = fallback_route if fallback_route in OUTERMOST_ROUTER_ROUTES else "WORKFLOW"
@@ -722,7 +747,7 @@ class HarnessRuntime:
         return {
             "route": route,
             "confidence": confidence,
-            "reason": self._truncate_context_text(reason, 160),
+            "reason": await self._summarize_context_text(reason, 160),
         }
 
     async def _update_memory_summaries(
@@ -756,7 +781,7 @@ class HarnessRuntime:
         # - current_user_request: 当前用户的请求文本
         # - long_range_memory: 之前的记忆总结（包含 historical_summary, recent_summary, key_memories）
         # - recent_dialogue: 最近几轮的对话记录（默认最多包含8条历史消息）
-        payload = self._router_memory_input(
+        payload = await self._router_memory_input(
             session_id=router_session_id,
             chat_sessions=router_chat_sessions,
             user_message=user_message,
@@ -769,7 +794,7 @@ class HarnessRuntime:
         if not has_summary:
             # 如果没有总结（冷启动），为了防止丢失很久以前的上下文，
             # 临时将 recent_dialogue 的最大提取条数放宽到 1000 条，把尽可能多的历史长对话塞给大模型做初始总结。
-            payload["recent_dialogue"] = self._router_recent_dialogue(
+            payload["recent_dialogue"] = await self._router_recent_dialogue(
                 router_chat_sessions,
                 router_session_id,
                 max_messages=1000,
@@ -780,7 +805,7 @@ class HarnessRuntime:
         # 这里使用了 _format_router_memory_input 把 JSON payload 转换成了排版良好的 Markdown 文本
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": self._format_router_memory_input(payload)},
+            {"role": "user", "content": await self._format_router_memory_input(payload)},
         ]
         
         raw_content = ""
@@ -841,27 +866,27 @@ class HarnessRuntime:
     ) -> Dict[str, Any]:
         text = (user_message or "").strip()
         if not text:
-            return self._normalize_router_decision(
+            return await self._normalize_router_decision(
                 {"route": "DIRECT_ANSWER", "confidence": 1.0, "reason": "Empty request can be answered directly."},
                 fallback_route="DIRECT_ANSWER",
             )
         if self.vllm_client is None:
             logger.warning("Outermost Router has no LLM client; defaulting to WORKFLOW for non-empty request.")
-            return self._normalize_router_decision(
+            return await self._normalize_router_decision(
                 {"route": "WORKFLOW", "confidence": 0.0, "reason": "No router model available."},
                 fallback_route="WORKFLOW",
             )
 
         router_session_id = session_id or "__router__"
         router_chat_sessions = chat_sessions or {router_session_id: [{"role": "user", "content": text}]}
-        payload = self._router_memory_input(
+        payload = await self._router_memory_input(
             session_id=router_session_id,
             chat_sessions=router_chat_sessions,
             user_message=text,
         )
         messages = [
             {"role": "system", "content": self._router_system_prompt()},
-            {"role": "user", "content": self._format_router_memory_input(payload)},
+            {"role": "user", "content": await self._format_router_memory_input(payload)},
         ]
         raw_content = ""
         try:
@@ -881,7 +906,7 @@ class HarnessRuntime:
                 raw_content += chunk["choices"][0].get("delta", {}).get("content") or ""
         except Exception as exc:
             logger.warning(f"Outermost Router LLM classification failed: {exc}")
-            return self._normalize_router_decision(
+            return await self._normalize_router_decision(
                 {"route": "WORKFLOW", "confidence": 0.0, "reason": "Router model call failed."},
                 fallback_route="WORKFLOW",
             )
@@ -902,7 +927,7 @@ class HarnessRuntime:
                 except Exception:
                     parsed = None
 
-        decision = self._normalize_router_decision(parsed, fallback_route="WORKFLOW")
+        decision = await self._normalize_router_decision(parsed, fallback_route="WORKFLOW")
         if not parsed or str((parsed or {}).get("route") or "").strip().upper() not in OUTERMOST_ROUTER_ROUTES:
             logger.warning(f"Outermost Router returned invalid decision {parsed!r}; defaulting to WORKFLOW.")
         return decision
@@ -1171,7 +1196,7 @@ class HarnessRuntime:
         planner = PlannerAgent(self.vllm_client)
         workspace = self._workspace_path(request_context)
         existing_files = self._get_workspace_files_if_small(request_context)
-        context_bundle = self._build_context_bundle(
+        context_bundle = await self._build_context_bundle(
             session_id=session_id,
             chat_sessions=chat_sessions,
             workspace=workspace,
@@ -1371,7 +1396,7 @@ class HarnessRuntime:
             budgets = self.harness_engine.default_budgets()
             provisional_task_id = f"task_{session_id.replace('-', '')[:12] or 'runtime'}"
             planner = PlannerAgent(self.vllm_client)
-            context_bundle = self._build_context_bundle(
+            context_bundle = await self._build_context_bundle(
                 session_id=session_id,
                 chat_sessions=chat_sessions,
                 workspace=workspace,
@@ -1492,7 +1517,7 @@ class HarnessRuntime:
             while True:
                 if self.harness_engine.should_search(user_request=user_message, plan=plan_contract) and not search_reports:
                     search_call_count += 1
-                    context_bundle = self._build_context_bundle(
+                    context_bundle = await self._build_context_bundle(
                         session_id=session_id,
                         chat_sessions=chat_sessions,
                         workspace=workspace,
@@ -1582,7 +1607,7 @@ class HarnessRuntime:
                         replan_round += 1
                         round_id += 1
                         replan_reason = str(search_report.get("query_summary") or search_report.get("status") or "Search evidence was insufficient.")
-                        context_bundle = self._build_context_bundle(
+                        context_bundle = await self._build_context_bundle(
                             session_id=session_id,
                             chat_sessions=chat_sessions,
                             workspace=workspace,
@@ -1639,7 +1664,7 @@ class HarnessRuntime:
                 if not skip_generator:
                     before_patch_snapshot = self._capture_allowed_text_snapshot(workspace, plan_contract)
                     generator = GeneratorAgent(self.vllm_client, self.skill_manager)
-                    context_bundle = self._build_context_bundle(
+                    context_bundle = await self._build_context_bundle(
                         session_id=session_id,
                         chat_sessions=chat_sessions,
                         workspace=workspace,
@@ -1780,7 +1805,7 @@ class HarnessRuntime:
                                 "last_harness_decision": decision,
                             }
                         )
-                        context_bundle = self._build_context_bundle(
+                        context_bundle = await self._build_context_bundle(
                             session_id=session_id,
                             chat_sessions=chat_sessions,
                             workspace=workspace,
@@ -1800,7 +1825,7 @@ class HarnessRuntime:
                             replan_round += 1
                             round_id += 1
                             replan_reason = str(final_verdict.get("root_cause") or final_verdict.get("repair_instruction") or "")
-                            context_bundle = self._build_context_bundle(
+                            context_bundle = await self._build_context_bundle(
                                 session_id=session_id,
                                 chat_sessions=chat_sessions,
                                 workspace=workspace,
@@ -1901,7 +1926,7 @@ class HarnessRuntime:
                         replan_round += 1
                         round_id += 1
                         replan_reason = str(last_patch_result.get("replan_reason") or last_patch_result.get("summary") or "Generator requested replan.")
-                        context_bundle = self._build_context_bundle(
+                        context_bundle = await self._build_context_bundle(
                             session_id=session_id,
                             chat_sessions=chat_sessions,
                             workspace=workspace,
@@ -1958,7 +1983,7 @@ class HarnessRuntime:
 
                 artifact_info = self._build_artifact_info(workspace, plan_contract)
                 runner = RunnerAgent(self.vllm_client, self.skill_manager)
-                context_bundle = self._build_context_bundle(
+                context_bundle = await self._build_context_bundle(
                     session_id=session_id,
                     chat_sessions=chat_sessions,
                     workspace=workspace,
@@ -2012,7 +2037,7 @@ class HarnessRuntime:
                 )
 
                 evaluator = EvaluatorAgent(self.vllm_client)
-                context_bundle = self._build_context_bundle(
+                context_bundle = await self._build_context_bundle(
                     session_id=session_id,
                     chat_sessions=chat_sessions,
                     workspace=workspace,
@@ -2091,7 +2116,7 @@ class HarnessRuntime:
                         "last_harness_decision": decision,
                     }
                 )
-                context_bundle = self._build_context_bundle(
+                context_bundle = await self._build_context_bundle(
                     session_id=session_id,
                     chat_sessions=chat_sessions,
                     workspace=workspace,
@@ -2150,7 +2175,7 @@ class HarnessRuntime:
                         )
                         break
                     search_call_count += 1
-                    context_bundle = self._build_context_bundle(
+                    context_bundle = await self._build_context_bundle(
                         session_id=session_id,
                         chat_sessions=chat_sessions,
                         workspace=workspace,
@@ -2247,7 +2272,7 @@ class HarnessRuntime:
                             break
                         replan_round += 1
                         replan_reason = str(search_report.get("query_summary") or search_report.get("status") or "Search evidence was insufficient.")
-                        context_bundle = self._build_context_bundle(
+                        context_bundle = await self._build_context_bundle(
                             session_id=session_id,
                             chat_sessions=chat_sessions,
                             workspace=workspace,
@@ -2310,7 +2335,7 @@ class HarnessRuntime:
                     replan_round += 1
                     round_id += 1
                     replan_reason = str(final_verdict.get("root_cause") or final_verdict.get("repair_instruction") or "")
-                    context_bundle = self._build_context_bundle(
+                    context_bundle = await self._build_context_bundle(
                         session_id=session_id,
                         chat_sessions=chat_sessions,
                         workspace=workspace,
