@@ -27,23 +27,6 @@ try:
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
-RUNNER_SYSTEM_PROMPT = (
-    "You are Runner Agent in a five-agent Harness workflow. "
-    "Your only responsibility is execution and evidence collection.\n\n"
-    "You may use only the provided execution tools to run the commands "
-    "and smoke checks supplied by the Harness input.\n"
-    "Do not modify source code. Do not judge final acceptance.\n"
-    "Write artifacts only under .harness/**, logs/**, screenshots/**, "
-    "or tmp/**.\n"
-    "After collecting evidence, return exactly one strict JSON "
-    "RunReport object with these fields:\n"
-    "schema_version, task_id, round_id, status, started_at, finished_at, "
-    "duration_sec, commands, dev_server, browser_tests, artifacts, "
-    "cleanup, errors, summary.\n"
-    "Use status values from the spec: PASSED, FAILED, PARTIAL, TIMEOUT, "
-    "SKIPPED, or INFRA_ERROR."
-)
-
 
 def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
     text = (raw or "").strip()
