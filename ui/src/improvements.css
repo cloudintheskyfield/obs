@@ -1858,6 +1858,10 @@ html[data-theme="light"] .logs-header-action:hover {
    ============================================================================ */
 
 html[data-theme="light"] .request-loading-left {
+  align-self: flex-start;
+  width: fit-content;
+  margin-left: 0;
+  margin-right: auto;
   background: #f9fafb;
   border-color: #e5e7eb;
   color: #374151;
@@ -1895,16 +1899,58 @@ html[data-theme="light"] .message.user .message-body {
   font-weight: 400;
 }
 
+/* ============================================================================
+   Light Mode: Responsive transcript width and user bubble sizing
+   ============================================================================ */
+
+html[data-theme="light"] .workspace-content-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+html[data-theme="light"] .workspace-main-pane {
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+}
+
+html[data-theme="light"] .message-list {
+  width: min(100%, 1480px);
+  margin: 0 auto;
+}
+
+html[data-theme="light"] .message.user {
+  width: fit-content;
+  min-width: 0;
+  max-width: min(72ch, calc(100% - clamp(18px, 5vw, 96px)));
+  align-self: flex-end;
+  margin-left: auto;
+  margin-right: 0;
+}
+
+html[data-theme="light"] .message.user .message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  width: auto;
+  text-align: left;
+  white-space: nowrap;
+}
+
 
 
 /* ============================================================================
    Light Mode: Request Loading Indicator Alignment
    ============================================================================ */
 
-/* Make the loading indicator also float right in light mode, since it follows the user message */
 html[data-theme="light"] .request-loading-left {
-  margin-left: auto;
-  margin-right: 0;
+  align-self: flex-start;
+  width: fit-content;
+  margin-left: 0;
+  margin-right: auto;
   background: #f9fafb;
   border-color: #e5e7eb;
   color: #374151;

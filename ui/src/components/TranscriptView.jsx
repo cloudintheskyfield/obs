@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import RequestStatusIndicator from './RequestStatusIndicator.jsx'
 import { entryLabel, getThinkingSummary, normalizeDisplayText, renderMarkdown, transcriptRole } from '../lib/formatting.js'
 
 const IMAGE_TOKEN_RE = /\[\[image:[^\]]+\]\]/g
@@ -675,6 +676,25 @@ function renderAgentProcess(entry, { workingTimerLabel, completedLabel, userProm
 }
 
 export default function TranscriptView({ transcript, chatMessagesRef, expandedThinking, onToggleThinking, onGuidedChoiceSelect, guidedChoiceNow, requestIndicator, workingTimerLabel, completedLabel, routeMode }) {
+  const [isScrolling, setIsScrolling] = useState(false)
+  const scrollIdleTimerRef = useRef(null)
+  const handleMessagesScroll = useCallback(() => {
+    setIsScrolling(true)
+    if (scrollIdleTimerRef.current) {
+      window.clearTimeout(scrollIdleTimerRef.current)
+    }
+    scrollIdleTimerRef.current = window.setTimeout(() => {
+      setIsScrolling(false)
+      scrollIdleTimerRef.current = null
+    }, 900)
+  }, [])
+
+  useEffect(() => () => {
+    if (scrollIdleTimerRef.current) {
+      window.clearTimeout(scrollIdleTimerRef.current)
+    }
+  }, [])
+
   const lastUserIndex = (() => {
     for (let index = transcript.length - 1; index >= 0; index -= 1) {
       if (transcript[index]?.role === 'user') {
@@ -695,7 +715,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
 
   return (
     <section className="chat-region" style={{ height: '100%', maxHeight: '100%', overflow: 'hidden' }}>
-      <div id="chat-messages" className="chat-messages" ref={chatMessagesRef} style={{ height: '100%', overflowY: 'auto' }}>
+      <div id="chat-messages" className={`chat-messages${isScrolling ? ' is-scrolling' : ''}`} ref={chatMessagesRef} onScroll={handleMessagesScroll} style={{ height: '100%', overflowY: 'auto' }}>
         {!transcript.length ? (
           <div className="transcript-empty">No transcript items yet. Start with a task request, or ask for a real-time search.</div>
         ) : (
@@ -815,13 +835,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                   </article>
 
                   {requestIndicator?.active && index === lastUserIndex ? (
-                    <div className="request-loading-left" aria-live="polite">
-                      <span className="request-loading-spinner" aria-hidden="true">
-                        <i className="fas fa-spinner" />
-                      </span>
-                      <span>{requestIndicator.label || 'Working on your request'}</span>
-                      {workingTimerLabel ? <span className="request-loading-timer">{workingTimerLabel}</span> : null}
-                    </div>
+                    <RequestStatusIndicator label={requestIndicator.label} timerLabel={workingTimerLabel} />
                   ) : null}
                 </React.Fragment>
               )

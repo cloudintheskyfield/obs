@@ -1279,6 +1279,8 @@ class HarnessRuntime:
         extra_context: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a direct LLM answer without invoking the 5-agent pipeline."""
+        import json
+        from utils.json_utils import safe_loads
         if route:
             yield self._sse({"type": "route", "route": route, "session_id": session_id})
         yield self._status("answering", session_id=session_id)
@@ -1306,72 +1308,165 @@ class HarnessRuntime:
             {"role": "system", "content": sys_prompt_content},
             {"role": "user", "content": user_content},
         ]
-
-        accumulated = ""
-        in_think = False
-        buf = ""
         
-        try:
-            stream = await self.vllm_client.chat_completion(messages=messages, model=model, stream=True)
-            async for chunk in stream:
-                if isinstance(chunk, dict) and chunk.get("__obs_phase"):
-                    yield self._sse({"type": "phase", "transient": True, "content": "正在重试...", "session_id": session_id})
-                    continue
-                delta = ""
-                try:
-                    choices = chunk.get("choices") or []
-                    if choices:
-                        delta = str(
-                            (choices[0].get("delta") or {}).get("content")
-                            or (choices[0].get("message") or {}).get("content")
-                            or ""
-                        )
-                except Exception:
-                    pass
-                    
-                if delta:
-                    accumulated += delta
-                    buf += delta
-                    
-                    while True:
-                        if not in_think:
-                            start_pos = buf.find("<think>")
-                            if start_pos != -1:
-                                if start_pos > 0:
-                                    yield self._sse({"type": "answer_delta", "delta": buf[:start_pos], "session_id": session_id})
-                                in_think = True
-                                buf = buf[start_pos+7:]
-                            else:
-                                safe_len = max(0, len(buf) - 6)
-                                if safe_len > 0:
-                                    yield self._sse({"type": "answer_delta", "delta": buf[:safe_len], "session_id": session_id})
-                                    buf = buf[safe_len:]
-                                break
-                        else:
-                            end_pos = buf.find("</think>")
-                            if end_pos != -1:
-                                if end_pos > 0:
-                                    yield self._sse({"type": "agent_thinking", "delta": buf[:end_pos], "session_id": session_id})
-                                in_think = False
-                                buf = buf[end_pos+8:]
-                            else:
-                                safe_len = max(0, len(buf) - 7)
-                                if safe_len > 0:
-                                    yield self._sse({"type": "agent_thinking", "delta": buf[:safe_len], "session_id": session_id})
-                                    buf = buf[safe_len:]
-                                break
+        direct_answer_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "run_search_agent",
+                    "description": "Run the dedicated Search Agent to deeply research a topic. The Search Agent will use browsers and search engines to compile a comprehensive report.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The search query or topic to research"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
 
-            if buf:
-                if in_think:
-                    yield self._sse({"type": "agent_thinking", "delta": buf, "session_id": session_id})
-                else:
-                    yield self._sse({"type": "answer_delta", "delta": buf, "session_id": session_id})
+        max_iterations = 4
+        for iteration in range(max_iterations):
+            accumulated = ""
+            in_think = False
+            buf = ""
+            assistant_message = {"role": "assistant", "content": ""}
+            tool_calls = []
+            
+            try:
+                stream = await self.vllm_client.chat_completion(messages=messages, tools=direct_answer_tools, model=model, stream=True)
+                async for chunk in stream:
+                    if isinstance(chunk, dict) and chunk.get("__obs_phase"):
+                        yield self._sse({"type": "phase", "transient": True, "content": "正在重试...", "session_id": session_id})
+                        continue
+                        
+                    try:
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                            
+                        delta = choices[0].get("delta") or {}
+                        piece = str(delta.get("content") or "")
+                        
+                        if piece:
+                            assistant_message["content"] += piece
+                            accumulated += piece
+                            buf += piece
+                            
+                            while True:
+                                if not in_think:
+                                    start_pos = buf.find("<think>")
+                                    if start_pos != -1:
+                                        if start_pos > 0:
+                                            yield self._sse({"type": "answer_delta", "delta": buf[:start_pos], "session_id": session_id})
+                                        in_think = True
+                                        buf = buf[start_pos+7:]
+                                    else:
+                                        safe_len = max(0, len(buf) - 6)
+                                        if safe_len > 0:
+                                            yield self._sse({"type": "answer_delta", "delta": buf[:safe_len], "session_id": session_id})
+                                            buf = buf[safe_len:]
+                                        break
+                                else:
+                                    end_pos = buf.find("</think>")
+                                    if end_pos != -1:
+                                        if end_pos > 0:
+                                            yield self._sse({"type": "agent_thinking", "delta": buf[:end_pos], "session_id": session_id})
+                                        in_think = False
+                                        buf = buf[end_pos+8:]
+                                    else:
+                                        safe_len = max(0, len(buf) - 7)
+                                        if safe_len > 0:
+                                            yield self._sse({"type": "agent_thinking", "delta": buf[:safe_len], "session_id": session_id})
+                                            buf = buf[safe_len:]
+                                        break
+                                        
+                        # Parse tool calls
+                        if "tool_calls" in delta and delta["tool_calls"]:
+                            for tc in delta["tool_calls"]:
+                                idx = tc.get("index", len(tool_calls))
+                                while len(tool_calls) <= idx:
+                                    tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                                if tc.get("id"):
+                                    tool_calls[idx]["id"] = tc["id"]
+                                if "function" in tc:
+                                    if tc["function"].get("name"):
+                                        tool_calls[idx]["function"]["name"] += tc["function"]["name"]
+                                    if tc["function"].get("arguments"):
+                                        tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
+                                        
+                    except Exception:
+                        pass
+                
+                # Flush buf
+                if buf:
+                    if in_think:
+                        yield self._sse({"type": "agent_thinking", "delta": buf, "session_id": session_id})
+                    else:
+                        yield self._sse({"type": "answer_delta", "delta": buf, "session_id": session_id})
+                        
+            except Exception as exc:
+                logger.warning(f"Direct answer stream error: {exc}")
+                fallback = "暂时无法回答，请稍后重试。"
+                yield self._sse({"type": "answer_delta", "delta": fallback, "session_id": session_id})
+                return
+                
+            if not tool_calls:
+                # Normal response finished
+                break
+                
+            # Process tool calls
+            assistant_message["tool_calls"] = tool_calls
+            messages.append(dict(assistant_message))
+            
+            for tc in tool_calls:
+                tool_name = tc["function"]["name"]
+                try:
+                    raw_args = tc["function"]["arguments"]
+                    tool_args = safe_loads(raw_args) if raw_args else {}
+                except Exception:
+                    tool_args = {}
                     
-        except Exception as exc:
-            logger.warning(f"Direct answer stream error: {exc}")
-            fallback = "暂时无法回答，请稍后重试。"
-            accumulated = fallback
-            yield self._sse({"type": "answer_delta", "delta": fallback, "session_id": session_id})
+                if tool_name == "run_search_agent":
+                    query = tool_args.get("query", user_message)
+                    
+                    search_agent = self.harness_engine.get_agent("Search")
+                    search_input = {
+                        "task_id": f"direct_answer_{session_id}",
+                        "round_id": iteration + 1,
+                        "search_id": f"search_{iteration}",
+                        "planner_summary": "Direct answering agent requested a web search.",
+                        "research_questions": [query]
+                    }
+                    
+                    # Yield search stream to frontend
+                    async for search_chunk in search_agent.search(
+                        session_id=session_id,
+                        search_input=search_input,
+                        tools=self.harness_engine.active_tools(),
+                        model=model,
+                    ):
+                        yield search_chunk
+                        
+                    report = search_agent.last_search_report
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", "unknown"),
+                        "name": tool_name,
+                        "content": json.dumps(report, ensure_ascii=False)
+                    })
+                else:
+                    # Unknown tool
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", "unknown"),
+                        "name": tool_name,
+                        "content": "Error: Unknown tool."
+                    })
 
         accumulated = strip_provider_thinking(accumulated)
         if accumulated.strip():

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Test API module import and route registration"""
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 try:
     from api import app
+
     print("✅ API module imported successfully")
-    
+
     routes = []
     for route in app.routes:
         if hasattr(route, 'path') and hasattr(route, 'methods'):
@@ -16,18 +18,16 @@ try:
             routes.append(f"{list(methods)} {route.path}")
         elif hasattr(route, 'path'):
             routes.append(f"[MOUNT] {route.path}")
-    
+
     print(f"\n📝 Registered routes ({len(routes)}):")
     for route in routes:
         print(f"   {route}")
-        
-    # Check if /execute is in routes
+
+    chat_stream_found = any('/chat/stream' in route for route in routes)
     execute_found = any('/execute' in route for route in routes)
-    if execute_found:
-        print(f"\n✅ /execute endpoint is properly registered!")
-    else:
-        print(f"\n❌ /execute endpoint is MISSING!")
-        
+
+    print(f"\n✅ /chat/stream registered: {chat_stream_found}")
+    print(f"❌ /execute registered: {execute_found}")
 except ImportError as e:
     print(f"❌ Import error: {e}")
 except Exception as e:

@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""Final test to check execute endpoint"""
+"""Final test to verify the legacy execute endpoint is removed"""
 
 import asyncio
+
 import httpx
-import json
+
 
 async def final_test():
-    """Final comprehensive test"""
-    
-    print("=== Final Execute Endpoint Test ===\n")
-    
+    print("=== Final Route Validation Test ===\n")
+
     async with httpx.AsyncClient(timeout=30.0) as client:
-        
-        # Test 1: Health check
         try:
             response = await client.get("http://127.0.0.1:8000/health")
             print(f"1. Health check: {response.status_code}")
@@ -23,65 +20,38 @@ async def final_test():
             print()
         except Exception as e:
             print(f"1. Health check failed: {e}\n")
-        
-        # Test 2: Skills list
+
         try:
             response = await client.get("http://127.0.0.1:8000/skills")
             print(f"2. Skills list: {response.status_code}")
             if response.status_code == 200:
-                data = response.json()
-                skills = data.get('skills', [])
-                print(f"   Found {len(skills)} skills:")
-                for skill in skills:
-                    print(f"     - {skill.get('name')}")
+                skills = response.json().get('skills', [])
+                print(f"   Found {len(skills)} skills")
             print()
         except Exception as e:
             print(f"2. Skills list failed: {e}\n")
-        
-        # Test 3: Execute endpoint with proper data
+
         try:
-            test_data = {
-                "tool_name": "bash",
-                "parameters": {
-                    "command": "echo Hello World",
-                    "timeout": 10
-                }
-            }
-            
-            response = await client.post(
-                "http://127.0.0.1:8000/execute",
-                json=test_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            print(f"3. Execute endpoint: {response.status_code}")
-            
+            response = await client.get("http://127.0.0.1:8000/openapi.json")
+            print(f"3. OpenAPI schema: {response.status_code}")
             if response.status_code == 200:
-                result = response.json()
-                print(f"   Success: {result.get('success')}")
-                if result.get('content'):
-                    print(f"   Output: {result['content'].strip()}")
-                if result.get('error'):
-                    print(f"   Error: {result['error']}")
-                print("   SUCCESS: Execute endpoint working!")
-                    
-            elif response.status_code == 404:
-                print("   ERROR: Execute endpoint not found (404)")
-                print(f"   Response: {response.text}")
-                
-            elif response.status_code == 422:
-                print("   ERROR: Validation error (422)")
-                print(f"   Response: {response.text}")
-                
-            else:
-                print(f"   ERROR: Unexpected status {response.status_code}")
-                print(f"   Response: {response.text}")
-            
+                paths = response.json().get("paths", {})
+                print(f"   /chat/stream present: {'/chat/stream' in paths}")
+                print(f"   /execute present: {'/execute' in paths}")
+            print()
         except Exception as e:
-            print(f"3. Execute endpoint failed: {e}")
-        
-        print(f"\n{'='*50}")
+            print(f"3. OpenAPI schema failed: {e}\n")
+
+        try:
+            response = await client.post("http://127.0.0.1:8000/execute", json={})
+            print(f"4. Legacy /execute probe: {response.status_code}")
+            print(f"   Response: {response.text[:200]}")
+        except Exception as e:
+            print(f"4. Legacy /execute probe failed: {e}")
+
+        print(f"\n{'=' * 50}")
         print("Test completed!")
+
 
 if __name__ == "__main__":
     asyncio.run(final_test())

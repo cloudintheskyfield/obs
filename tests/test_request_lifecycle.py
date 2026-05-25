@@ -10,6 +10,11 @@ def test_phase_payload_uses_expected_event_types() -> None:
     assert prep["type"] == "phase"
     assert prep["phase"] == "prep_context"
     assert prep["transient"] is True
+    assert lifecycle.phase_payload("prep_route")["content"] == "Routing"
+    assert lifecycle.phase_payload("planning")["content"] == "Planning"
+    assert lifecycle.phase_payload("answering")["content"] == "Answering"
+    assert lifecycle.status_payload("routing")["phase"] == "prep_route"
+    assert lifecycle.status_payload("planning")["content"] == "Planning"
 
     compression = lifecycle.phase_payload("compression_start")
     assert compression["type"] == "compression_start"

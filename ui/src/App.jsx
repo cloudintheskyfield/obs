@@ -3023,6 +3023,11 @@ function App() {
                     return;
                 }
 
+                if (payload.type === "agent_thinking") {
+                    appendThinkingTrace(payload.delta);
+                    return;
+                }
+
                 const isLegacyAnswerPayload = !payload.type && typeof payload.content === "string";
                 if (payload.type === "answer_delta" || isLegacyAnswerPayload) {
                     setRequestIndicator(null);

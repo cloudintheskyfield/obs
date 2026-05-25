@@ -27,13 +27,17 @@ class _DummySkillManager:
 
 
 class _FakeVllmClient:
-    def __init__(self, *, require_search: bool = False, route: str = "CODE_WORKFLOW") -> None:
+    def __init__(self, *, require_search: bool = False, route: str = "WORKFLOW") -> None:
         self.require_search = require_search
         self.route = route
+        self.router_payloads: list[dict] = []
+        self.router_messages: list[str] = []
 
     async def chat_completion(self, *, messages, tools=None, temperature=0.1, max_tokens=1600, stream=True, model=None):
         system_prompt = str(messages[0].get("content") or "")
-        if "Harness Router" in system_prompt:
+        if "Outermost Gateway Router" in system_prompt:
+            router_message = str(messages[1].get("content") or "")
+            self.router_messages.append(router_message)
             payload = {"route": self.route, "confidence": 0.99, "reason": "test-controlled semantic route"}
         elif "Planner Agent" in system_prompt:
             payload = {
@@ -429,7 +433,6 @@ def test_runtime_runs_full_harness_chain_and_persists_evidence(tmp_path: Path) -
         async for chunk in runtime.chat_stream(
             session_id="runtime-e2e",
             chat_sessions={"runtime-e2e": [{"role": "user", "content": "跑通 Harness 全链路"}]},
-            mode="agent",
             request_context={"workspace_runtime_path": str(tmp_path)},
         ):
             if chunk.startswith("data: "):
@@ -437,6 +440,8 @@ def test_runtime_runs_full_harness_chain_and_persists_evidence(tmp_path: Path) -
         return events
 
     events = asyncio.run(collect_events())
+    phases = [event.get("content") for event in events if event.get("type") == "phase"]
+    assert phases[:3] == ["Loading session context", "Routing", "Planning"]
     decisions = [event["decision"] for event in events if event.get("type") == "harness_decision"]
     assert decisions[-1]["decision"] == "PASS"
 
@@ -473,7 +478,6 @@ def test_runtime_runs_search_gate_chain_before_generator(tmp_path: Path) -> None
         async for chunk in runtime.chat_stream(
             session_id="runtime-search-e2e",
             chat_sessions={"runtime-search-e2e": [{"role": "user", "content": "先查资料再跑通 Harness 全链路"}]},
-            mode="agent",
             request_context={"workspace_runtime_path": str(tmp_path)},
         ):
             if chunk.startswith("data: "):
@@ -494,13 +498,14 @@ def test_runtime_runs_search_gate_chain_before_generator(tmp_path: Path) -> None
 def test_intent_router_keeps_doc_and_harness_tasks_out_of_direct_path(tmp_path: Path) -> None:
     cases = [
         ("你好", "DIRECT_ANSWER"),
-        ("给我一个ppt 宣传北京旅游的", "DOC_WORKFLOW"),
-        ("请读取 input/sales.csv，按月份和品类汇总销售额，生成 Excel 文件，并添加一个柱状图。", "DOC_WORKFLOW"),
-        ("请阅读 input/paper.pdf，生成一份 Markdown 总结。", "DOC_WORKFLOW"),
-        ("跑通 Harness 全链路", "CODE_WORKFLOW"),
-        ("确认 Playwright Python 中 page.locator() 是否需要 await，以及 locator.click() 的正确 async 写法。", "SEARCH_ANSWER"),
-        ("请把 input/downloads 目录中的文件按扩展名分类到 output/sorted 下，先 dry-run，再执行。", "FILE_WORKFLOW"),
-        ("请查看 input/ui_screenshot.png，指出这个 OBS Code 前端页面在亮色模式下有哪些可读性和层级问题。", "DIRECT_ANSWER"),
+        ("Explain how a Promise works in JS", "DIRECT_ANSWER"),
+        ("给我一个ppt 宣传北京旅游的", "WORKFLOW"),
+        ("请读取 input/sales.csv，按月份和品类汇总销售额，生成 Excel 文件，并添加一个柱状图。", "WORKFLOW"),
+        ("请阅读 input/paper.pdf，生成一份 Markdown 总结。", "WORKFLOW"),
+        ("跑通 Harness 全链路", "WORKFLOW"),
+        ("确认 Playwright Python 中 page.locator() 是否需要 await，以及 locator.click() 的正确 async 写法。", "WORKFLOW"),
+        ("请把 input/downloads 目录中的文件按扩展名分类到 output/sorted 下，先 dry-run，再执行。", "WORKFLOW"),
+        ("请查看 input/ui_screenshot.png，指出这个 OBS Code 前端页面在亮色模式下有哪些可读性和层级问题。", "WORKFLOW"),
     ]
 
     for message, expected_route in cases:
@@ -508,18 +513,80 @@ def test_intent_router_keeps_doc_and_harness_tasks_out_of_direct_path(tmp_path: 
             vllm_client=_FakeVllmClient(route=expected_route),
             skill_manager=_DummySkillManager(tmp_path),
         )
-        assert asyncio.run(runtime._classify_intent_with_llm(message, workspace=tmp_path)) == expected_route
+        decision = asyncio.run(runtime._classify_intent_with_llm(message))
+        assert decision["route"] == expected_route
+        assert set(decision) == {"route", "confidence", "reason"}
 
 
-def test_search_answer_route_uses_search_agent_without_generator_runner(tmp_path: Path) -> None:
-    runtime = HarnessRuntime(vllm_client=_FakeVllmClient(require_search=True, route="SEARCH_ANSWER"), skill_manager=_DummySkillManager(tmp_path))
+def test_intent_router_receives_clean_memory_payload(tmp_path: Path) -> None:
+    client = _FakeVllmClient(route="WORKFLOW")
+    runtime = HarnessRuntime(vllm_client=client, skill_manager=_DummySkillManager(tmp_path))
+    runtime.session_context_cache["router-memory"] = {
+        "historical_summary": "用户一直在重构 OBS Code Harness。",
+        "recent_summary": "刚刚要求 Router 改为二元决策。",
+        "last_plan_contract": {"goal": "internal state should not leak"},
+    }
+    chat_sessions = {
+        "router-memory": [
+            {"role": "user", "content": "先前请求"},
+            {"role": "tool", "content": "raw command output"},
+            {"role": "assistant", "content": "<think>hidden</think>已完成 Router 外置。"},
+            {"role": "user", "content": "继续"},
+        ]
+    }
+
+    decision = asyncio.run(
+        runtime._classify_intent_with_llm(
+            "继续",
+            session_id="router-memory",
+            chat_sessions=chat_sessions,
+        )
+    )
+
+    assert decision["route"] == "WORKFLOW"
+    router_message = client.router_messages[-1]
+    assert router_message.startswith("Current user request:\n继续")
+    assert "Long-range memory:" in router_message
+    assert "- historical_summary: 用户一直在重构 OBS Code Harness。" in router_message
+    assert "- recent_summary: 刚刚要求 Router 改为二元决策。" in router_message
+    assert "Recent dialogue:" in router_message
+    assert "- user: 先前请求" in router_message
+    assert "- assistant: 已完成 Router 外置。" in router_message
+    assert "raw command output" not in router_message
+    assert "workspace" not in router_message
+    assert "has_harness_state" not in router_message
+    assert not router_message.lstrip().startswith("{")
+
+
+def test_direct_answer_route_switches_status_from_routing_to_answering(tmp_path: Path) -> None:
+    runtime = HarnessRuntime(vllm_client=_FakeVllmClient(route="DIRECT_ANSWER"), skill_manager=_DummySkillManager(tmp_path))
+
+    async def collect_events() -> list[dict]:
+        events = []
+        async for chunk in runtime.chat_stream(
+            session_id="runtime-direct-answer",
+            chat_sessions={"runtime-direct-answer": [{"role": "user", "content": "解释一下 Promise"}]},
+            request_context={"workspace_runtime_path": str(tmp_path)},
+        ):
+            if chunk.startswith("data: "):
+                events.append(json.loads(chunk.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    phases = [event.get("content") for event in events if event.get("type") == "phase"]
+    routes = [event.get("route") for event in events if event.get("type") == "route"]
+    assert phases[:3] == ["Loading session context", "Routing", "Answering"]
+    assert routes == ["DIRECT_ANSWER"]
+
+
+def test_external_info_route_enters_workflow_and_uses_search_gate(tmp_path: Path) -> None:
+    runtime = HarnessRuntime(vllm_client=_FakeVllmClient(require_search=True, route="WORKFLOW"), skill_manager=_DummySkillManager(tmp_path))
 
     async def collect_events() -> list[dict]:
         events = []
         async for chunk in runtime.chat_stream(
             session_id="runtime-search-answer",
             chat_sessions={"runtime-search-answer": [{"role": "user", "content": "确认 Playwright Python 中 page.locator() 是否需要 await，以及 locator.click() 的正确 async 写法。"}]},
-            mode="agent",
             request_context={"workspace_runtime_path": str(tmp_path)},
         ):
             if chunk.startswith("data: "):
@@ -529,10 +596,11 @@ def test_search_answer_route_uses_search_agent_without_generator_runner(tmp_path
     events = asyncio.run(collect_events())
     routes = [event.get("route") for event in events if event.get("type") == "route"]
     roles = [event.get("role") for event in events if event.get("type") in {"agent_step", "agent_summary"}]
-    assert routes == ["SEARCH_ANSWER"]
+    assert routes == ["WORKFLOW"]
+    assert "Planner" in roles
     assert "Search" in roles
-    assert "Generator" not in roles
-    assert "Runner" not in roles
+    assert "Generator" in roles
+    assert "Runner" in roles
     assert (tmp_path / ".harness" / "search" / "search_001" / "search_report.json").exists()
 
 
@@ -544,7 +612,6 @@ def test_runtime_retries_generator_when_patch_envelope_is_empty(tmp_path: Path) 
         async for chunk in runtime.chat_stream(
             session_id="runtime-empty-patch",
             chat_sessions={"runtime-empty-patch": [{"role": "user", "content": "生成 index.html 小游戏"}]},
-            mode="agent",
             request_context={"workspace_runtime_path": str(tmp_path)},
         ):
             if chunk.startswith("data: "):
@@ -652,7 +719,6 @@ def test_runtime_applies_generator_patch_envelope_without_direct_tool_write(tmp_
         async for chunk in runtime.chat_stream(
             session_id="runtime-patch-envelope-apply",
             chat_sessions={"runtime-patch-envelope-apply": [{"role": "user", "content": "生成 index.html 页面"}]},
-            mode="agent",
             request_context={"workspace_runtime_path": str(tmp_path)},
         ):
             if chunk.startswith("data: "):

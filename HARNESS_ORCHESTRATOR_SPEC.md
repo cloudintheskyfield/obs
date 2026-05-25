@@ -557,7 +557,75 @@ TaskContext
 
 ContextBundle
 
-所有 Agent 输入都必须携带同一轮 Harness 生成的有界 `ContextBundle`。它只保留最近会话摘要、工作记忆和 artifact 索引；原始 stdout/stderr、浏览器 trace、完整模型输出仍然只放在 `.harness/**` 调试 artifact 中，避免上下文无限膨胀或污染主判断。
+`ContextBundle` 是 Harness 的统一记忆结构。它不是某个 Agent 私有的长期聊天历史，而是由 Harness 在每一轮状态转换前重新构造的一份有界上下文包，用来让 Planner、Search、Generator、Runner、Evaluator 在同一事实基础上工作。
+
+核心目标：
+
+1. **统一上下文来源**：所有 Agent 只读取 Harness 注入的 `ContextBundle` 和自己的角色契约输入，不直接读取彼此私有输出。
+2. **控制上下文体积**：只保留最近消息摘要、上轮结构化结论和 artifact 索引，避免把完整日志、完整聊天历史、完整模型输出塞进模型。
+3. **保留可追溯证据**：原始 stdout/stderr、浏览器 trace、截图、diff、SearchReport、RunReport、EvalVerdict 仍落在 `.harness/**`，`ContextBundle` 只保存它们的路径索引。
+4. **支持修复闭环**：下一轮 Agent 能看到上一轮 `last_verdict`、`last_decision`、`open_failures`，但不会被无关历史污染。
+
+当前内存边界：
+
+| 字段 | 当前值 | 说明 |
+|---|---:|---|
+| `CONTEXT_MEMORY_MAX_MESSAGES` | `8` | 每个 session 最近最多保留 8 条对话消息摘要 |
+| `CONTEXT_TEXT_LIMIT` | `1200` | 每条消息摘要最多 1200 字符 |
+| `CONTEXT_BUNDLE_MAX_TEXT_CHARS` | `12000` | 整个 `ContextBundle` 序列化后最多约 12000 字符，超出后优先裁剪 artifact 索引和最长消息 |
+| `artifact_index.max_items` | `24` | 每轮最多索引 24 个最新 Harness artifact |
+
+构造来源：
+
+| 来源 | 进入字段 | 处理方式 |
+|---|---|---|
+| 当前 `chat_sessions[session_id]` | `recent_messages` | 取最近 8 条，清理 provider thinking，单条截断 |
+| 当前用户请求 | `current_user_request` | 截断后保留，用于本轮任务目标 |
+| `session_context_cache[session_id]` | `working_memory` | 保留上一轮 plan/verdict/decision 的结构化摘要 |
+| `previous_failures` | `working_memory.open_failures` | 保留最近失败原因，最多 6 条 |
+| `.harness/**` | `artifact_index` | 只索引路径、类型、大小、更新时间，不内联原始日志 |
+| Search / Eval 计数 | `search_report_count`、`previous_verdict_count` | 给 Agent 判断当前轮次证据密度 |
+
+落盘路径：
+
+```text
+.harness/context/context_bundle.json
+```
+
+每次进入 Planner / Search / Generator / Runner / Evaluator 前，Harness 都应重建并落盘最新 `ContextBundle`。这保证后续调试可以复现某一轮 Agent 实际看到的记忆上下文。
+
+注入规则：
+
+| Agent | 注入位置 | 说明 |
+|---|---|---|
+| Planner | `task_context.context_bundle`，同时放入 `project_summary.context_bundle` | Planner 用它理解最近会话、失败历史和现有 artifact，但仍只能输出 PlanContract |
+| Search | `context.context_bundle` | Search 用它理解为什么搜索、上一轮错误是什么，但不能写代码或判断最终通过 |
+| Generator | 顶层 `context_bundle` | Generator 用它理解修复背景，同时仍必须遵守 `PlanContract.allowed_files` |
+| Runner | 顶层 `context_bundle` | Runner 用它理解 artifact 目标和上一轮证据，但只能执行 Harness 给定命令 |
+| Evaluator | 顶层 `context_bundle` | Evaluator 用它理解历史 verdict 和证据索引，但每轮只输出一个 EvalVerdict |
+
+强制校验：
+
+- Planner 输入必须包含 `task_context.context_bundle`
+- Search 输入必须包含 `context.context_bundle`
+- Generator / Runner / Evaluator 输入必须包含顶层 `context_bundle`
+- 缺失时 Harness 应判为 `HARNESS_SCHEMA_ERROR` 或 policy violation，不允许 Agent 在无统一记忆的情况下继续运行
+
+上下文裁剪策略：
+
+1. 先构造完整 bundle。
+2. 如果序列化长度超过 `CONTEXT_BUNDLE_MAX_TEXT_CHARS`，优先从 `artifact_index` 尾部删除较旧项目，保留至少 8 个 artifact。
+3. 如果仍超限，找到最长 `recent_messages[*].content`，截到较小长度。
+4. 如果仍超限，设置 `truncated = true`，保留剩余结构化字段。
+5. 不裁剪 `session_id`、`workspace`、`current_user_request`、`working_memory.last_verdict`、`working_memory.open_failures` 等关键控制字段，除非字段内部文本按上限截断。
+
+禁止事项：
+
+- 不允许把完整 stdout/stderr 内联进 `ContextBundle`。
+- 不允许把完整浏览器 trace、截图 base64、二进制文件内容内联进 `ContextBundle`。
+- 不允许 Agent 自行扩展私有长期记忆后绕过 Harness。
+- 不允许 SearchReport、RunReport、EvalVerdict 只存在于聊天文本中；必须落盘为 artifact 并由 `artifact_index` 引用。
+- 不允许用关键词/正则从历史里硬推断任务类型；任务类型和搜索需求由 Router / Planner / Evaluator 的 LLM 语义判断与结构化契约决定。
 
 ```json
 {
@@ -565,13 +633,18 @@ ContextBundle
   "session_id": "session_1778229077123",
   "workspace": "/Users/wangshuang/PycharmProjects/obs",
   "current_user_request": "生成一个忍者跑酷小游戏",
+  "model": "minimax-m2",
+  "request_mode": "agent",
   "history_policy": {
     "recent_messages_limit": 8,
     "text_limit_per_message": 1200,
-    "raw_logs_policy": "artifact_only"
+    "max_bundle_chars": 12000,
+    "raw_logs_policy": "artifact_only",
+    "agent_context_rule": "Each agent receives this bounded ContextBundle plus its role-specific contract. Raw stdout, stderr, browser traces, and model transcripts stay in artifacts."
   },
   "recent_messages": [
     {
+      "index": 1,
       "role": "user",
       "content": "生成一个忍者跑酷小游戏"
     }
@@ -579,16 +652,28 @@ ContextBundle
   "working_memory": {
     "last_user_message": "生成一个忍者跑酷小游戏",
     "last_plan_goal": "",
-    "last_decision": {},
-    "last_verdict": {},
+    "last_decision": {
+      "decision": "",
+      "reason": "",
+      "next_agent": ""
+    },
+    "last_verdict": {
+      "verdict": "",
+      "root_cause": "",
+      "repair_instruction": ""
+    },
     "open_failures": []
   },
   "artifact_index": [
     {
       "path": ".harness/runs/run_001/output/run_report.json",
-      "kind": "run_report"
+      "kind": "run_report",
+      "bytes": 2048,
+      "modified_at": "2026-05-10T18:22:31+08:00"
     }
-  ]
+  ],
+  "search_report_count": 0,
+  "previous_verdict_count": 0
 }
 ```
 

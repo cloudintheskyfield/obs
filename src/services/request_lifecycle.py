@@ -23,13 +23,22 @@ class RequestLifecycle:
 
     PHASES: Dict[str, LifecyclePhase] = {
         "prep_context": LifecyclePhase("prep_context", "Loading session context"),
-        "prep_route": LifecyclePhase("prep_route", "Selecting execution path"),
+        "prep_route": LifecyclePhase("prep_route", "Routing"),
+        "planning": LifecyclePhase("planning", "Planning"),
         "prep_prompt": LifecyclePhase("prep_prompt", "Assembling prompt"),
         "prep_model": LifecyclePhase("prep_model", "Waiting for model response"),
+        "answering": LifecyclePhase("answering", "Answering"),
         "fast_path": LifecyclePhase("fast_path", "Running direct tool path"),
         "create": LifecyclePhase("create", "Scaffolding runnable application", transient=False),
         "compression_start": LifecyclePhase("compression_start", "Compressing conversation context", transient=False),
         "compression_complete": LifecyclePhase("compression_complete", "Context compression complete", transient=False),
+    }
+
+    STATUS_PHASES: Dict[str, str] = {
+        "loading_context": "prep_context",
+        "routing": "prep_route",
+        "planning": "planning",
+        "answering": "answering",
     }
 
     def phase_payload(self, key: str, **overrides: Any) -> Dict[str, Any]:
@@ -45,6 +54,10 @@ class RequestLifecycle:
         }
         payload.update(overrides)
         return payload
+
+    def status_payload(self, status: str, **overrides: Any) -> Dict[str, Any]:
+        phase_key = self.STATUS_PHASES.get(str(status or "").strip(), status)
+        return self.phase_payload(phase_key, **overrides)
 
     def architecture_signature(self) -> Dict[str, Any]:
         harness = HarnessEngine().architecture_signature()
