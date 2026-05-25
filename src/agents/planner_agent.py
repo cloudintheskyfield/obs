@@ -718,7 +718,7 @@ class PlannerAgent:
     def __init__(self, vllm_client: Any) -> None:
         self.vllm_client = vllm_client
         self.harness = HarnessEngine()
-        self.system_prompt = self.harness.load_agent_prompt("Planner", PLANNER_SYSTEM_PROMPT)
+        self.system_prompt = self.harness.load_agent_prompt("Planner", "")
         self.last_plan_contract: Dict[str, Any] = {}
         self.last_tasks: List[Dict[str, Any]] = []
         self.last_thinking: str = ""

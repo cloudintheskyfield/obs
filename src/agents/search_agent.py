@@ -110,7 +110,7 @@ class SearchAgent:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
-        self.system_prompt = self.harness.load_agent_prompt("Search", SEARCH_SYSTEM_PROMPT)
+        self.system_prompt = self.harness.load_agent_prompt("Search", "")
         self.last_search_report: Dict[str, Any] = {}
 
     def _sse(self, payload: Dict[str, Any]) -> str:

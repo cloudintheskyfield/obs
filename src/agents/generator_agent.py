@@ -277,7 +277,7 @@ class GeneratorAgent:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
-        self.system_prompt = self.harness.load_agent_prompt("Generator", GENERATOR_SYSTEM_PROMPT)
+        self.system_prompt = self.harness.load_agent_prompt("Generator", "")
         self.last_patch_result: Dict[str, Any] = {}
 
     def _sse(self, payload: Dict[str, Any]) -> str:

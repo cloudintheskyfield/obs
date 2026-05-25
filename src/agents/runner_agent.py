@@ -921,7 +921,7 @@ class RunnerAgent:
         self.skill_manager = skill_manager
         self.harness = HarnessEngine()
         self.system_prompt = self.harness.load_agent_prompt(
-            "Runner", RUNNER_SYSTEM_PROMPT
+            "Runner", ""
         )
         self.last_run_report: Dict[str, Any] = {}
 
