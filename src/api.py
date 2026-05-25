@@ -61,20 +61,20 @@ class SkillExecuteRequest(BaseModel):
 
 
 class ChatStreamRequest(BaseModel):
-    tool_name: Optional[str] = None
-    parameters: Dict[str, Any] = {}
-    message: Optional[str] = None
-    message_parts: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None  # Frontend session ID, corresponding to the thread on the left
-    mode: Optional[str] = None
-    permission_mode: Optional[str] = None
-    permission_confirmed: Optional[bool] = None
-    context: Optional[str] = None
-    tool_context: Optional[str] = None
-    thinking_mode: Optional[bool] = None
-    enabled_skills: Optional[List[str]] = None
-    workspace_path: Optional[str] = None
-    model: Optional[str] = None
+    tool_name: Optional[str] = None  # 工具名称，通常是 "chat"，代表这是一次普通的对话请求
+    parameters: Dict[str, Any] = {}  # 扩展参数字典，通常包含请求字段的冗余副本或特定的额外配置
+    message: Optional[str] = None  # 用户在输入框中输入的纯文本内容
+    message_parts: Optional[List[Dict[str, Any]]] = None  # 结构化消息体，例如包含用户上传的图片(data_url)和文本的组合
+    session_id: Optional[str] = None  # 前端生成的会话 ID，对应左侧边栏的每一个 Thread (对话卡片)
+    mode: Optional[str] = None  # 对话模式，例如 "agent" (默认的智能体模式) 或 "create" (用于生成新应用的模式)
+    permission_mode: Optional[str] = None  # 权限模式："ask" (危险操作需用户手动点击确认) 或 "auto" (全自动执行，无需确认)
+    permission_confirmed: Optional[bool] = None  # 布尔值，当 permission_mode 不是 "ask" 时通常传 True，表示已自动授权
+    context: Optional[str] = None  # 附加的上下文文本信息，供大模型参考
+    tool_context: Optional[str] = None  # 前端每次发送前收集的工作区概览（例如当前目录下有哪些文件），作为底层环境提示
+    thinking_mode: Optional[bool] = None  # 是否开启了“思考”模式（让大模型先展示内部的推理过程，然后再输出结果）
+    enabled_skills: Optional[List[str]] = None  # 前端界面上勾选启用的技能列表，如 ["web-scraper-pro", "desktop-commander"]
+    workspace_path: Optional[str] = None  # 可选项：用于强制指定本次对话的工作区绝对路径
+    model: Optional[str] = None  # 用户在前端顶部选择的大模型名称，例如 "MiniMax-M2" 或 "gpt-5.5"
 
 
 class WorkspaceUpdateRequest(BaseModel):
