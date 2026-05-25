@@ -1,19 +1,6 @@
 import React, { useState } from "react";
-
-function joinList(items, fallback = "none") {
-    return items.length ? items.join(" · ") : fallback;
-}
-
-function localizeValue(node, key, locale, fallback = "") {
-    if (!node || typeof node !== "object") {
-        return fallback;
-    }
-    const localized = node[`${key}_${locale}`];
-    if (localized) {
-        return localized;
-    }
-    return node[key] || fallback;
-}
+import BaseDrawer from "./BaseDrawer";
+import { joinList, localizeValue } from "../lib/utils";
 
 function buildSkillSnapshot(selectedSkills, skillCatalog) {
     const safeSkillCatalog = Array.isArray(skillCatalog) ? skillCatalog : [];
@@ -351,19 +338,14 @@ export default function ArchitectureDrawer(props) {
 
     if (!open) {
         return (
-            <section className="logs-drawer architecture-drawer hidden" aria-hidden="true">
-                <div className="logs-backdrop" onClick={onClose} />
-                <div className="logs-sheet architecture-sheet" />
-            </section>
+            <BaseDrawer open={false} onClose={onClose} className="architecture-drawer" sheetClassName="architecture-sheet" />
         );
     }
 
     const architecture = buildFlowModel({ ...props, locale });
 
     return (
-        <section className={`logs-drawer architecture-drawer${open ? "" : " hidden"}`} aria-hidden={open ? "false" : "true"}>
-            <div className="logs-backdrop" onClick={onClose} />
-            <div className="logs-sheet architecture-sheet">
+        <BaseDrawer open={open} onClose={onClose} className="architecture-drawer" sheetClassName="architecture-sheet">
                 <div className="logs-header">
                     <div>
                         <strong>{architecture.copy.headerTitle}</strong>
@@ -481,7 +463,6 @@ export default function ArchitectureDrawer(props) {
                         ))}
                     </div>
                 </div>
-            </div>
-        </section>
+        </BaseDrawer>
     );
 }

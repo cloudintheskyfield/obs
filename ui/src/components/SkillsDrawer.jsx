@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import BaseDrawer from "./BaseDrawer";
 
 const DISPLAY_NAME_MAP = {
     "agent-skills": "Agent Skills",
@@ -178,9 +179,7 @@ export default function SkillsDrawer({
     }
 
     return (
-        <section className={`logs-drawer skills-drawer${open ? "" : " hidden"}`} aria-hidden={open ? "false" : "true"}>
-            <div className="logs-backdrop" onClick={onClose} />
-            <div className="logs-sheet skills-sheet">
+        <BaseDrawer open={open} onClose={onClose} className="skills-drawer" sheetClassName="skills-sheet">
 
                 {/* Header */}
                 <div className="logs-header">
@@ -395,7 +394,6 @@ export default function SkillsDrawer({
                         );
                     })}
                 </div>
-            </div>
-        </section>
+        </BaseDrawer>
     );
 }

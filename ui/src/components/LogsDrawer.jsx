@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, memo } from "react";
+import BaseDrawer from "./BaseDrawer";
 
 const LOG_RANGE_OPTIONS = [
     ["1h",     "最近 1h"],
@@ -124,9 +125,7 @@ export default function LogsDrawer({
     }, [setLogRange]);
 
     return (
-        <section id="logs-drawer" className={`logs-drawer${open ? "" : " hidden"}`} aria-hidden={open ? "false" : "true"}>
-            <div className="logs-backdrop" onClick={onClose} />
-            <div className="logs-sheet">
+        <BaseDrawer id="logs-drawer" open={open} onClose={onClose}>
                 <div className="logs-header">
                     <div className="logs-header-copy">
                         <div className="logs-title-row">
@@ -193,7 +192,6 @@ export default function LogsDrawer({
                         </>
                     )}
                 </div>
-            </div>
-        </section>
+        </BaseDrawer>
     );
 }
