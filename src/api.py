@@ -65,7 +65,7 @@ class ChatStreamRequest(BaseModel):
     parameters: Dict[str, Any] = {}
     message: Optional[str] = None
     message_parts: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None  # Frontend session ID, corresponding to the thread on the left
     mode: Optional[str] = None
     permission_mode: Optional[str] = None
     permission_confirmed: Optional[bool] = None
