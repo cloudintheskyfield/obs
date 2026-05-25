@@ -186,7 +186,7 @@ export default function SkillsDrawer({
                 <div className="logs-header">
                     <div>
                         <strong>Available Skills</strong>
-                        <span className="logs-meta">Selected skills are the only ones the model can use.</span>
+                        <span className="logs-meta">These skills are available for agents to orchestrate.</span>
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <button className="icon-button" type="button" title="Reload from disk" disabled={reloading} onClick={handleReload}>
@@ -332,27 +332,24 @@ export default function SkillsDrawer({
                         const isProtected = !!skill.protected;
                         return (
                             <div key={skill.name}
-                                className={`skill-option${active ? " active" : ""}${isProtected ? " skill-protected" : ""}`}
+                                className={`skill-option${isProtected ? " skill-protected" : ""}`}
                                 style={{
                                     position: "relative",
                                     padding: 0,
                                     ...(isProtected ? {
                                         borderLeft: "3px solid var(--color-primary, #1976d2)",
-                                        background: active
-                                            ? "linear-gradient(90deg, rgba(25,118,210,0.18) 0%, transparent 100%)"
-                                            : "linear-gradient(90deg, rgba(25,118,210,0.07) 0%, transparent 100%)",
+                                        background: "var(--panel-soft, rgba(255, 255, 255, 0.02))",
                                     } : {}),
                                 }}>
                                 {/* Main clickable area — protected skills are not toggleable */}
-                                <button type="button"
+                                <div
                                     style={{
                                         width: "100%", display: "flex", flexDirection: "column",
                                         alignItems: "flex-start", padding: "10px 14px 24px",
                                         background: "transparent", border: "none",
-                                        cursor: isProtected ? "default" : "pointer",
+                                        cursor: "default",
                                         color: "inherit", textAlign: "left",
-                                    }}
-                                    onClick={() => { if (!isProtected) onToggleSkill(skill.name); }}>
+                                    }}>
                                     <span className="skill-option-name" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                         {isProtected && (
                                             <i className="fas fa-shield-alt" style={{ fontSize: 10, color: "var(--color-primary, #1976d2)", opacity: 0.9 }} title="System skill — protected" />
@@ -368,8 +365,7 @@ export default function SkillsDrawer({
                                         {skillMeta(skill)}
                                         {dateLabel && <span style={{ marginLeft: 6, opacity: 0.5, fontSize: 10 }}>· {dateLabel}</span>}
                                     </span>
-                                </button>
-
+                                </div>
                                 {/* Bottom-right icon */}
                                 {isProtected ? (
                                     <span style={{

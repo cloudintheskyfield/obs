@@ -1793,3 +1793,61 @@ html[data-theme="light"] .harness-debug-details {
 html[data-theme="light"] .harness-debug-details summary {
   color: var(--text-muted, #6b7280);
 }
+
+
+/* ============================================================================
+   Light Mode: Skills & Logs Drawer
+   ============================================================================ */
+
+html[data-theme="light"] .logs-backdrop {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+}
+
+html[data-theme="light"] .logs-sheet {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .logs-header {
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+html[data-theme="light"] .logs-header strong {
+  color: #111827;
+}
+
+html[data-theme="light"] .logs-meta {
+  color: #6b7280;
+}
+
+html[data-theme="light"] .skill-option {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  color: #111827;
+}
+
+html[data-theme="light"] .skill-option-name {
+  color: #111827;
+}
+
+html[data-theme="light"] .skill-option-meta {
+  color: #6b7280;
+}
+
+html[data-theme="light"] .skill-option:hover {
+  background: #ffffff;
+  border-color: #d1d5db;
+}
+
+html[data-theme="light"] .logs-header-action {
+  color: #374151;
+  background: #ffffff;
+  border-color: #d1d5db;
+}
+
+html[data-theme="light"] .logs-header-action:hover {
+  background: #f3f4f6;
+}
