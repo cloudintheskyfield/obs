@@ -1556,8 +1556,8 @@ function App() {
             return;
         }
         restoringScrollRef.current = true;
-        // Request animation frame gives the DOM time to render the list before we scroll.
-        requestAnimationFrame(() => {
+        // setTimeout gives the DOM time to render the list (including Markdown and images) before we scroll.
+        setTimeout(() => {
             const saved = threadScrollPositionsRef.current[currentSessionId];
             if (typeof saved === "number") {
                 const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -1569,7 +1569,7 @@ function App() {
             shouldStickToBottomRef.current = distanceFromBottom < 140;
             restoringScrollRef.current = false;
             pendingScrollRestoreRef.current = null;
-        });
+        }, 100);
     }, [currentSessionId, currentSession?.transcript?.length, currentSession]);
 
     useEffect(() => {
