@@ -501,6 +501,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
         ) : (
           <div className="message-list">
             {transcript.map((entry, index) => {
+              if (entry.content && entry.content.includes('请求失败')) return null;
               const userPrompt = transcript
                 .slice(0, index)
                 .reverse()
@@ -522,7 +523,15 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                   <article className={`message ${transcriptRole(entry)}${entry.isError ? ' error' : ''}${isCompressionNotice ? ' compression-notice' : ''}`}>
                     {!isCompressionNotice ? (
                       <div className="message-meta">
-                        <span>{entryLabel(entry)}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>{entryLabel(entry)}</span>
+                          {(() => {
+                            const label = entry.elapsedLabel || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null)
+                            return label ? (
+                              <span style={{ color: 'var(--text-dim)', textTransform: 'lowercase', fontSize: '11px' }}><i className="fas fa-check-circle" style={{ marginRight: '4px', color: '#79d0a0' }} />{label}</span>
+                            ) : null
+                          })()}
+                        </div>
                         <span>{new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     ) : null}
@@ -550,16 +559,7 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                     {isThinking && collapsed ? <div className="thinking-summary">{getThinkingSummary(entry.content, entry.streaming)}</div> : null}
 
                     <div className={`message-body${entry.streaming ? ' is-streaming' : ''}${collapsed ? ' collapsed' : ''}`}>
-                      {/* elapsed time pinned to bottom-right of the message bubble */}
-                      {(() => {
-                        const label = entry.elapsedLabel || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null)
-                        return label ? (
-                          <div className="completed-elapsed" aria-label={`Completed in ${label}`}>
-                            <i className="fas fa-check-circle" aria-hidden="true" />
-                            <span>{label}</span>
-                          </div>
-                        ) : null
-                      })()}
+
                       {entry.kind === 'agent_process' ? (
                         renderAgentProcess(entry, { workingTimerLabel, completedLabel, userPrompt })
                       ) : entry.kind === 'thinking_text' && entry.pendingPlaceholder && !String(entry.content || '').trim() ? (
