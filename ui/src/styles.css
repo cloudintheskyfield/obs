@@ -1951,20 +1951,21 @@ select {
 
 .message {
     position: relative;
-    width: fit-content;
-    max-width: min(90%, 1120px);
-    padding: 13px 15px;
-    border-radius: 18px;
-    border: 1px solid var(--line);
-    background: var(--panel);
-    box-shadow: var(--shadow-soft);
+    width: 100%;
+    max-width: none;
+    padding: 10px 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
 }
 
 .message.user {
     align-self: flex-end;
     margin-left: auto;
     max-width: min(80%, 900px);
-    background: rgba(255, 255, 255, 0.028);
+    background: transparent;
+    border: none;
+    box-shadow: none;
 }
 
 .message.assistant,
@@ -1975,17 +1976,79 @@ select {
 .message.tool-result {
     margin-right: auto;
 }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.thinking,
+.message.agent-process,
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.assistant,
+.message.thinking,
+.message.agent-process,
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.thinking,
+.message.agent-process,
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.system,
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
 
 .message.system {
     background: rgba(217, 201, 171, 0.055);
     border-style: dashed;
 }
+.message.system { background: transparent; border: none; box-shadow: none; }
 
 .message.thinking {
     background: rgba(217, 201, 171, 0.04);
     border-style: dashed;
     border-color: rgba(216, 198, 164, 0.28);
 }
+.message.thinking { background: transparent; border: none; box-shadow: none; }
 
 .message.agent-process {
     width: 100%;
@@ -1999,10 +2062,12 @@ select {
 .message.tool {
     background: rgba(116, 198, 157, 0.035);
 }
+.message.tool { background: transparent; border: none; box-shadow: none; }
 
 .message.tool-result {
     background: rgba(255, 255, 255, 0.022);
 }
+.message.tool-result { background: transparent; border: none; box-shadow: none; }
 
 .message.error {
     border-color: rgba(232, 138, 138, 0.18);
@@ -2011,6 +2076,7 @@ select {
         linear-gradient(180deg, rgba(232, 138, 138, 0.04), rgba(255, 255, 255, 0.025));
     box-shadow: inset 0 0 0 1px rgba(232, 138, 138, 0.05), var(--shadow-soft);
 }
+.message.error { background: transparent; border: none; box-shadow: none; }
 
 .message.active-task {
     border-color: rgba(216, 198, 164, 0.28);
@@ -2549,10 +2615,9 @@ select {
     font-size: 12px;
     line-height: 1.6;
     color: rgba(248, 113, 113, 0.9);
-    background: rgba(248, 113, 113, 0.06);
-    border: 1px solid rgba(248, 113, 113, 0.18);
-    border-radius: 8px;
-    padding: 10px 14px;
+    background: transparent;
+    border: none;
+    padding: 10px 0;
     margin: 0;
 }
 
@@ -4251,6 +4316,48 @@ html[data-theme="light"] .composer-wrap {
     .message.agent-process {
         max-width: 100%;
     }
+.message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+    .message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.assistant,
+    .message.tool,
+    .message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.tool,
+    .message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.tool-result,
+    .message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.system,
+    .message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
+.message.thinking,
+    .message.agent-process { background: transparent; border: none; box-shadow: none; }
 
     .agent-process-grid {
         grid-template-columns: 1fr;
@@ -4535,6 +4642,7 @@ html[data-theme="light"] .message.agent-process {
     box-shadow: none;
     padding: 0;
 }
+html[data-theme="light"] .message { background: transparent; border: none; box-shadow: none; padding: 10px 0; }
 
 html[data-theme="light"] .message.user {
     width: fit-content;

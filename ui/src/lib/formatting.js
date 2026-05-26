@@ -280,5 +280,5 @@ export function entryLabel(entry) {
     if (entry.kind === "tool_use") return `Tool · ${entry.toolName || entry.taskId || "tool"}`;
     if (entry.kind === "tool_result") return `Tool · ${entry.toolName || entry.taskId || "tool"}`;
     if (entry.kind === "system_notice") return "System";
-    return entry.role === "user" ? "User" : "OBS";
+    return entry.role === "user" ? "USER" : "";
 }
