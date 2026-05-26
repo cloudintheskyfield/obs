@@ -372,12 +372,10 @@ function generatedReasoningUpdates(process, publicEvents, issueEvent, latestSumm
 }
 
 function AgentProcessCard({ entry, workingTimerLabel, completedLabel, userPrompt }) {
-  const [showDebug, setShowDebug] = React.useState(false)
   const process = entry.agentProcess
   if (!process) return null
 
   const timelineEvents = process.events || []
-  const timeLabel = entry.streaming ? workingTimerLabel : entry.elapsedLabel || completedLabel || null
   const decision = process.decision || null
   const latestSummary = process.latestSummary || null
   const issueEvent = process.currentIssue || [...timelineEvents].reverse().find(e => e.status === 'error')
@@ -394,130 +392,110 @@ function AgentProcessCard({ entry, workingTimerLabel, completedLabel, userPrompt
       roleLabel: ROLE_LABELS[event.role]?.label || event.role || '流程',
       title: publicEventTitle(event),
       message: publicEventMessage(event),
+      basis: publicEvidenceList(event),
       time: event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
       key: `${event.timestamp || 'event'}_${index}`,
     }
   }).filter(e => e.title || e.message)
 
-  const nextStepText = friendlyDetail(process.nextAction || latestSummary?.nextStep || '')
-  const taskGoal = compactText(userPrompt || process.statusLine || latestSummary?.summary || '', 120)
-  const stepNodes = publicEvents.slice(-10)
-
-  const nameFor = {
-    Planner: '制定计划', Search: '检索资料',
-    Generator: '修改代码', Runner: '运行验证', Evaluator: '检查结果'
-  }
+  const reasoningUpdates = generatedReasoningUpdates(process, publicEvents, issueEvent, latestSummary)
 
   return (
-    <div className={`apc-card${isBlocked ? ' apc-blocked' : isPass ? ' apc-done' : ''}`} aria-live="polite">
-      <div className="apc-header">
-        <div className="apc-header-left">
-          {isBlocked
-            ? <span className="apc-dot apc-dot--error"><i className="fas fa-triangle-exclamation" /></span>
-            : isPass
-            ? <span className="apc-dot apc-dot--done"><i className="fas fa-check" /></span>
-            : <span className="apc-dot apc-dot--running"><span className="apc-dot-pulse" /></span>
-          }
-          <div className="apc-header-copy">
-            <span className="apc-header-label">
-              {isBlocked ? '遇到问题' : isPass ? '已完成' : '进行中'}
-            </span>
-            {taskGoal ? <span className="apc-header-goal">{taskGoal}</span> : null}
-          </div>
-        </div>
-        <div className="apc-header-right">
-          {timeLabel ? <span className="apc-timer">{timeLabel}</span> : null}
-          {process.roundId ? <span className="apc-round-badge">Round {process.roundId}</span> : null}
-        </div>
-      </div>
-
-      <div className="apc-steps">
-        {stepNodes.length === 0 && isRunning ? (
-          <div className="apc-step apc-step--running">
-            <div className="apc-step-line">
-              <span className="apc-step-icon"><i className="fas fa-spinner fa-spin" /></span>
+    <div className={`process-stream${isBlocked ? ' is-blocked' : isPass ? ' is-done' : ''}`} aria-live="polite">
+      {/* Reasoning Updates (Conversational Stream) */}
+      <div className="process-stream-messages">
+        {reasoningUpdates.length === 0 && isRunning && (
+           <div className="process-stream-msg">
+             <div className="stream-msg-agent">
+               <span className="stream-msg-avatar"><i className="fas fa-robot" /></span>
+               <strong>Harness</strong>
+               <i className="fas fa-spinner fa-spin stream-msg-spinner" />
+             </div>
+             <div className="stream-msg-body">
+               <p>正在分析任务并准备执行链路...</p>
+             </div>
+           </div>
+        )}
+        
+        {reasoningUpdates.map(update => (
+          <div key={update.id} className="process-stream-msg">
+            <div className="stream-msg-agent">
+              <span className="stream-msg-avatar"><i className="fas fa-robot" /></span>
+              <strong>{ROLE_LABELS[update.agent]?.label || update.agent}</strong>
+              {update.phase === 'running' && isRunning && <i className="fas fa-spinner fa-spin stream-msg-spinner" />}
             </div>
-            <div className="apc-step-body">
-              <span className="apc-step-role">Harness</span>
-              <span className="apc-step-title">准备执行链路...</span>
-            </div>
-          </div>
-        ) : stepNodes.map((event, i) => {
-          const isLast = i === stepNodes.length - 1
-          return (
-            <div key={event.key} className={`apc-step apc-step--${event.tone}${isLast && isRunning ? ' apc-step--active' : ''}`}>
-              <div className="apc-step-line">
-                <span className="apc-step-icon">
-                  {event.tone === 'success'
-                    ? <i className="fas fa-check" />
-                    : event.tone === 'error'
-                    ? <i className="fas fa-times" />
-                    : event.tone === 'running'
-                    ? <i className="fas fa-spinner fa-spin" />
-                    : <i className="fas fa-clock" />}
-                </span>
-                {!isLast && <span className="apc-step-connector" />}
-              </div>
-              <div className="apc-step-body">
-                <div className="apc-step-top">
-                  <span className="apc-step-role">{event.roleLabel}</span>
-                  <span className="apc-step-title">{event.title}</span>
-                  {event.time ? <span className="apc-step-time">{event.time}</span> : null}
+            <div className="stream-msg-body">
+              {update.message ? (
+                <p>{update.message}</p>
+              ) : (
+                <strong>{update.title}</strong>
+              )}
+              {update.basis?.length > 0 && (
+                <ul className="stream-msg-basis">
+                  {update.basis.map((b, i) => <li key={i}>{b}</li>)}
+                </ul>
+              )}
+              {update.nextAction && (
+                <div className="stream-msg-next">
+                  <em>下一步：</em> <span>{update.nextAction}</span>
                 </div>
-                {(event.tone === 'running' || (isLast && !isPass && !isBlocked)) && event.message ? (
-                  <p className="apc-step-detail">{event.message}</p>
-                ) : null}
-              </div>
+              )}
             </div>
-          )
-        })}
+          </div>
+        ))}
       </div>
 
-      {isBlocked ? (
-        <div className="apc-focus apc-focus--blocked">
-          <div className="apc-focus-icon"><i className="fas fa-triangle-exclamation" /></div>
-          <div className="apc-focus-body">
-            <strong>{friendlyIssueTitle(issueEvent)}</strong>
-            <p>{friendlyDetail(issueEvent?.detail || issueEvent?.evidence || '当前验证遇到问题，需要修复后重试。')}</p>
+      {/* Public Events (Collapsible Tool Actions) */}
+      {publicEvents.length > 0 && (
+        <details className="process-stream-actions">
+          <summary>
+             <i className="fas fa-chevron-right stream-actions-chevron" />
+             <span>执行了 {publicEvents.length} 项操作</span>
+             {isRunning && <span className="stream-time-badge">{workingTimerLabel || '运行中'}</span>}
+          </summary>
+          <div className="stream-actions-content">
+            {publicEvents.map(ev => (
+              <div key={ev.key} className={`stream-action-item tone-${ev.tone}`}>
+                 <span className="stream-action-icon">
+                   {ev.tone === 'success' ? <i className="fas fa-check" /> : ev.tone === 'error' ? <i className="fas fa-times" /> : ev.tone === 'running' ? <i className="fas fa-spinner fa-spin" /> : <i className="fas fa-info" />}
+                 </span>
+                 <div className="stream-action-copy">
+                   <strong>{ev.title}</strong>
+                   {ev.message && <span className="stream-action-detail">{ev.message}</span>}
+                 </div>
+              </div>
+            ))}
           </div>
-        </div>
-      ) : isPass && (latestSummary?.title || latestSummary?.summary) ? (
-        <div className="apc-focus apc-focus--done">
-          <div className="apc-focus-icon"><i className="fas fa-check-circle" /></div>
-          <div className="apc-focus-body">
-            <strong>{latestSummary?.title || '任务完成'}</strong>
-            {latestSummary?.summary ? <p>{compactText(latestSummary.summary, 220)}</p> : null}
-          </div>
-        </div>
-      ) : nextStepText && isRunning ? (
-        <div className="apc-next">
-          <span className="apc-next-label">下一步</span>
-          <span className="apc-next-text">{nextStepText}</span>
-        </div>
-      ) : null}
+        </details>
+      )}
 
-      {timelineEvents.length ? (
-        <div className="apc-debug-wrap">
-          <button type="button" className="apc-debug-toggle" onClick={() => setShowDebug(v => !v)}>
-            <i className={`fas fa-chevron-${showDebug ? 'up' : 'down'}`} />
-            技术细节
-          </button>
-          {showDebug ? (
-            <ol className="agent-process-timeline compact">
-              {timelineEvents.slice(-12).map((event, index) => (
-                <li key={`debug_${event.timestamp || 'event'}_${index}`} className={eventTone(event.status)}>
-                  <span className="agent-process-time">{event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
-                  <span className="agent-process-role">{nameFor[event.role] || event.role || 'Harness'}</span>
-                  <span className="agent-process-copy">
-                    <span className="agent-process-title">{friendlyDetail(event.title || '') || publicEventTitle(event)}</span>
-                    {event.detail ? <span className="agent-process-detail">{friendlyDetail(event.detail)}</span> : null}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : null}
+      {/* Blocked state */}
+      {isBlocked && issueEvent && (
+        <div className="process-stream-msg is-issue">
+          <div className="stream-msg-agent error">
+            <span className="stream-msg-avatar"><i className="fas fa-triangle-exclamation" /></span>
+            <strong>验证阻断</strong>
+          </div>
+          <div className="stream-msg-body">
+            <strong>{friendlyIssueTitle(issueEvent)}</strong>
+            <p>{friendlyDetail(issueEvent?.detail || issueEvent?.evidence || '当前验证遇到问题。')}</p>
+          </div>
         </div>
-      ) : null}
+      )}
+
+      {/* Done state */}
+      {isPass && latestSummary && (
+        <div className="process-stream-msg is-success">
+          <div className="stream-msg-agent success">
+            <span className="stream-msg-avatar"><i className="fas fa-check" /></span>
+            <strong>任务完成</strong>
+          </div>
+          <div className="stream-msg-body">
+            <strong>{latestSummary.title || '本轮执行结束'}</strong>
+            {latestSummary.summary && <p>{latestSummary.summary}</p>}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
