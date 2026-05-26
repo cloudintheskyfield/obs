@@ -840,9 +840,31 @@ class PlannerAgent(BaseAgent):
             "user_request": user_message
         }
         
-        compiler = PlanCompiler()
-        compile_result = compiler.compile(raw_content, task_context, dict(project_summary or {}))
+        compiler = PlanCompiler(self.vllm_client, self.skill_manager)
+        compile_result = None
         
+        async for item in compiler.compile(
+            raw_content, 
+            task_context, 
+            dict(project_summary or {}),
+            model=model,
+            session_id=session_id,
+            previous_failures=previous_failures,
+            search_reports=search_reports
+        ):
+            if isinstance(item, dict) and "ok" in item:
+                compile_result = item
+            elif isinstance(item, str):
+                yield item
+        
+        if not compile_result:
+            compile_result = {
+                "ok": False,
+                "plan_contract": None,
+                "errors": [{"type": "COMPILER_ERROR", "message": "No compile result received."}],
+                "warnings": []
+            }
+            
         self.last_compiler_report = compile_result
         
         if compile_result["ok"] and compile_result["plan_contract"]:
