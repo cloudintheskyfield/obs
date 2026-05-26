@@ -1637,6 +1637,21 @@ class HarnessRuntime:
             self.harness_engine.validate_schema(plan_contract, "PlanContract")
             self._write_json_file(workspace, ".harness/plan.json", plan_contract)
             self._write_json_file(workspace, run_out_path, plan_contract)
+            
+            # Emit todo_list and create initial plan.md
+            todo_items = [
+                str(item.get("title") or item.get("description") or f"步骤 {idx}")
+                for idx, item in enumerate(plan_contract.get("implementation_steps") or [], start=1)
+                if isinstance(item, Mapping)
+            ]
+            
+            if todo_items:
+                yield self._sse({"type": "todo_list", "items": todo_items, "session_id": session_id})
+                
+                plan_md_content = "# Implementation Plan\n\n"
+                for item in todo_items:
+                    plan_md_content += f"- [ ] {item}\n"
+                self._write_text_file(workspace, "plan.md", plan_md_content)
             yield self._agent_summary_event(
                 role="Planner",
                 payload={
@@ -1676,6 +1691,7 @@ class HarnessRuntime:
             final_verdict: Dict[str, Any] = {}
             last_diff_path = ""
             skip_generator = False
+            completed_task_indices = set()
 
             while True:
                 if self.harness_engine.should_search(user_request=user_message, plan=plan_contract) and not search_reports:
@@ -2321,6 +2337,25 @@ class HarnessRuntime:
                     round_id=round_id,
                     state="EVALUATE",
                 )
+                
+                # Update task progress
+                passed_criteria = final_verdict.get("passed_criteria") or []
+                acceptance_criteria = plan_contract.get("acceptance_criteria") or []
+                for idx, item in enumerate(plan_contract.get("implementation_steps") or []):
+                    if idx in completed_task_indices:
+                        continue
+                    success_criteria = acceptance_criteria[idx] if idx < len(acceptance_criteria) else "完成该实施步骤并保持契约范围一致"
+                    if final_verdict.get("verdict") == "PASS" or success_criteria in passed_criteria:
+                        completed_task_indices.add(idx)
+                        yield self._sse({"type": "todo_done", "index": idx, "session_id": session_id})
+                
+                if todo_items:
+                    plan_md_content = "# Implementation Plan\n\n"
+                    for idx, item in enumerate(todo_items):
+                        mark = "x" if idx in completed_task_indices else " "
+                        plan_md_content += f"- [{mark}] {item}\n"
+                    self._write_text_file(workspace, "plan.md", plan_md_content)
+
                 repeated_root_cause = self.harness_engine.same_error_repeated(
                     previous_verdicts,
                     final_verdict,
