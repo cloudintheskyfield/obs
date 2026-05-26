@@ -74,12 +74,25 @@ def _ensure_directory(path: Path, fallback: Path, label: str) -> Path:
         return fallback
 
 
+def _is_path_writable_or_creatable(path: Path) -> bool:
+    try:
+        curr = path
+        while not curr.exists() and curr != curr.parent:
+            curr = curr.parent
+        return os.access(curr, os.W_OK)
+    except Exception:
+        return False
+
+
 def _resolve_dir_setting(raw_value: str, default_name: str, label: str) -> str:
     base_dir = _config_base_dir()
     fallback = base_dir / default_name
     candidate = Path(raw_value).expanduser()
     if not candidate.is_absolute():
         candidate = base_dir / candidate
+    if not _is_path_writable_or_creatable(candidate):
+        logger.info(f"{label} path {candidate} is not writable/creatable. Quietly falling back to {fallback}")
+        candidate = fallback
     return str(_ensure_directory(candidate, fallback, label))
 
 
@@ -92,6 +105,10 @@ def _resolve_file_setting(raw_value: Optional[str], fallback_relative: str, labe
     candidate = Path(raw_value).expanduser()
     if not candidate.is_absolute():
         candidate = base_dir / candidate
+
+    if not _is_path_writable_or_creatable(candidate.parent):
+        logger.info(f"{label} path parent {candidate.parent} is not writable/creatable. Quietly falling back to {fallback}")
+        candidate = fallback
 
     try:
         candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +212,7 @@ class AgentConfig(BaseModel):
     claude_api_key: Optional[str] = None
     
     # Skills启用配置
+    enable_browser_use: bool = True
     enable_computer_use: bool = True
     enable_text_editor: bool = True
     enable_bash: bool = True
@@ -282,8 +300,11 @@ class AgentConfig(BaseModel):
             config.web_browsing.timeout = int(os.getenv("WEB_TIMEOUT"))
         
         # Skills配置
+        if os.getenv("ENABLE_BROWSER_USE"):
+            config.enable_browser_use = os.getenv("ENABLE_BROWSER_USE").lower() == "true"
         if os.getenv("ENABLE_COMPUTER_USE"):
             config.enable_computer_use = os.getenv("ENABLE_COMPUTER_USE").lower() == "true"
+            config.enable_browser_use = config.enable_computer_use
         if os.getenv("ENABLE_TEXT_EDITOR"):
             config.enable_text_editor = os.getenv("ENABLE_TEXT_EDITOR").lower() == "true"
         if os.getenv("ENABLE_BASH"):

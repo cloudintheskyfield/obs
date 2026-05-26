@@ -135,6 +135,14 @@ class TextEditorSkill(BaseSkill):
     def _get_full_path(self, file_path: str) -> Path:
         return self._resolve_path(file_path)
     
+    def _is_creating_in_root(self, full_path: Path) -> bool:
+        try:
+            from utils.paths import app_root
+            root = app_root().resolve()
+        except ImportError:
+            root = Path(__file__).resolve().parents[3]
+        return full_path.parent.resolve() == root
+    
     def _format_content_with_line_numbers(self, content: str, start_line: int = 1) -> str:
         lines = content.split('\n')
         return '\n'.join(f"{i:4d}│{line}" for i, line in enumerate(lines, start=start_line))
@@ -258,6 +266,11 @@ class TextEditorSkill(BaseSkill):
         if self._is_compacted_history_placeholder(content):
             return self._placeholder_error()
         full_path = self._get_full_path(file_path)
+        if self._is_creating_in_root(full_path):
+            return SkillResult(
+                success=False,
+                error="Creating new files directly in the project root directory is not allowed. Please create files inside the 'workspace' directory or a subdirectory."
+            )
         try:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             if full_path.exists():
@@ -280,6 +293,11 @@ class TextEditorSkill(BaseSkill):
         if self._is_compacted_history_placeholder(content):
             return self._placeholder_error()
         full_path = self._get_full_path(file_path)
+        if not full_path.exists() and self._is_creating_in_root(full_path):
+            return SkillResult(
+                success=False,
+                error="Creating new files directly in the project root directory is not allowed. Please create files inside the 'workspace' directory or a subdirectory."
+            )
         WARN_BYTES = 80_000
         try:
             full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -303,6 +321,11 @@ class TextEditorSkill(BaseSkill):
         if self._is_compacted_history_placeholder(content):
             return self._placeholder_error()
         full_path = self._get_full_path(file_path)
+        if not full_path.exists() and self._is_creating_in_root(full_path):
+            return SkillResult(
+                success=False,
+                error="Creating new files directly in the project root directory is not allowed. Please create files inside the 'workspace' directory or a subdirectory."
+            )
         try:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             joining_newline = ""
