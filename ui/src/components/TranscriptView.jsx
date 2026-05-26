@@ -522,16 +522,8 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                 <React.Fragment key={entry.id}>
                   <article className={`message ${transcriptRole(entry)}${entry.isError ? ' error' : ''}${isCompressionNotice ? ' compression-notice' : ''}`}>
                     {!isCompressionNotice ? (
-                      <div className="message-meta">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>{entryLabel(entry)}</span>
-                          {(() => {
-                            const label = entry.elapsedLabel || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null)
-                            return label ? (
-                              <span style={{ color: 'var(--text-dim)', textTransform: 'lowercase', fontSize: '11px' }}><i className="fas fa-check-circle" style={{ marginRight: '4px', color: '#79d0a0' }} />{label}</span>
-                            ) : null
-                          })()}
-                        </div>
+                      <div className="message-meta" style={{ justifyContent: 'flex-start', gap: '12px' }}>
+                        {entryLabel(entry) ? <span>{entryLabel(entry)}</span> : null}
                         <span>{new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     ) : null}
@@ -560,6 +552,18 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
 
                     <div className={`message-body${entry.streaming ? ' is-streaming' : ''}${collapsed ? ' collapsed' : ''}`}>
 
+                      {/* elapsed time pinned to bottom-right of the message bubble */}
+                      {(() => {
+                        const label = entry.elapsedLabel || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null)
+                        return label ? (
+                          <div className="completed-elapsed" aria-label={`Completed in ${label}`} style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '11px', color: 'var(--text-dim)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <i className="fas fa-check-circle" style={{ color: '#79d0a0' }} aria-hidden="true" />
+                              <span>{label}</span>
+                            </div>
+                          </div>
+                        ) : null
+                      })()}
                       {entry.kind === 'agent_process' ? (
                         renderAgentProcess(entry, { workingTimerLabel, completedLabel, userPrompt })
                       ) : entry.kind === 'thinking_text' && entry.pendingPlaceholder && !String(entry.content || '').trim() ? (
