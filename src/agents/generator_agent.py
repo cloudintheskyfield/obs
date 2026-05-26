@@ -605,7 +605,9 @@ class GeneratorAgent(BaseAgent):
                     stream=True,
                     model=model,
                 )
+                chunk_count = 0
                 async for chunk in stream:
+                    chunk_count += 1
                     if isinstance(chunk, dict) and "__obs_phase" in chunk:
                         continue
                     if "choices" not in chunk or not chunk["choices"]:
@@ -623,6 +625,11 @@ class GeneratorAgent(BaseAgent):
                                 "session_id": session_id,
                             }
                         )
+                        if chunk_count % 15 == 0:
+                            thinking_match = re.search(r"<think>([\s\S]*?)(?:</think>|$)", raw_content, re.IGNORECASE)
+                            if thinking_match:
+                                dynamic_detail = self._extract_thinking_summary(thinking_match.group(1), default_detail="生成代码及 Patch...")
+                                yield self._status("running", role="Generator", title="执行实施步骤", detail=dynamic_detail, session_id=session_id)
                     if "tool_calls" in delta and delta["tool_calls"]:
                         for tc in delta["tool_calls"]:
                             idx = tc.get("index", len(tool_calls))

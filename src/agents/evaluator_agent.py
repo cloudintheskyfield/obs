@@ -251,7 +251,9 @@ class EvaluatorAgent(BaseAgent):
                 stream=True,
                 model=model,
             )
+            chunk_count = 0
             async for chunk in stream:
+                chunk_count += 1
                 if isinstance(chunk, dict) and "__obs_phase" in chunk:
                     continue
                 if "choices" not in chunk or not chunk["choices"]:
@@ -268,6 +270,11 @@ class EvaluatorAgent(BaseAgent):
                             "session_id": session_id,
                         }
                     )
+                    if chunk_count % 15 == 0:
+                        thinking_match = re.search(r"<think>([\s\S]*?)(?:</think>|$)", raw_content, re.IGNORECASE)
+                        if thinking_match:
+                            dynamic_detail = self._extract_thinking_summary(thinking_match.group(1), default_detail="评估执行结果与目标...")
+                            yield self._status("running", role="Evaluator", title="评估任务结果", detail=dynamic_detail, session_id=session_id)
         except Exception as exc:
             logger.warning(f"EvaluatorAgent model call failed: {exc}")
             self.last_verdict = _heuristic_verdict(evaluation_input, self.harness)

@@ -20,6 +20,7 @@ class BaseAgent:
     - _normalize_object_list: 统一将各种形式的对象列表规范化
     - _strip_thinking: 去除 <think>…</think> 思维链标签
     - _append_assistant_message: 向 chat_sessions 追加 assistant 消息
+    - _extract_thinking_summary: 提取思维链的最后一句话作为动态状态详情
     """
 
     def __init__(self, role_name: str, vllm_client: Any, skill_manager: Any = None) -> None:
@@ -54,6 +55,29 @@ class BaseAgent:
                 "session_id": session_id,
             }
         )
+
+    def _extract_thinking_summary(self, thinking_content: str, default_detail: str = "") -> str:
+        """提取思维链最后一句或有意义的文字作为状态更新展示"""
+        if not thinking_content:
+            return default_detail
+        lines = [line.strip() for line in thinking_content.split("\n") if line.strip()]
+        if not lines:
+            return default_detail
+        last_line = lines[-1]
+        
+        # 为了避免标点符号切断不干净，我们做一些简单的清理
+        # 这里如果超过一定长度（如 40 字符），就做截断
+        if len(last_line) > 40:
+            # 截取后半段，因为通常最新的想法在最后
+            last_line = last_line[-40:]
+            if not last_line.startswith("..."):
+                last_line = "..." + last_line
+                
+        # 补齐尾部省略号
+        if not last_line.endswith("..."):
+            last_line += "..."
+            
+        return last_line
 
     # ─── JSON parsing ──────────────────────────────────────────────────────
 

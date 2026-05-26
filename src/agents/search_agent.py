@@ -153,7 +153,9 @@ class SearchAgent(BaseAgent):
                     stream=True,
                     model=model,
                 )
+                chunk_count = 0
                 async for chunk in stream:
+                    chunk_count += 1
                     if isinstance(chunk, dict) and "__obs_phase" in chunk:
                         continue
                     if "choices" not in chunk or not chunk["choices"]:
@@ -171,6 +173,11 @@ class SearchAgent(BaseAgent):
                                 "session_id": session_id,
                             }
                         )
+                        if chunk_count % 15 == 0:
+                            thinking_match = re.search(r"<think>([\s\S]*?)(?:</think>|$)", raw_content, re.IGNORECASE)
+                            if thinking_match:
+                                dynamic_detail = self._extract_thinking_summary(thinking_match.group(1), default_detail="收集并整理资料中...")
+                                yield self._status("running", role="Search", title="执行检索", detail=dynamic_detail, session_id=session_id)
                     if "tool_calls" in delta and delta["tool_calls"]:
                         for tc in delta["tool_calls"]:
                             idx = tc.get("index", len(tool_calls))

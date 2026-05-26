@@ -765,6 +765,7 @@ class PlannerAgent(BaseAgent):
 
         raw_content = ""
         thinking_content = ""
+        chunk_count = 0
         try:
             stream = await self.vllm_client.chat_completion(
                 messages=messages,
@@ -775,6 +776,7 @@ class PlannerAgent(BaseAgent):
                 model=model,
             )
             async for chunk in stream:
+                chunk_count += 1
                 if isinstance(chunk, dict) and "__obs_phase" in chunk:
                     continue
                 if "choices" not in chunk or not chunk["choices"]:
@@ -795,6 +797,11 @@ class PlannerAgent(BaseAgent):
                             "session_id": session_id,
                         }
                     )
+                    
+                    # 动态更新前端展示的状态
+                    if chunk_count % 15 == 0 and thinking_content:
+                        dynamic_detail = self._extract_thinking_summary(thinking_content, default_detail="整理目标、范围、验证方式与约束...")
+                        yield self._status("running", role="Planner", title="生成 PlanContract", detail=dynamic_detail, session_id=session_id)
         except Exception as exc:
             logger.warning(f"PlannerAgent model call failed: {exc}")
             plan_contract = _default_plan_contract(user_message, existing_files)
