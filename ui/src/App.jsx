@@ -1536,7 +1536,7 @@ function App() {
         if (!el) return undefined;
         const updateStickiness = () => {
             if (restoringScrollRef.current) return;
-            if (currentSessionIdRef.current) {
+            if (currentSessionIdRef.current && pendingScrollRestoreRef.current !== currentSessionIdRef.current) {
                 threadScrollPositionsRef.current[currentSessionIdRef.current] = el.scrollTop;
             }
             const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
