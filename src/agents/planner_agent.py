@@ -9,8 +9,8 @@ from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional
 
 from loguru import logger
 
-from .harness_engine import HarnessEngine
 from .base_agent import BaseAgent
+from .harness_engine import HarnessEngine
 
 _PROTECTED_PATHS = [
     ".env",
@@ -52,6 +52,13 @@ _EXECUTABLE_COMMANDS = {
     "cargo",
 }
 
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
 
 
 def _normalize_steps(value: Any) -> List[Dict[str, Any]]:
@@ -166,6 +173,48 @@ def _normalize_smoke_tests(value: Any) -> List[Dict[str, Any]]:
             )
     return tests
 
+
+def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = safe_loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:idx + 1]
+                try:
+                    parsed = safe_loads(candidate)
+                except Exception:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 def _default_allowed_files(existing_files: Optional[List[str]]) -> List[str]:
@@ -532,11 +581,11 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
     contract["schema_version"] = str(source.get("schema_version") or "1.0")
     contract["task_id"] = str(source.get("task_id") or base["task_id"])
     contract["goal"] = str(source.get("goal") or base["goal"])
-    contract["assumptions"] = self._normalize_string_list(source.get("assumptions"))
+    contract["assumptions"] = _normalize_string_list(source.get("assumptions"))
     contract["implementation_strategy"] = str(source.get("implementation_strategy") or base["implementation_strategy"])
-    contract["allowed_files"] = self._normalize_string_list(source.get("allowed_files")) or base["allowed_files"]
-    contract["forbidden_files"] = self._normalize_string_list(source.get("forbidden_files")) or base["forbidden_files"]
-    contract["required_files_to_inspect"] = self._normalize_string_list(source.get("required_files_to_inspect")) or base["required_files_to_inspect"]
+    contract["allowed_files"] = _normalize_string_list(source.get("allowed_files")) or base["allowed_files"]
+    contract["forbidden_files"] = _normalize_string_list(source.get("forbidden_files")) or base["forbidden_files"]
+    contract["required_files_to_inspect"] = _normalize_string_list(source.get("required_files_to_inspect")) or base["required_files_to_inspect"]
     contract["test_commands"] = _normalize_command_specs(source.get("test_commands")) or base["test_commands"]
     output_commands = _default_file_output_commands(contract["allowed_files"], contract["goal"], contract["task_id"])
     if output_commands:
@@ -560,7 +609,7 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
         "enabled": bool(dev_server.get("enabled", default_dev_server.get("enabled"))),
         "start_cmd": str(dev_server.get("start_cmd") or default_dev_server.get("start_cmd") or ""),
         "url": str(dev_server.get("url") or default_dev_server.get("url") or ""),
-        "ready_patterns": self._normalize_string_list(dev_server.get("ready_patterns")) or default_dev_server.get("ready_patterns", []),
+        "ready_patterns": _normalize_string_list(dev_server.get("ready_patterns")) or default_dev_server.get("ready_patterns", []),
         "timeout_sec": int(dev_server.get("timeout_sec", default_dev_server.get("timeout_sec", 60)) or 60),
     }
 
@@ -605,7 +654,7 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
             contract["test_commands"],
             contract["smoke_tests"],
         )
-    contract["acceptance_criteria"] = self._normalize_string_list(source.get("acceptance_criteria")) or base["acceptance_criteria"]
+    contract["acceptance_criteria"] = _normalize_string_list(source.get("acceptance_criteria")) or base["acceptance_criteria"]
 
     repair_policy_raw = source.get("repair_policy")
     repair_policy: Dict[str, Any] = dict(repair_policy_raw) if isinstance(repair_policy_raw, Mapping) else {}
@@ -629,8 +678,8 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
     contract["external_research"] = {
         "required": bool(external_research.get("required", False)),
         "reason": str(external_research.get("reason") or ""),
-        "queries": self._normalize_string_list(external_research.get("queries")),
-        "allowed_domains": self._normalize_string_list(external_research.get("allowed_domains")),
+        "queries": _normalize_string_list(external_research.get("queries")),
+        "allowed_domains": _normalize_string_list(external_research.get("allowed_domains")),
         "max_results": int(external_research.get("max_results", 5) or 5),
         "max_pages_to_scrape": int(external_research.get("max_pages_to_scrape", 3) or 3),
         "freshness": str(external_research.get("freshness") or "stable"),
@@ -645,13 +694,13 @@ def _normalize_plan_contract(raw_obj: Optional[Dict[str, Any]], user_message: st
         "allow_add_dependencies": bool(package_json_policy.get("allow_add_dependencies", False)),
         "requires_approval": bool(package_json_policy.get("requires_approval", True)),
     }
-    contract["risks"] = self._normalize_string_list(source.get("risks"))
+    contract["risks"] = _normalize_string_list(source.get("risks"))
     return contract
 
 
 def _plan_contract_to_tasks(plan_contract: Mapping[str, Any]) -> List[Dict[str, str]]:
     steps = _normalize_steps(plan_contract.get("implementation_steps"))
-    criteria = self._normalize_string_list(plan_contract.get("acceptance_criteria"))
+    criteria = _normalize_string_list(plan_contract.get("acceptance_criteria"))
     tasks: List[Dict[str, str]] = []
     for idx, step in enumerate(steps):
         success_criteria = criteria[idx] if idx < len(criteria) else "完成该实施步骤并保持契约范围一致"
@@ -672,4 +721,139 @@ class PlannerAgent(BaseAgent):
         self.last_plan_contract: Dict[str, Any] = {}
         self.last_tasks: List[Dict[str, Any]] = []
         self.last_thinking: str = ""
-    
+
+    async def plan(
+        self,
+        session_id: str,
+        user_message: str,
+        *,
+        model: Optional[str] = None,
+        existing_files: Optional[List[str]] = None,
+        project_summary: Optional[Mapping[str, Any]] = None,
+        previous_failures: Optional[List[str]] = None,
+        constraints: Optional[Mapping[str, Any]] = None,
+        search_reports: Optional[List[Mapping[str, Any]]] = None,
+    ) -> AsyncGenerator[str, None]:
+        yield self._sse(
+            {
+                "type": "agent_step",
+                "role": "Planner",
+                "status": "running",
+                "title": "生成 PlanContract",
+                "detail": "整理目标、范围、验证方式与约束...",
+                "session_id": session_id,
+            }
+        )
+
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {
+                "role": "user",
+                "content": self._build_user_prompt(
+                    user_message,
+                    existing_files,
+                    project_summary=project_summary,
+                    previous_failures=previous_failures,
+                    constraints=constraints,
+                    search_reports=search_reports,
+                ),
+            },
+        ]
+
+        raw_content = ""
+        thinking_content = ""
+        try:
+            stream = await self.vllm_client.chat_completion(
+                messages=messages,
+                tools=None,
+                temperature=0.2,
+                max_tokens=1800,
+                stream=True,
+                model=model,
+            )
+            async for chunk in stream:
+                if isinstance(chunk, dict) and "__obs_phase" in chunk:
+                    continue
+                if "choices" not in chunk or not chunk["choices"]:
+                    continue
+                delta = chunk["choices"][0].get("delta", {})
+                piece = delta.get("content") or ""
+                if piece:
+                    raw_content += piece
+                    visible = re.sub(r"<think>[\s\S]*?</think>", "", raw_content, flags=re.IGNORECASE)
+                    thinking_match = re.search(r"<think>([\s\S]*?)(?:</think>|$)", raw_content, re.IGNORECASE)
+                    if thinking_match:
+                        thinking_content = thinking_match.group(1)
+                    yield self._sse(
+                        {
+                            "type": "agent_thinking",
+                            "agent": "planner",
+                            "delta": piece if visible else piece,
+                            "session_id": session_id,
+                        }
+                    )
+        except Exception as exc:
+            logger.warning(f"PlannerAgent model call failed: {exc}")
+            plan_contract = _default_plan_contract(user_message, existing_files)
+            self.last_plan_contract = plan_contract
+            self.last_tasks = _plan_contract_to_tasks(plan_contract)
+            self.last_thinking = ""
+            yield self._sse(
+                {
+                    "type": "agent_step",
+                    "role": "Planner",
+                    "status": "error",
+                    "title": "PlanContract 生成失败，已回退默认方案",
+                    "detail": str(exc),
+                    "session_id": session_id,
+                }
+            )
+            yield self._sse(
+                {
+                    "type": "agent_step",
+                    "role": "Planner",
+                    "status": "success",
+                    "title": "PlanContract 已生成",
+                    "detail": f"已回退为 {len(self.last_tasks)} 个实施步骤。",
+                    "session_id": session_id,
+                }
+            )
+            return
+
+        self.last_thinking = thinking_content
+        plan_contract = _normalize_plan_contract(_find_first_json_object(raw_content), user_message, existing_files)
+        self.last_plan_contract = plan_contract
+        self.last_tasks = _plan_contract_to_tasks(plan_contract)
+        yield self._sse(
+            {
+                "type": "agent_step",
+                "role": "Planner",
+                "status": "success",
+                "title": "PlanContract 已生成",
+                "detail": f"已生成 {len(self.last_tasks)} 个实施步骤与 {len(plan_contract.get('acceptance_criteria', []))} 条验收标准。",
+                "session_id": session_id,
+            }
+        )
+
+    @staticmethod
+    def _build_user_prompt(
+        user_message: str,
+        existing_files: Optional[List[str]],
+        *,
+        project_summary: Optional[Mapping[str, Any]] = None,
+        previous_failures: Optional[List[str]] = None,
+        constraints: Optional[Mapping[str, Any]] = None,
+        search_reports: Optional[List[Mapping[str, Any]]] = None,
+    ) -> str:
+        payload = {
+            "user_request": user_message,
+            "project_summary": dict(project_summary or {}),
+            "previous_failures": [str(item) for item in (previous_failures or []) if str(item).strip()],
+            "constraints": dict(constraints or {}),
+            "search_reports": list(search_reports or []),
+            "existing_files": list(existing_files or [])[:30],
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def tasks_as_labels(self) -> List[str]:
+        return [task["label"] for task in self.last_tasks]

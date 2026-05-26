@@ -1,4 +1,5 @@
 import React from "react";
+import BaseDrawer from "./BaseDrawer";
 import { formatWorkspaceBreadcrumb } from "../lib/formatting.js";
 
 export default function WorkspaceModal({
@@ -20,27 +21,24 @@ export default function WorkspaceModal({
     nativePickHelp = "",
 }) {
     return (
-        <section className={`logs-drawer workspace-drawer${open ? "" : " hidden"}`} aria-hidden={open ? "false" : "true"}>
-            <div className="logs-backdrop" onClick={onClose} />
-            <div className="logs-sheet workspace-sheet">
-                <div className="logs-header workspace-header">
-                    <div>
-                        <strong>Workspace</strong>
-                        <span className="logs-meta">Select the active working root for terminal, file editing, and Python execution.</span>
-                    </div>
-                    <div className="logs-filters workspace-toolbar">
-                        <button className="tiny-pill" type="button" onClick={onNativePick}>
-                            {nativePickLabel}
-                        </button>
-                        <button className="tiny-pill" type="button" onClick={onOpenParent} disabled={!browserParent || isLoading}>
-                            Up One Level
-                        </button>
-                    </div>
-                    <button className="icon-button" type="button" title="关闭工作区" onClick={onClose}>
-                        <i className="fas fa-times" />
+        <BaseDrawer
+            open={open}
+            onClose={onClose}
+            className="workspace-drawer"
+            sheetClassName="workspace-sheet"
+            title="Workspace"
+            meta="Select the active working root for terminal, file editing, and Python execution."
+            actions={
+                <>
+                    <button className="tiny-pill" type="button" onClick={onNativePick}>
+                        {nativePickLabel}
                     </button>
-                </div>
-
+                    <button className="tiny-pill" type="button" onClick={onOpenParent} disabled={!browserParent || isLoading}>
+                        Up One Level
+                    </button>
+                </>
+            }
+        >
                 <div className="logs-list workspace-list">
                     {nativePickHelp ? <div className="workspace-picker-note">{nativePickHelp}</div> : null}
 
@@ -100,7 +98,6 @@ export default function WorkspaceModal({
                         <button className="primary-btn" type="button" onClick={onSave} disabled={!draftPath || isLoading}>Use This Workspace</button>
                     </div>
                 </div>
-            </div>
-        </section>
+        </BaseDrawer>
     );
 }

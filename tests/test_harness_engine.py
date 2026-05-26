@@ -25,7 +25,6 @@ def test_harness_signature_defines_three_roles_and_six_layers() -> None:
 
 def test_harness_addendum_requires_environment_evaluation() -> None:
     addendum = HarnessEngine().system_addendum(
-        active_mode="agent",
         user_message="生成一个网页游戏",
         tool_names=["str_replace_editor", "bash", "computer"],
     )
@@ -39,15 +38,7 @@ def test_harness_addendum_requires_environment_evaluation() -> None:
     assert "Runner script errors" in addendum
 
 
-def test_harness_maps_supported_modes_to_strategies() -> None:
-    harness = HarnessEngine()
 
-    assert harness.strategy_for_mode("agent") == "default"
-    assert harness.strategy_for_mode("create") == "create"
-    assert harness.strategy_for_mode("plan") == "planner_only"
-    assert harness.strategy_for_mode("unknown") == "default"
-    assert harness.runtime_mode_for_strategy("planner_only") == "agent"
-    assert harness.runtime_mode_for_strategy("create") == "create"
 
 
 def test_search_gate_opens_only_for_current_or_external_uncertainty() -> None:

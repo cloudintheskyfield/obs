@@ -125,47 +125,51 @@ export default function LogsDrawer({
     }, [setLogRange]);
 
     return (
-        <BaseDrawer id="logs-drawer" open={open} onClose={onClose}>
-                <div className="logs-header">
-                    <div className="logs-header-copy">
-                        <div className="logs-title-row">
-                            <strong>Debug Logs</strong>
-                            <span className="logs-meta">
-                                Raw model, tool, and harness trace events
-                                {totalCount > 0 && <em className="logs-count"> · {totalCount} 条</em>}
-                            </span>
+        <BaseDrawer 
+            id="logs-drawer" 
+            open={open} 
+            onClose={onClose} 
+            sheetClassName="logs-drawer-content"
+            title="Debug Logs"
+            meta={
+                <>
+                    Raw model, tool, and harness trace events
+                    {totalCount > 0 && <em className="logs-count"> · {totalCount} 条</em>}
+                </>
+            }
+            headerExtra={
+                <>
+                    {(threadTitle || threadId) && (
+                        <div className="logs-thread-scope" title={threadId || undefined}>
+                            <span className="logs-thread-badge">当前 Thread</span>
+                            {threadTitle && <strong className="logs-thread-title">{threadTitle}</strong>}
+                            {threadId && <code className="logs-thread-id">{threadId}</code>}
                         </div>
-                        {(threadTitle || threadId) && (
-                            <div className="logs-thread-scope" title={threadId || undefined}>
-                                <span className="logs-thread-badge">当前 Thread</span>
-                                {threadTitle && <strong className="logs-thread-title">{threadTitle}</strong>}
-                                {threadId && <code className="logs-thread-id">{threadId}</code>}
-                            </div>
-                        )}
-                        <div className="logs-scope-note">这里只保留调试轨迹，主界面展示的是 Harness 归一化后的进度摘要。</div>
-                    </div>
-                    <div className="logs-filters">
-                        <select
-                            className="mode-select logs-range-select"
-                            value={logRange}
-                            onChange={handleRangeChange}
-                        >
-                            {LOG_RANGE_OPTIONS.map(([value, label]) => (
-                                <option key={value} value={value}>{label}</option>
-                            ))}
-                        </select>
-                        {logRange === "custom" && (
-                            <>
-                                <input className="logs-time-input" type="datetime-local" value={logsFrom} onChange={(e) => setLogsFrom(e.target.value)} />
-                                <input className="logs-time-input" type="datetime-local" value={logsTo} onChange={(e) => setLogsTo(e.target.value)} />
-                            </>
-                        )}
-                        <button className="tiny-pill" type="button" onClick={onRefresh}>Refresh</button>
-                    </div>
-                    <button className="icon-button" type="button" title="关闭日志" onClick={onClose}>
-                        <i className="fas fa-times" />
-                    </button>
-                </div>
+                    )}
+                    <div className="logs-scope-note">这里只保留调试轨迹，主界面展示的是 Harness 归一化后的进度摘要。</div>
+                </>
+            }
+            actions={
+                <>
+                    <select
+                        className="mode-select logs-range-select"
+                        value={logRange}
+                        onChange={handleRangeChange}
+                    >
+                        {LOG_RANGE_OPTIONS.map(([value, label]) => (
+                            <option key={value} value={value}>{label}</option>
+                        ))}
+                    </select>
+                    {logRange === "custom" && (
+                        <>
+                            <input className="logs-time-input" type="datetime-local" value={logsFrom} onChange={(e) => setLogsFrom(e.target.value)} />
+                            <input className="logs-time-input" type="datetime-local" value={logsTo} onChange={(e) => setLogsTo(e.target.value)} />
+                        </>
+                    )}
+                    <button className="tiny-pill" type="button" onClick={onRefresh}>Refresh</button>
+                </>
+            }
+        >
 
                 <div className="logs-list">
                     {logs.length === 0 ? (

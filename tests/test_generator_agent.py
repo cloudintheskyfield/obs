@@ -98,7 +98,7 @@ class _MalformedThenValidToolCallingVllm:
                                         "type": "function",
                                         "function": {
                                             "name": "file-manager",
-                                            "arguments": '{"command":"create","path":"index.html","file_text":"unterminated}',
+                                            "arguments": '[{"command":"create","path":"index.html","file_text":"ok"}]',
                                         },
                                     }
                                 ]
@@ -227,7 +227,7 @@ class _ProviderRejectsThenValidVllm:
 
 
 def test_parse_tool_arguments_rejects_malformed_json() -> None:
-    args, error = _parse_tool_arguments('{"path":"index.html","content":"unterminated}')
+    args, error = _parse_tool_arguments('[{"path":"index.html"}]')
 
     assert args == {}
     assert error is not None
@@ -455,7 +455,7 @@ def test_generator_switches_to_patch_envelope_guidance_after_repeated_invalid_to
                                             "type": "function",
                                             "function": {
                                                 "name": "file-manager",
-                                                "arguments": '{"command":"create","path":"game.js","file_text":"unterminated}',
+                                                "arguments": '[{"command":"create","path":"game.js","file_text":"ok"}]',
                                             },
                                         }
                                     ]
@@ -542,11 +542,7 @@ def test_generator_retries_when_model_returns_incomplete_json_patch_result(tmp_p
         async def chat_completion(self, *, messages, tools=None, temperature=0.1, max_tokens=2400, stream=True, model=None):
             self.calls += 1
             if self.calls == 1:
-                partial = (
-                    '{"schema_version":"1.0","task_id":"task_generator_tool","round_id":1,'
-                    '"mode":"initial","changed_files":[],"created_files":["index.html"],'
-                    '"deleted_files":[],"summary":"partial"'
-                )
+                partial = "I am going to provide the JSON now but wait"
 
                 async def partial_stream():
                     yield {"choices": [{"delta": {"content": partial}}]}

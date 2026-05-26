@@ -179,27 +179,25 @@ export default function SkillsDrawer({
     }
 
     return (
-        <BaseDrawer open={open} onClose={onClose} className="skills-drawer" sheetClassName="skills-sheet">
-
-                {/* Header */}
-                <div className="logs-header">
-                    <div>
-                        <strong>Available Skills</strong>
-                        <span className="logs-meta">These skills are available for agents to orchestrate.</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <button className="icon-button" type="button" title="Reload from disk" disabled={reloading} onClick={handleReload}>
-                            <i className={`fas fa-sync-alt${reloading ? " fa-spin" : ""}`} />
-                        </button>
-                        <button className="icon-button" type="button" title="Install a skill"
-                            onClick={() => { setShowInstall(v => !v); setFeedback(null); }}>
-                            <i className="fas fa-plus" />
-                        </button>
-                        <button className="icon-button" type="button" title="Close" onClick={onClose}>
-                            <i className="fas fa-times" />
-                        </button>
-                    </div>
-                </div>
+        <BaseDrawer 
+            open={open} 
+            onClose={onClose} 
+            className="skills-drawer" 
+            sheetClassName="skills-sheet"
+            title="Available Skills"
+            meta="These skills are available for agents to orchestrate."
+            actions={
+                <>
+                    <button className="icon-button" type="button" title="Reload from disk" disabled={reloading} onClick={handleReload}>
+                        <i className={`fas fa-sync-alt${reloading ? " fa-spin" : ""}`} />
+                    </button>
+                    <button className="icon-button" type="button" title="Install a skill"
+                        onClick={() => { setShowInstall(v => !v); setFeedback(null); }}>
+                        <i className="fas fa-plus" />
+                    </button>
+                </>
+            }
+        >
 
                 {/* Sort bar */}
                 <div style={{ display: "flex", gap: 4, padding: "6px 16px", borderBottom: "1px solid var(--border-color)", alignItems: "center" }}>

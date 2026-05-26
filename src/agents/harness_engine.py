@@ -11,6 +11,16 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from loguru import logger
 
 
+def _deep_update(d: Dict[str, Any], u: Mapping[str, Any]) -> Dict[str, Any]:
+    import collections.abc
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = _deep_update(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
+
 class HarnessPolicyViolation(ValueError):
     """Raised when an agent output violates Harness policy."""
 
@@ -194,29 +204,6 @@ class HarnessEngine:
             "confidence",
             "stop_reason",
         ],
-    }
-
-    DEFAULT_BUDGETS = {
-        "schema_version": "1.0",
-        "max_total_steps": 14,
-        "max_planner_calls": 2,
-        "max_generator_calls": 4,
-        "max_runner_calls": 4,
-        "max_evaluator_calls": 4,
-        "max_search_calls_per_task": 2,
-        "max_repair_rounds": 3,
-        "max_replan_rounds": 3,
-        "max_same_error_repeats": 2,
-        "timeouts": {
-            "planner_sec": 60,
-            "generator_sec": 180,
-            "runner_sec": 300,
-            "evaluator_sec": 60,
-            "search_sec": 120,
-            "command_default_sec": 120,
-            "dev_server_sec": 60,
-            "browser_test_sec": 60,
-        },
     }
 
     DEFAULT_POLICY = {
@@ -797,28 +784,43 @@ class HarnessEngine:
             ],
         }
 
+    def _get_system_config(self, filename: str) -> Optional[Dict[str, Any]]:
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            config_file = repo_root / ".harness" / filename
+            if config_file.exists():
+                custom = safe_loads(config_file.read_text(encoding="utf-8"))
+                if isinstance(custom, dict):
+                    return custom
+        except Exception as e:
+            logger.warning(f"Failed to read system config {filename}: {e}")
+        return None
+
     def default_policy(self, workspace_root: Optional[str] = None) -> Dict[str, Any]:
         policy = safe_loads(json.dumps(self.DEFAULT_POLICY))
+        sys_policy = self._get_system_config("policy.json")
+        if sys_policy:
+            _deep_update(policy, sys_policy)
         if workspace_root:
             policy["workspace_root"] = workspace_root
         return policy
 
     def default_budgets(self) -> Dict[str, Any]:
-        return safe_loads(json.dumps(self.DEFAULT_BUDGETS))
+        sys_budgets = self._get_system_config("budgets.json")
+        if not sys_budgets:
+            raise HarnessPolicyViolation("Global .harness/budgets.json not found or invalid.")
+        return sys_budgets
         
     def get_policy(self, workspace_root: Optional[str] = None) -> Dict[str, Any]:
         policy = self.default_policy(workspace_root)
         if workspace_root:
             try:
-                from pathlib import Path
                 policy_file = Path(workspace_root) / ".harness" / "policy.json"
                 if policy_file.exists():
                     custom = safe_loads(policy_file.read_text(encoding="utf-8"))
                     if isinstance(custom, dict):
-                        # Simple shallow merge at top-level
-                        policy.update(custom)
+                        _deep_update(policy, custom)
             except Exception as e:
-                from loguru import logger
                 logger.warning(f"Failed to read custom policy from {workspace_root}: {e}")
         return policy
 
@@ -826,15 +828,12 @@ class HarnessEngine:
         budgets = self.default_budgets()
         if workspace_root:
             try:
-                from pathlib import Path
                 budgets_file = Path(workspace_root) / ".harness" / "budgets.json"
                 if budgets_file.exists():
                     custom = safe_loads(budgets_file.read_text(encoding="utf-8"))
                     if isinstance(custom, dict):
-                        # Shallow merge
-                        budgets.update(custom)
+                        _deep_update(budgets, custom)
             except Exception as e:
-                from loguru import logger
                 logger.warning(f"Failed to read custom budgets from {workspace_root}: {e}")
         return budgets
 

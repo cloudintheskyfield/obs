@@ -354,7 +354,7 @@ def test_runtime_context_bundle_bounds_history_and_indexes_artifacts(tmp_path: P
         "last_eval_verdict": {"verdict": "FIXABLE", "root_cause": "needs repair"},
     }
 
-    bundle = runtime._build_context_bundle(
+    bundle = asyncio.run(runtime._build_context_bundle(
         session_id="ctx-session",
         chat_sessions=chat_sessions,
         workspace=tmp_path,
@@ -364,7 +364,7 @@ def test_runtime_context_bundle_bounds_history_and_indexes_artifacts(tmp_path: P
         previous_failures=["first failure"],
         search_reports=[],
         previous_verdicts=[{"verdict": "FIXABLE"}],
-    )
+    ))
 
     assert bundle["schema_version"] == "1.0"
     assert len(bundle["recent_messages"]) == 8

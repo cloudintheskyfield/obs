@@ -345,32 +345,32 @@ export default function ArchitectureDrawer(props) {
     const architecture = buildFlowModel({ ...props, locale });
 
     return (
-        <BaseDrawer open={open} onClose={onClose} className="architecture-drawer" sheetClassName="architecture-sheet">
-                <div className="logs-header">
-                    <div>
-                        <strong>{architecture.copy.headerTitle}</strong>
-                        <span className="logs-meta">{architecture.copy.headerMeta}</span>
-                    </div>
-                    <div className="architecture-language-toggle" aria-label={architecture.copy.languageLabel}>
-                        <button
-                            className={`tiny-pill${locale === "zh" ? " active" : ""}`}
-                            type="button"
-                            onClick={() => setLocale("zh")}
-                        >
-                            {architecture.copy.zh}
-                        </button>
-                        <button
-                            className={`tiny-pill${locale === "en" ? " active" : ""}`}
-                            type="button"
-                            onClick={() => setLocale("en")}
-                        >
-                            {architecture.copy.en}
-                        </button>
-                    </div>
-                    <button className="icon-button" type="button" title="关闭项目架构" onClick={onClose}>
-                        <i className="fas fa-times" />
+        <BaseDrawer 
+            open={open} 
+            onClose={onClose} 
+            className="architecture-drawer" 
+            sheetClassName="architecture-sheet"
+            title={architecture.copy.headerTitle}
+            meta={architecture.copy.headerMeta}
+            actions={
+                <div className="architecture-language-toggle" aria-label={architecture.copy.languageLabel}>
+                    <button
+                        className={`tiny-pill${locale === "zh" ? " active" : ""}`}
+                        type="button"
+                        onClick={() => setLocale("zh")}
+                    >
+                        {architecture.copy.zh}
+                    </button>
+                    <button
+                        className={`tiny-pill${locale === "en" ? " active" : ""}`}
+                        type="button"
+                        onClick={() => setLocale("en")}
+                    >
+                        {architecture.copy.en}
                     </button>
                 </div>
+            }
+        >
 
                 <div className="architecture-body">
                     <section className="architecture-hero">
