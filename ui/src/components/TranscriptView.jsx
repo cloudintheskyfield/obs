@@ -382,118 +382,61 @@ function AgentProcessCard({ entry, workingTimerLabel, completedLabel, userPrompt
 
   const isPass = decision?.decision === 'PASS' || process.status === 'done' || (!entry.streaming && !issueEvent)
   const isBlocked = !!issueEvent
-  const isRunning = entry.streaming && !isPass && !isBlocked
+  const timeLabel = entry.streaming ? workingTimerLabel : entry.elapsedLabel || completedLabel || null
 
-  const publicEvents = timelineEvents.map((event, index) => {
-    const tone = eventTone(event.status)
-    return {
-      ...event,
-      tone,
-      roleLabel: ROLE_LABELS[event.role]?.label || event.role || '流程',
-      title: publicEventTitle(event),
-      message: publicEventMessage(event),
-      basis: publicEvidenceList(event),
-      time: event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-      key: `${event.timestamp || 'event'}_${index}`,
-    }
-  }).filter(e => e.title || e.message)
-
-  const reasoningUpdates = generatedReasoningUpdates(process, publicEvents, issueEvent, latestSummary)
+  const reasoningUpdates = generatedReasoningUpdates(process, timelineEvents, issueEvent, latestSummary)
 
   return (
-    <div className={`process-stream${isBlocked ? ' is-blocked' : isPass ? ' is-done' : ''}`} aria-live="polite">
-      {/* Reasoning Updates (Conversational Stream) */}
-      <div className="process-stream-messages">
-        {reasoningUpdates.length === 0 && isRunning && (
-           <div className="process-stream-msg">
-             <div className="stream-msg-agent">
-               <span className="stream-msg-avatar"><i className="fas fa-robot" /></span>
-               <strong>Harness</strong>
-               <i className="fas fa-spinner fa-spin stream-msg-spinner" />
-             </div>
-             <div className="stream-msg-body">
-               <p>正在分析任务并准备执行链路...</p>
-             </div>
-           </div>
-        )}
-        
-        {reasoningUpdates.map(update => (
-          <div key={update.id} className="process-stream-msg">
-            <div className="stream-msg-agent">
-              <span className="stream-msg-avatar"><i className="fas fa-robot" /></span>
-              <strong>{ROLE_LABELS[update.agent]?.label || update.agent}</strong>
-              {update.phase === 'running' && isRunning && <i className="fas fa-spinner fa-spin stream-msg-spinner" />}
-            </div>
-            <div className="stream-msg-body">
-              {update.message ? (
-                <p>{update.message}</p>
-              ) : (
-                <strong>{update.title}</strong>
-              )}
-              {update.basis?.length > 0 && (
-                <ul className="stream-msg-basis">
-                  {update.basis.map((b, i) => <li key={i}>{b}</li>)}
-                </ul>
-              )}
-              {update.nextAction && (
-                <div className="stream-msg-next">
-                  <em>下一步：</em> <span>{update.nextAction}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Public Events (Collapsible Tool Actions) */}
-      {publicEvents.length > 0 && (
-        <details className="process-stream-actions">
+    <div className="cursor-stream" aria-live="polite">
+      {timeLabel && (
+        <details className="cursor-stream-time">
           <summary>
-             <i className="fas fa-chevron-right stream-actions-chevron" />
-             <span>执行了 {publicEvents.length} 项操作</span>
-             {isRunning && <span className="stream-time-badge">{workingTimerLabel || '运行中'}</span>}
+            Worked for {timeLabel} <i className="fas fa-chevron-down cursor-chevron" style={{ marginLeft: '4px' }} />
           </summary>
-          <div className="stream-actions-content">
-            {publicEvents.map(ev => (
-              <div key={ev.key} className={`stream-action-item tone-${ev.tone}`}>
-                 <span className="stream-action-icon">
-                   {ev.tone === 'success' ? <i className="fas fa-check" /> : ev.tone === 'error' ? <i className="fas fa-times" /> : ev.tone === 'running' ? <i className="fas fa-spinner fa-spin" /> : <i className="fas fa-info" />}
-                 </span>
-                 <div className="stream-action-copy">
-                   <strong>{ev.title}</strong>
-                   {ev.message && <span className="stream-action-detail">{ev.message}</span>}
-                 </div>
-              </div>
-            ))}
+          {/* Debug info could go here if expanded */}
+        </details>
+      )}
+
+      {reasoningUpdates.length > 0 && (
+        <div className="cursor-stream-text">
+          {reasoningUpdates.map((update, i) => (
+             <div key={update.id || i} className="cursor-stream-paragraph">
+               {update.message ? (
+                 <div dangerouslySetInnerHTML={{ __html: renderMarkdown(update.message) }} />
+               ) : update.title ? (
+                 <p>{update.title}</p>
+               ) : null}
+             </div>
+          ))}
+        </div>
+      )}
+
+      {timelineEvents.length > 0 && (
+        <details className="cursor-stream-tools">
+          <summary>
+             <i className="far fa-folder" style={{ marginRight: '6px' }} /> 
+             Explored {timelineEvents.length} events <i className="fas fa-chevron-down cursor-chevron" style={{ marginLeft: '4px' }} />
+          </summary>
+          <div className="cursor-stream-tool-list">
+             {timelineEvents.map((ev, i) => (
+                <div key={i} className="cursor-tool-line">
+                   {friendlyDetail(ev.title || ev.message || ev.role)}
+                </div>
+             ))}
           </div>
         </details>
       )}
 
-      {/* Blocked state */}
       {isBlocked && issueEvent && (
-        <div className="process-stream-msg is-issue">
-          <div className="stream-msg-agent error">
-            <span className="stream-msg-avatar"><i className="fas fa-triangle-exclamation" /></span>
-            <strong>验证阻断</strong>
-          </div>
-          <div className="stream-msg-body">
-            <strong>{friendlyIssueTitle(issueEvent)}</strong>
-            <p>{friendlyDetail(issueEvent?.detail || issueEvent?.evidence || '当前验证遇到问题。')}</p>
-          </div>
+        <div className="cursor-stream-text" style={{ marginTop: '8px' }}>
+           <p><strong>验证遇到问题:</strong> {friendlyIssueTitle(issueEvent)}</p>
+           <p>{friendlyDetail(issueEvent?.detail || issueEvent?.evidence || '')}</p>
         </div>
       )}
 
-      {/* Done state */}
-      {isPass && latestSummary && (
-        <div className="process-stream-msg is-success">
-          <div className="stream-msg-agent success">
-            <span className="stream-msg-avatar"><i className="fas fa-check" /></span>
-            <strong>任务完成</strong>
-          </div>
-          <div className="stream-msg-body">
-            <strong>{latestSummary.title || '本轮执行结束'}</strong>
-            {latestSummary.summary && <p>{latestSummary.summary}</p>}
-          </div>
+      {isPass && latestSummary && latestSummary.summary && (
+        <div className="cursor-stream-text" style={{ marginTop: '8px' }}>
+           <div dangerouslySetInnerHTML={{ __html: renderMarkdown(latestSummary.summary) }} />
         </div>
       )}
     </div>
