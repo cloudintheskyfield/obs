@@ -372,45 +372,19 @@ function generatedReasoningUpdates(process, publicEvents, issueEvent, latestSumm
 }
 
 function AgentProcessCard({ entry, workingTimerLabel, completedLabel, userPrompt }) {
-  const [activeDetailTab, setActiveDetailTab] = React.useState('overview')
+  const [showDebug, setShowDebug] = React.useState(false)
   const process = entry.agentProcess
-  if (!process) {
-    return null
-  }
-  const nameFor = {
-    Planner: '制定计划',
-    Search: '检索资料',
-    Generator: '修改代码',
-    Runner: '运行验证',
-    Evaluator: '检查结果'
-  }
-  
-  const issueEvent = process.currentIssue || [...(process.events || [])].reverse().find(event => event.status === 'error')
+  if (!process) return null
+
   const timelineEvents = process.events || []
   const timeLabel = entry.streaming ? workingTimerLabel : entry.elapsedLabel || completedLabel || null
   const decision = process.decision || null
   const latestSummary = process.latestSummary || null
+  const issueEvent = process.currentIssue || [...timelineEvents].reverse().find(e => e.status === 'error')
 
   const isPass = decision?.decision === 'PASS' || process.status === 'done' || (!entry.streaming && !issueEvent)
   const isBlocked = !!issueEvent
-  const headline = isBlocked
-    ? '任务遇到阻塞'
-    : isPass
-      ? '任务已完成'
-      : entry.streaming 
-        ? '系统正在处理任务...'
-        : '执行完成'
-  const taskGoal = compactText(latestSummary?.summary || userPrompt || process.statusLine || 'Harness 正在处理当前任务。', 160)
-
-  const issueTitle = issueEvent ? friendlyIssueTitle(issueEvent) : ''
-  const issueDetail = issueEvent ? friendlyDetail(issueEvent.detail || issueEvent.evidence || '') : ''
-
-  const rawHighlights = latestSummary?.highlights;
-  const safeHighlights = Array.isArray(rawHighlights) ? rawHighlights : (typeof rawHighlights === 'string' ? [rawHighlights] : []);
-  const compactHighlights = safeHighlights
-    .map(friendlyHighlight)
-    .filter(item => item && !/^验证命令\s+cmd_\d+/i.test(item))
-    .slice(0, 4)
+  const isRunning = entry.streaming && !isPass && !isBlocked
 
   const publicEvents = timelineEvents.map((event, index) => {
     const tone = eventTone(event.status)
@@ -420,233 +394,117 @@ function AgentProcessCard({ entry, workingTimerLabel, completedLabel, userPrompt
       roleLabel: ROLE_LABELS[event.role]?.label || event.role || '流程',
       title: publicEventTitle(event),
       message: publicEventMessage(event),
-      basis: publicEvidenceList(event),
       time: event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
       key: `${event.timestamp || 'event'}_${index}`,
     }
-  }).filter(event => event.title || event.message)
+  }).filter(e => e.title || e.message)
 
-  const currentEvent = [...publicEvents].reverse().find(event => event.tone === 'running') || publicEvents.at(-1) || null
-  const progressDone = publicEvents.filter(event => event.tone === 'success').length
-  const progressTotal = Math.max(publicEvents.length, 1)
-  const reasoningUpdates = generatedReasoningUpdates(process, publicEvents, issueEvent, latestSummary)
-  const latestReasoning = reasoningUpdates.at(-1) || null
-  const earlierReasoning = reasoningUpdates.slice(0, -1)
-  const visibleTimeline = publicEvents.slice(-8)
-  const resultSummary = latestSummary?.summary || (isPass && !issueEvent ? 'Harness 已完成本轮任务并整理了验证结果。' : '')
-  const nextStepText = friendlyDetail(process.nextAction || latestSummary?.nextStep || (issueEvent ? '根据证据进行最小修复，然后重新运行验证。' : '继续根据当前证据推进。'))
-  const evidenceItems = issueEvent
-    ? publicEvidenceList(issueEvent)
-    : compactHighlights.slice(0, 3)
-  const changedFiles = Array.isArray(latestSummary?.changedFiles) ? latestSummary.changedFiles : []
-  const detailTabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'changes', label: 'Changes' },
-    { id: 'tests', label: 'Tests' },
-    { id: 'logs', label: 'Logs' },
-    { id: 'json', label: 'JSON' },
-  ]
+  const nextStepText = friendlyDetail(process.nextAction || latestSummary?.nextStep || '')
+  const taskGoal = compactText(userPrompt || process.statusLine || latestSummary?.summary || '', 120)
+  const stepNodes = publicEvents.slice(-10)
+
+  const nameFor = {
+    Planner: '制定计划', Search: '检索资料',
+    Generator: '修改代码', Runner: '运行验证', Evaluator: '检查结果'
+  }
 
   return (
-    <div className="agent-process-card codex-style-card" aria-live="polite">
-      <div className="agent-process-head task-header-card">
-        <div className="agent-process-head-copy">
-          <span className="agent-process-kicker">任务进度</span>
-          <strong>{headline}</strong>
-          <p className="agent-process-summary">{taskGoal}</p>
-          <div className="task-header-meta">
-            <span>{isBlocked ? '状态：验证遇到阻塞' : isPass ? '状态：已完成' : '状态：进行中'}</span>
-            <span>进度：{Math.min(progressDone, progressTotal)} / {progressTotal}</span>
-            {process.roundId ? <span>第 {process.roundId} 轮</span> : null}
+    <div className={`apc-card${isBlocked ? ' apc-blocked' : isPass ? ' apc-done' : ''}`} aria-live="polite">
+      <div className="apc-header">
+        <div className="apc-header-left">
+          {isBlocked
+            ? <span className="apc-dot apc-dot--error"><i className="fas fa-triangle-exclamation" /></span>
+            : isPass
+            ? <span className="apc-dot apc-dot--done"><i className="fas fa-check" /></span>
+            : <span className="apc-dot apc-dot--running"><span className="apc-dot-pulse" /></span>
+          }
+          <div className="apc-header-copy">
+            <span className="apc-header-label">
+              {isBlocked ? '遇到问题' : isPass ? '已完成' : '进行中'}
+            </span>
+            {taskGoal ? <span className="apc-header-goal">{taskGoal}</span> : null}
           </div>
         </div>
-        <div className="agent-process-head-meta">
-          {timeLabel ? <span className="agent-process-time-badge">{timeLabel}</span> : null}
-          {entry.streaming ? <span className="agent-process-live executing">运行中</span> : null}
+        <div className="apc-header-right">
+          {timeLabel ? <span className="apc-timer">{timeLabel}</span> : null}
+          {process.roundId ? <span className="apc-round-badge">Round {process.roundId}</span> : null}
         </div>
       </div>
-      
-      <div className="codex-process-body">
-        {latestReasoning ? (
-          <section className="reasoning-stream" aria-label="Reasoning summary">
-            <div className="harness-panel-heading">
-              <span>Reasoning Summary</span>
-              <em>{latestReasoning.agent}</em>
+
+      <div className="apc-steps">
+        {stepNodes.length === 0 && isRunning ? (
+          <div className="apc-step apc-step--running">
+            <div className="apc-step-line">
+              <span className="apc-step-icon"><i className="fas fa-spinner fa-spin" /></span>
             </div>
-            <div className="reasoning-stack">
-              {earlierReasoning.slice(-3).map(update => (
-                <div key={update.id} className="reasoning-step compact">
-                  <span className="reasoning-agent">{ROLE_LABELS[update.agent]?.label || update.agent}</span>
-                  <strong>{update.title}</strong>
+            <div className="apc-step-body">
+              <span className="apc-step-role">Harness</span>
+              <span className="apc-step-title">准备执行链路...</span>
+            </div>
+          </div>
+        ) : stepNodes.map((event, i) => {
+          const isLast = i === stepNodes.length - 1
+          return (
+            <div key={event.key} className={`apc-step apc-step--${event.tone}${isLast && isRunning ? ' apc-step--active' : ''}`}>
+              <div className="apc-step-line">
+                <span className="apc-step-icon">
+                  {event.tone === 'success'
+                    ? <i className="fas fa-check" />
+                    : event.tone === 'error'
+                    ? <i className="fas fa-times" />
+                    : event.tone === 'running'
+                    ? <i className="fas fa-spinner fa-spin" />
+                    : <i className="fas fa-clock" />}
+                </span>
+                {!isLast && <span className="apc-step-connector" />}
+              </div>
+              <div className="apc-step-body">
+                <div className="apc-step-top">
+                  <span className="apc-step-role">{event.roleLabel}</span>
+                  <span className="apc-step-title">{event.title}</span>
+                  {event.time ? <span className="apc-step-time">{event.time}</span> : null}
                 </div>
-              ))}
-              <article className={`reasoning-step expanded ${latestReasoning.phase || 'running'}`}>
-                <div className="reasoning-step-top">
-                  <span className="reasoning-agent">{ROLE_LABELS[latestReasoning.agent]?.label || latestReasoning.agent}</span>
-                  <strong>{latestReasoning.title}</strong>
-                </div>
-                {latestReasoning.message ? <p>{latestReasoning.message}</p> : null}
-                {latestReasoning.basis?.length ? (
-                  <ul className="reasoning-basis">
-                    {latestReasoning.basis.slice(0, 3).map((item, index) => (
-                      <li key={`${latestReasoning.id}_basis_${index}`}>{item}</li>
-                    ))}
-                  </ul>
+                {(event.tone === 'running' || (isLast && !isPass && !isBlocked)) && event.message ? (
+                  <p className="apc-step-detail">{event.message}</p>
                 ) : null}
-                {latestReasoning.nextAction ? (
-                  <div className="reasoning-next">
-                    <span>下一步</span>
-                    <strong>{latestReasoning.nextAction}</strong>
-                  </div>
-                ) : null}
-              </article>
+              </div>
             </div>
-          </section>
-        ) : null}
+          )
+        })}
+      </div>
 
-        <section className="harness-user-timeline-card">
-          <div className="harness-panel-heading">
-            <span>Task Timeline</span>
-            <em>{visibleTimeline.length ? `${visibleTimeline.length} steps` : 'preparing'}</em>
+      {isBlocked ? (
+        <div className="apc-focus apc-focus--blocked">
+          <div className="apc-focus-icon"><i className="fas fa-triangle-exclamation" /></div>
+          <div className="apc-focus-body">
+            <strong>{friendlyIssueTitle(issueEvent)}</strong>
+            <p>{friendlyDetail(issueEvent?.detail || issueEvent?.evidence || '当前验证遇到问题，需要修复后重试。')}</p>
           </div>
-          {visibleTimeline.length ? (
-            <ol className="harness-user-timeline">
-              {visibleTimeline.map((event, index) => (
-                <li key={event.key} className={`harness-user-stage ${event.tone}`}>
-                  <span className="harness-user-stage-index" aria-hidden="true">
-                    <i className={`fas ${toneIconClass(event.tone)}${event.tone === 'running' ? ' fa-spin' : ''}`} />
-                  </span>
-                  <div className="harness-user-stage-body">
-                    <div className="harness-user-stage-top">
-                      <div className="harness-user-stage-titleline">
-                        <span className="harness-user-stage-role">{event.roleLabel}</span>
-                        <strong>{event.title}</strong>
-                      </div>
-                      <span className={`harness-user-stage-status ${event.tone}`}>{toneLabel(event.tone)}</span>
-                    </div>
-                    {event.message ? <p>{event.message}</p> : null}
-                    {event.time ? <span className="harness-user-stage-time">{event.time}</span> : null}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <div className="harness-timeline-empty">正在准备 Harness 执行链路。</div>
-          )}
-        </section>
+        </div>
+      ) : isPass && (latestSummary?.title || latestSummary?.summary) ? (
+        <div className="apc-focus apc-focus--done">
+          <div className="apc-focus-icon"><i className="fas fa-check-circle" /></div>
+          <div className="apc-focus-body">
+            <strong>{latestSummary?.title || '任务完成'}</strong>
+            {latestSummary?.summary ? <p>{compactText(latestSummary.summary, 220)}</p> : null}
+          </div>
+        </div>
+      ) : nextStepText && isRunning ? (
+        <div className="apc-next">
+          <span className="apc-next-label">下一步</span>
+          <span className="apc-next-text">{nextStepText}</span>
+        </div>
+      ) : null}
 
-        <section className={`harness-current-action-card ${isBlocked ? 'blocked' : isPass ? 'done' : 'running'}`}>
-          <div className="harness-card-eyebrow">{isBlocked ? '当前问题' : isPass ? '完成情况' : '当前动作'}</div>
-          <strong>{isBlocked ? issueTitle : isPass ? (latestSummary?.title || '任务已完成') : (currentEvent?.title || '正在推进任务')}</strong>
-          <p>{isBlocked ? (issueDetail || '当前验证证据不足，需要先处理阻塞点。') : isPass ? (resultSummary || '本轮执行已经完成。') : (currentEvent?.message || 'Harness 正在根据当前证据推进下一步。')}</p>
-          <div className="current-action-grid">
-            <span>影响</span>
-            <strong>{isBlocked ? '无法确认最终结果是否满足验收标准。' : isPass ? '可以继续查看变更、测试和日志证据。' : '当前步骤完成后会进入下一轮验证或验收。'}</strong>
-            <span>下一步</span>
-            <strong>{nextStepText}</strong>
-          </div>
-          <div className="harness-action-row">
-            {isBlocked ? <button type="button" disabled title="请在输入框回复继续修复，Harness 会进入下一轮">自动修复并重试</button> : null}
-            <button type="button" onClick={() => setActiveDetailTab('tests')}>查看测试结果</button>
-            <button type="button" onClick={() => setActiveDetailTab('logs')}>查看技术细节</button>
-          </div>
-        </section>
-
-        {issueEvent ? (
-          <section className="harness-issue-card blocked">
-            <div className="harness-card-eyebrow">当前问题</div>
-            <strong>{issueTitle}</strong>
-            {issueDetail ? <p>{issueDetail}</p> : null}
-            {evidenceItems.length ? (
-              <ul className="harness-evidence-list">
-                {evidenceItems.map((item, index) => (
-                  <li key={`issue_evidence_${index}`}>{item}</li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="harness-next-step-inline">
-              {nextStepText}
-            </div>
-          </section>
-        ) : isPass ? (
-          <section className="harness-final-card">
-            <div className="harness-card-eyebrow">本轮结果</div>
-            <strong>{latestSummary?.title || '任务已完成'}</strong>
-            {resultSummary ? <p>{resultSummary}</p> : null}
-            {compactHighlights.length ? (
-              <ul>
-                {compactHighlights.map((item, index) => (
-                  <li key={`${item}_${index}`}>{item}</li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        ) : null}
-
-        <section className="harness-detail-tabs">
-          <div className="harness-detail-tablist" role="tablist" aria-label="Task details">
-            {detailTabs.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={activeDetailTab === tab.id}
-                className={activeDetailTab === tab.id ? 'active' : ''}
-                onClick={() => setActiveDetailTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div className="harness-detail-panel" role="tabpanel">
-            {activeDetailTab === 'overview' ? (
-              <div>
-                <strong>{headline}</strong>
-                <p>{taskGoal}</p>
-                <p>{nextStepText}</p>
-              </div>
-            ) : activeDetailTab === 'changes' ? (
-              <div>
-                <strong>文件变更</strong>
-                {changedFiles.length ? (
-                  <ul>{changedFiles.map((file, index) => <li key={`${file}_${index}`}>{file}</li>)}</ul>
-                ) : (
-                  <p>当前摘要中没有提供逐文件变更列表，详细 diff 可在 Debug/Logs 中查看。</p>
-                )}
-              </div>
-            ) : activeDetailTab === 'tests' ? (
-              <div>
-                <strong>验证证据</strong>
-                {evidenceItems.length ? (
-                  <ul>{evidenceItems.map((item, index) => <li key={`test_evidence_${index}`}>{item}</li>)}</ul>
-                ) : (
-                  <p>暂无可展示的测试摘要。</p>
-                )}
-              </div>
-            ) : activeDetailTab === 'logs' ? (
-              <div>
-                <strong>日志</strong>
-                <p>原始 stdout、stderr 和工具调用默认隐藏在技术细节中。</p>
-              </div>
-            ) : (
-              <div>
-                <strong>结构化状态</strong>
-                <pre>{JSON.stringify({
-                  status: isBlocked ? 'blocked' : isPass ? 'done' : 'running',
-                  round_id: process.roundId || 0,
-                  decision: decision?.decision || '',
-                  next_action: nextStepText,
-                }, null, 2)}</pre>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {timelineEvents.length ? (
-          <details className="harness-debug-details">
-            <summary>技术细节</summary>
+      {timelineEvents.length ? (
+        <div className="apc-debug-wrap">
+          <button type="button" className="apc-debug-toggle" onClick={() => setShowDebug(v => !v)}>
+            <i className={`fas fa-chevron-${showDebug ? 'up' : 'down'}`} />
+            技术细节
+          </button>
+          {showDebug ? (
             <ol className="agent-process-timeline compact">
-              {timelineEvents.slice(-10).map((event, index) => (
+              {timelineEvents.slice(-12).map((event, index) => (
                 <li key={`debug_${event.timestamp || 'event'}_${index}`} className={eventTone(event.status)}>
                   <span className="agent-process-time">{event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
                   <span className="agent-process-role">{nameFor[event.role] || event.role || 'Harness'}</span>
@@ -657,12 +515,13 @@ function AgentProcessCard({ entry, workingTimerLabel, completedLabel, userPrompt
                 </li>
               ))}
             </ol>
-          </details>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
+
 
 function renderAgentProcess(entry, { workingTimerLabel, completedLabel, userPrompt } = {}) {
   return (
