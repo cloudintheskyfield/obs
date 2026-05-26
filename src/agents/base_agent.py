@@ -82,49 +82,62 @@ class BaseAgent:
     # ─── JSON parsing ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _find_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
-        """从字符串中提取第一个完整的 JSON 对象（支持 json_repair）。"""
+    def _find_first_json_object(text: str) -> Optional[Dict[str, Any]]:
+        """从字符串中提取第一个合法的 JSON 对象。"""
         from utils.json_utils import safe_loads
-
-        text = (raw or "").strip()
         if not text:
             return None
-        try:
-            parsed = safe_loads(text)
-            if isinstance(parsed, dict):
-                return parsed
-        except Exception:
-            pass
+            
+        # 1. 尝试去除 <think> 标签，避免解析里面的举例 JSON
+        import re
+        cleaned_text = re.sub(r"<(think|thinking)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+        if not cleaned_text:
+            cleaned_text = text # fallback
 
-        start = text.find("{")
-        if start < 0:
-            return None
-        depth = 0
-        in_string = False
-        escape = False
-        for idx in range(start, len(text)):
-            ch = text[idx]
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[start : idx + 1]
-                    try:
-                        parsed = safe_loads(candidate)
-                    except Exception:
-                        return None
-                    return parsed if isinstance(parsed, dict) else None
+        # 2. 优先提取 markdown json 代码块
+        json_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_text, re.IGNORECASE)
+        for block in json_blocks:
+            try:
+                parsed = safe_loads(block.strip())
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+
+        # 3. 如果都不行，尝试暴力匹配 `{}`。失败的话继续找下一个 `{`
+        start = -1
+        while True:
+            start = cleaned_text.find("{", start + 1)
+            if start < 0:
+                break
+            depth = 0
+            in_string = False
+            escape = False
+            for idx in range(start, len(cleaned_text)):
+                ch = cleaned_text[idx]
+                if in_string:
+                    if escape:
+                        escape = False
+                    elif ch == "\\":
+                        escape = True
+                    elif ch == '"':
+                        in_string = False
+                    continue
+                if ch == '"':
+                    in_string = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = cleaned_text[start : idx + 1]
+                        try:
+                            parsed = safe_loads(candidate)
+                            if isinstance(parsed, dict):
+                                return parsed
+                        except Exception:
+                            pass # 遇到不合法的 json 或非 dict，退出当前 `{` 的匹配，继续找下一个
+                        break
         return None
 
     # ─── Normalization helpers ─────────────────────────────────────────────
@@ -191,6 +204,20 @@ class BaseAgent:
     def _strip_thinking(text: str) -> str:
         """去除 LLM 输出中的 <think>…</think> 思维链标签及内容。"""
         return re.sub(r"<think>[\s\S]*?</think>", "", text or "", flags=re.IGNORECASE).strip()
+
+    @staticmethod
+    def _extract_thinking_summary(thinking: str, *, default_detail: str = "处理中...") -> str:
+        """Return a compact, user-facing progress line from streamed thinking text."""
+        text = re.sub(r"<[^>]+>", " ", thinking or "")
+        text = re.sub(r"```[\s\S]*?```", " ", text)
+        fragments = [
+            re.sub(r"\s+", " ", line).strip(" -\t\r\n")
+            for line in re.split(r"[\r\n。.!?；;]+", text)
+        ]
+        summary = next((line for line in reversed(fragments) if line), "")
+        if not summary:
+            return default_detail
+        return summary[:120]
 
     # ─── Chat session helpers ──────────────────────────────────────────────
 

@@ -114,11 +114,15 @@ class PlanCompiler(BaseAgent):
                         }
                     )
                     
-                    if chunk_count % 15 == 0:
+                    if chunk_count % 35 == 0:
                         thinking_match = re.search(r"<think>([\s\S]*?)(?:</think>|$)", raw_content, re.IGNORECASE)
                         if thinking_match:
-                            dynamic_detail = self._extract_thinking_summary(thinking_match.group(1), default_detail="解析和补全属性...")
-                            yield self._status("running", role="PlanCompiler", title="编译 PlanContract", detail=dynamic_detail, session_id=session_id)
+                            self._trigger_dynamic_status(role="PlanCompiler", thinking_content=thinking_match.group(1), default_title="编译计划")
+                            
+                    if self._latest_dynamic_status:
+                        status = self._latest_dynamic_status
+                        self._latest_dynamic_status = None
+                        yield self._status("running", role="PlanCompiler", title=status["title"], detail=status["detail"], session_id=session_id)
 
             contract = self._find_first_json_object(raw_content)
 
