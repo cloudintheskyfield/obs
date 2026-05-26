@@ -804,10 +804,15 @@ class PlannerAgent(BaseAgent):
                         }
                     )
                     
-                    # 动态更新前端展示的状态
-                    if chunk_count % 15 == 0 and thinking_content:
-                        dynamic_detail = self._extract_thinking_summary(thinking_content, default_detail="整理目标、范围、验证方式与约束...")
-                        yield self._status("running", role="Planner", title="生成 PlanContract", detail=dynamic_detail, session_id=session_id)
+                    # 动态触发后台状态推测
+                    if chunk_count % 35 == 0 and thinking_content:
+                        self._trigger_dynamic_status(role="Planner", thinking_content=thinking_content, default_title="生成计划")
+                        
+                    # 检查是否有最新的状态汇报返回
+                    if self._latest_dynamic_status:
+                        status = self._latest_dynamic_status
+                        self._latest_dynamic_status = None
+                        yield self._status("running", role="Planner", title=status["title"], detail=status["detail"], session_id=session_id)
         except Exception as exc:
             logger.warning(f"PlannerAgent model call failed: {exc}")
             plan_contract = _default_plan_contract(user_message, existing_files)

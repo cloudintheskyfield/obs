@@ -26,6 +26,8 @@ class BaseAgent:
     def __init__(self, role_name: str, vllm_client: Any, skill_manager: Any = None) -> None:
         self.vllm_client = vllm_client
         self.skill_manager = skill_manager
+        self._dynamic_status_task = None
+        self._latest_dynamic_status = None
         self.harness = HarnessEngine()
         self.system_prompt = self.harness.load_agent_prompt(role_name, "")
 
@@ -56,28 +58,26 @@ class BaseAgent:
             }
         )
 
-    def _extract_thinking_summary(self, thinking_content: str, default_detail: str = "") -> str:
-        """提取思维链最后一句或有意义的文字作为状态更新展示"""
+    def _trigger_dynamic_status(self, role: str, thinking_content: str, default_title: str) -> None:
+        """非阻塞触发 UIStatusAgent 获取动态的前端展示状态。"""
+        import asyncio
         if not thinking_content:
-            return default_detail
-        lines = [line.strip() for line in thinking_content.split("\n") if line.strip()]
-        if not lines:
-            return default_detail
-        last_line = lines[-1]
-        
-        # 为了避免标点符号切断不干净，我们做一些简单的清理
-        # 这里如果超过一定长度（如 40 字符），就做截断
-        if len(last_line) > 40:
-            # 截取后半段，因为通常最新的想法在最后
-            last_line = last_line[-40:]
-            if not last_line.startswith("..."):
-                last_line = "..." + last_line
-                
-        # 补齐尾部省略号
-        if not last_line.endswith("..."):
-            last_line += "..."
+            return
             
-        return last_line
+        # 如果上一次请求还在 pending 中，说明我们不应该发起新的请求
+        if self._dynamic_status_task and not self._dynamic_status_task.done():
+            return
+            
+        async def _worker():
+            try:
+                from agents.ui_status_agent import UIStatusAgent
+                agent = UIStatusAgent(self.vllm_client)
+                result = await agent.generate_status(role, thinking_content, default_title)
+                self._latest_dynamic_status = result
+            except Exception:
+                pass
+                
+        self._dynamic_status_task = asyncio.create_task(_worker())
 
     # ─── JSON parsing ──────────────────────────────────────────────────────
 
