@@ -1002,8 +1002,6 @@ class HarnessRuntime:
         context_bundle: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         project_summary = self._planner_project_summary(workspace, existing_files)
-        if context_bundle:
-            project_summary["context_bundle"] = dict(context_bundle)
         return {
             "task_context": {
                 "user_request": user_message,
@@ -1227,6 +1225,7 @@ class HarnessRuntime:
             previous_failures=planner_input["previous_failures"],
             constraints=planner_input["task_context"]["constraints"],
             search_reports=planner_input["task_context"]["search_reports"],
+            recent_messages=(context_bundle or {}).get("recent_messages"),
         ):
             yield self._forward_chunk(chunk)
         plan_contract = planner.last_plan_contract
@@ -1607,6 +1606,7 @@ class HarnessRuntime:
                 previous_failures=planner_input["previous_failures"],
                 constraints=planner_input["task_context"]["constraints"],
                 search_reports=planner_input["task_context"]["search_reports"],
+                recent_messages=(context_bundle or {}).get("recent_messages"),
             ):
                 yield self._forward_chunk(chunk)
             plan_contract = planner.last_plan_contract
@@ -1814,6 +1814,7 @@ class HarnessRuntime:
                             previous_failures=planner_input["previous_failures"],
                             constraints=planner_input["task_context"]["constraints"],
                             search_reports=planner_input["task_context"]["search_reports"],
+                            recent_messages=(context_bundle or {}).get("recent_messages"),
                         ):
                             yield self._forward_chunk(chunk)
                         plan_contract = planner.last_plan_contract
@@ -2054,6 +2055,7 @@ class HarnessRuntime:
                                 previous_failures=planner_input["previous_failures"],
                                 constraints=planner_input["task_context"]["constraints"],
                                 search_reports=planner_input["task_context"]["search_reports"],
+                                recent_messages=(context_bundle or {}).get("recent_messages"),
                             ):
                                 yield self._forward_chunk(chunk)
                             plan_contract = planner.last_plan_contract
@@ -2177,6 +2179,7 @@ class HarnessRuntime:
                             previous_failures=planner_input["previous_failures"],
                             constraints=planner_input["task_context"]["constraints"],
                             search_reports=planner_input["task_context"]["search_reports"],
+                            recent_messages=(context_bundle or {}).get("recent_messages"),
                         ):
                             yield self._forward_chunk(chunk)
                         plan_contract = planner.last_plan_contract
@@ -2545,6 +2548,7 @@ class HarnessRuntime:
                             previous_failures=planner_input["previous_failures"],
                             constraints=planner_input["task_context"]["constraints"],
                             search_reports=planner_input["task_context"]["search_reports"],
+                            recent_messages=(context_bundle or {}).get("recent_messages"),
                         ):
                             yield self._forward_chunk(chunk)
                         plan_contract = planner.last_plan_contract
@@ -2630,6 +2634,7 @@ class HarnessRuntime:
                         previous_failures=planner_input["previous_failures"],
                         constraints=planner_input["task_context"]["constraints"],
                         search_reports=planner_input["task_context"]["search_reports"],
+                        recent_messages=(context_bundle or {}).get("recent_messages"),
                     ):
                         yield self._forward_chunk(chunk)
                     plan_contract = planner.last_plan_contract

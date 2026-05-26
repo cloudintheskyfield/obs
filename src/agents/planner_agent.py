@@ -736,6 +736,7 @@ class PlannerAgent(BaseAgent):
         previous_failures: Optional[List[str]] = None,
         constraints: Optional[Mapping[str, Any]] = None,
         search_reports: Optional[List[Mapping[str, Any]]] = None,
+        recent_messages: Optional[List[Mapping[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
         yield self._sse(
             {
@@ -759,6 +760,7 @@ class PlannerAgent(BaseAgent):
                     previous_failures=previous_failures,
                     constraints=constraints,
                     search_reports=search_reports,
+                    recent_messages=recent_messages,
                 ),
             },
         ]
@@ -907,15 +909,24 @@ class PlannerAgent(BaseAgent):
         previous_failures: Optional[List[str]] = None,
         constraints: Optional[Mapping[str, Any]] = None,
         search_reports: Optional[List[Mapping[str, Any]]] = None,
+        recent_messages: Optional[List[Mapping[str, Any]]] = None,
     ) -> str:
         payload = {
             "user_request": user_message,
+        }
+        if recent_messages:
+            payload["recent_messages"] = [
+                {"role": m.get("role"), "content": m.get("content")}
+                for m in recent_messages
+            ]
+        
+        payload.update({
             "project_summary": dict(project_summary or {}),
             "previous_failures": [str(item) for item in (previous_failures or []) if str(item).strip()],
             "constraints": dict(constraints or {}),
             "search_reports": list(search_reports or []),
             "existing_files": list(existing_files or [])[:30],
-        }
+        })
         return cls._format_as_markdown(payload)
 
     def tasks_as_labels(self) -> List[str]:
