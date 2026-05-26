@@ -1651,7 +1651,8 @@ class HarnessRuntime:
                 plan_md_content = "# Implementation Plan\n\n"
                 for item in todo_items:
                     plan_md_content += f"- [ ] {item}\n"
-                self._write_text_file(workspace, "plan.md", plan_md_content)
+                active_task_id = str(plan_contract.get("task_id") or provisional_task_id)
+                self._write_text_file(workspace, f"plan_{active_task_id}.md", plan_md_content)
             yield self._agent_summary_event(
                 role="Planner",
                 payload={
@@ -2354,7 +2355,8 @@ class HarnessRuntime:
                     for idx, item in enumerate(todo_items):
                         mark = "x" if idx in completed_task_indices else " "
                         plan_md_content += f"- [{mark}] {item}\n"
-                    self._write_text_file(workspace, "plan.md", plan_md_content)
+                    active_task_id = str(plan_contract.get("task_id") or provisional_task_id)
+                    self._write_text_file(workspace, f"plan_{active_task_id}.md", plan_md_content)
 
                 repeated_root_cause = self.harness_engine.same_error_repeated(
                     previous_verdicts,
