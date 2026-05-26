@@ -11,6 +11,7 @@ from loguru import logger
 
 from .base_agent import BaseAgent
 from .harness_engine import HarnessEngine
+from .plan_compiler import PlanCompiler
 
 _PROTECTED_PATHS = [
     ".env",
@@ -719,6 +720,8 @@ class PlannerAgent(BaseAgent):
     def __init__(self, vllm_client: Any) -> None:
         super().__init__("Planner", vllm_client)
         self.last_plan_contract: Dict[str, Any] = {}
+        self.last_plan_markdown: str = ""
+        self.last_compiler_report: Dict[str, Any] = {}
         self.last_tasks: List[Dict[str, Any]] = []
         self.last_thinking: str = ""
 
@@ -796,6 +799,8 @@ class PlannerAgent(BaseAgent):
             logger.warning(f"PlannerAgent model call failed: {exc}")
             plan_contract = _default_plan_contract(user_message, existing_files)
             self.last_plan_contract = plan_contract
+            self.last_plan_markdown = ""
+            self.last_compiler_report = {}
             self.last_tasks = _plan_contract_to_tasks(plan_contract)
             self.last_thinking = ""
             yield self._sse(
@@ -821,20 +826,48 @@ class PlannerAgent(BaseAgent):
             return
 
         self.last_thinking = thinking_content
-        plan_contract = _normalize_plan_contract(_find_first_json_object(raw_content), user_message, existing_files)
-        self.last_plan_contract = plan_contract
-        self.last_tasks = _plan_contract_to_tasks(plan_contract)
-        yield self._sse(
-            {
-                "type": "agent_step",
-                "role": "Planner",
-                "status": "success",
-                "title": "PlanContract 已生成",
-                "detail": f"已生成 {len(self.last_tasks)} 个实施步骤与 {len(plan_contract.get('acceptance_criteria', []))} 条验收标准。",
-                "session_id": session_id,
-            }
-        )
-
+        self.last_plan_markdown = raw_content
+        
+        task_context = {
+            "task_id": "task_plan_001",
+            "user_request": user_message
+        }
+        
+        compiler = PlanCompiler()
+        compile_result = compiler.compile(raw_content, task_context, dict(project_summary or {}))
+        
+        self.last_compiler_report = compile_result
+        
+        if compile_result["ok"] and compile_result["plan_contract"]:
+            self.last_plan_contract = _normalize_plan_contract(compile_result["plan_contract"], user_message, existing_files)
+        else:
+            # Fallback if parsing failed completely
+            self.last_plan_contract = _normalize_plan_contract(_find_first_json_object(raw_content), user_message, existing_files)
+            
+        self.last_tasks = _plan_contract_to_tasks(self.last_plan_contract)
+        
+        if compile_result["ok"]:
+            yield self._sse(
+                {
+                    "type": "agent_step",
+                    "role": "Planner",
+                    "status": "success",
+                    "title": "PlanContract 已生成",
+                    "detail": f"已生成 {len(self.last_tasks)} 个实施步骤与 {len(self.last_plan_contract.get('acceptance_criteria', []))} 条验收标准。",
+                    "session_id": session_id,
+                }
+            )
+        else:
+            yield self._sse(
+                {
+                    "type": "agent_step",
+                    "role": "Planner",
+                    "status": "error",
+                    "title": "Planner 输出格式错误，已回退默认方案",
+                    "detail": compile_result.get("errors", [{"message": "Unknown parse error"}])[0].get("message"),
+                    "session_id": session_id,
+                }
+            )
     @classmethod
     def _build_user_prompt(
         cls,

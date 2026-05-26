@@ -1612,9 +1612,31 @@ class HarnessRuntime:
             plan_contract = planner.last_plan_contract
             if not plan_contract.get("task_id"):
                 plan_contract["task_id"] = provisional_task_id
+            
+            round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
+            run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+            
+            self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
+            self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
+            self._write_json_file(workspace, f".harness/plans/plan_{round_str}.compiler_report.json", planner.last_compiler_report)
+            
+            if not planner.last_compiler_report.get("ok", True):
+                yield self._sse(
+                    {
+                        "type": "harness_decision",
+                        "decision": {
+                            "decision": "PLAN_COMPILER_ERROR",
+                            "reason": "Planner failed to produce valid markdown plan",
+                            "next_agent": "",
+                            "next_state": "TERMINAL_ERROR"
+                        }
+                    }
+                )
+                return
+            
             self.harness_engine.validate_schema(plan_contract, "PlanContract")
             self._write_json_file(workspace, ".harness/plan.json", plan_contract)
-            self._write_json_file(workspace, ".harness/runs/run_001/output/plan_contract.json", plan_contract)
+            self._write_json_file(workspace, run_out_path, plan_contract)
             yield self._agent_summary_event(
                 role="Planner",
                 payload={
@@ -1797,9 +1819,31 @@ class HarnessRuntime:
                         plan_contract = planner.last_plan_contract
                         if not plan_contract.get("task_id"):
                             plan_contract["task_id"] = provisional_task_id
+                        
+                        round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
+                        run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                        
+                        self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
+                        self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
+                        self._write_json_file(workspace, f".harness/plans/plan_{round_str}.compiler_report.json", planner.last_compiler_report)
+                        
+                        if not planner.last_compiler_report.get("ok", True):
+                            yield self._sse(
+                                {
+                                    "type": "harness_decision",
+                                    "decision": {
+                                        "decision": "PLAN_COMPILER_ERROR",
+                                        "reason": "Planner failed to produce valid markdown plan",
+                                        "next_agent": "",
+                                        "next_state": "TERMINAL_ERROR"
+                                    }
+                                }
+                            )
+                            return
+                        
                         self.harness_engine.validate_schema(plan_contract, "PlanContract")
                         self._write_json_file(workspace, ".harness/plan.json", plan_contract)
-                        self._write_json_file(workspace, f".harness/runs/run_{round_id:03d}/output/plan_contract.json", plan_contract)
+                        self._write_json_file(workspace, run_out_path, plan_contract)
                         continue
 
                 if not skip_generator:
@@ -2015,9 +2059,31 @@ class HarnessRuntime:
                             plan_contract = planner.last_plan_contract
                             if not plan_contract.get("task_id"):
                                 plan_contract["task_id"] = provisional_task_id
+                            
+                            round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
+                            run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                            
+                            self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
+                            self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
+                            self._write_json_file(workspace, f".harness/plans/plan_{round_str}.compiler_report.json", planner.last_compiler_report)
+                            
+                            if not planner.last_compiler_report.get("ok", True):
+                                yield self._sse(
+                                    {
+                                        "type": "harness_decision",
+                                        "decision": {
+                                            "decision": "PLAN_COMPILER_ERROR",
+                                            "reason": "Planner failed to produce valid markdown plan",
+                                            "next_agent": "",
+                                            "next_state": "TERMINAL_ERROR"
+                                        }
+                                    }
+                                )
+                                return
+                            
                             self.harness_engine.validate_schema(plan_contract, "PlanContract")
                             self._write_json_file(workspace, ".harness/plan.json", plan_contract)
-                            self._write_json_file(workspace, f".harness/runs/run_{round_id:03d}/output/plan_contract.json", plan_contract)
+                            self._write_json_file(workspace, run_out_path, plan_contract)
                             continue
                         self._write_harness_state(
                             workspace,
@@ -2116,9 +2182,31 @@ class HarnessRuntime:
                         plan_contract = planner.last_plan_contract
                         if not plan_contract.get("task_id"):
                             plan_contract["task_id"] = provisional_task_id
+                        
+                        round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
+                        run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                        
+                        self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
+                        self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
+                        self._write_json_file(workspace, f".harness/plans/plan_{round_str}.compiler_report.json", planner.last_compiler_report)
+                        
+                        if not planner.last_compiler_report.get("ok", True):
+                            yield self._sse(
+                                {
+                                    "type": "harness_decision",
+                                    "decision": {
+                                        "decision": "PLAN_COMPILER_ERROR",
+                                        "reason": "Planner failed to produce valid markdown plan",
+                                        "next_agent": "",
+                                        "next_state": "TERMINAL_ERROR"
+                                    }
+                                }
+                            )
+                            return
+                        
                         self.harness_engine.validate_schema(plan_contract, "PlanContract")
                         self._write_json_file(workspace, ".harness/plan.json", plan_contract)
-                        self._write_json_file(workspace, f".harness/runs/run_{round_id:03d}/output/plan_contract.json", plan_contract)
+                        self._write_json_file(workspace, run_out_path, plan_contract)
                         continue
                 skip_generator = False
 
@@ -2462,9 +2550,31 @@ class HarnessRuntime:
                         plan_contract = planner.last_plan_contract
                         if not plan_contract.get("task_id"):
                             plan_contract["task_id"] = provisional_task_id
+                        
+                        round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
+                        run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                        
+                        self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
+                        self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
+                        self._write_json_file(workspace, f".harness/plans/plan_{round_str}.compiler_report.json", planner.last_compiler_report)
+                        
+                        if not planner.last_compiler_report.get("ok", True):
+                            yield self._sse(
+                                {
+                                    "type": "harness_decision",
+                                    "decision": {
+                                        "decision": "PLAN_COMPILER_ERROR",
+                                        "reason": "Planner failed to produce valid markdown plan",
+                                        "next_agent": "",
+                                        "next_state": "TERMINAL_ERROR"
+                                    }
+                                }
+                            )
+                            return
+                        
                         self.harness_engine.validate_schema(plan_contract, "PlanContract")
                         self._write_json_file(workspace, ".harness/plan.json", plan_contract)
-                        self._write_json_file(workspace, f".harness/runs/run_{round_id:03d}/output/plan_contract.json", plan_contract)
+                        self._write_json_file(workspace, run_out_path, plan_contract)
                     elif next_state_after_search == "RUN":
                         skip_generator = True
                     continue
@@ -2525,9 +2635,31 @@ class HarnessRuntime:
                     plan_contract = planner.last_plan_contract
                     if not plan_contract.get("task_id"):
                         plan_contract["task_id"] = provisional_task_id
+                    
+                    round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
+                    run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                    
+                    self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
+                    self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
+                    self._write_json_file(workspace, f".harness/plans/plan_{round_str}.compiler_report.json", planner.last_compiler_report)
+                    
+                    if not planner.last_compiler_report.get("ok", True):
+                        yield self._sse(
+                            {
+                                "type": "harness_decision",
+                                "decision": {
+                                    "decision": "PLAN_COMPILER_ERROR",
+                                    "reason": "Planner failed to produce valid markdown plan",
+                                    "next_agent": "",
+                                    "next_state": "TERMINAL_ERROR"
+                                }
+                            }
+                        )
+                        return
+                    
                     self.harness_engine.validate_schema(plan_contract, "PlanContract")
                     self._write_json_file(workspace, ".harness/plan.json", plan_contract)
-                    self._write_json_file(workspace, f".harness/runs/run_{round_id:03d}/output/plan_contract.json", plan_contract)
+                    self._write_json_file(workspace, run_out_path, plan_contract)
                     continue
                 self._write_harness_state(
                     workspace,
