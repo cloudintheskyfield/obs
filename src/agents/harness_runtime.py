@@ -704,6 +704,11 @@ class HarnessRuntime:
                 ),
             },
             "recent_messages": await self._summarize_chat_history(chat_sessions, session_id),
+            "memory": {
+                "historical_summary": await self._summarize_context_text(memory.get("historical_summary") or "", 2400),
+                "recent_summary": await self._summarize_context_text(memory.get("recent_summary") or "", 2400),
+                "key_memories": await self._summarize_context_text(memory.get("key_memories") or "", 2400),
+            },
             "working_memory": {
                 "last_user_message": await self._summarize_context_text(memory.get("last_user_message") or user_message, 1800),
                 "last_plan_goal": await self._summarize_context_text((last_plan or {}).get("goal") or "", 800),
@@ -1226,6 +1231,8 @@ class HarnessRuntime:
             constraints=planner_input["task_context"]["constraints"],
             search_reports=planner_input["task_context"]["search_reports"],
             recent_messages=(context_bundle or {}).get("recent_messages"),
+            memory=(context_bundle or {}).get("memory"),
+            working_memory=(context_bundle or {}).get("working_memory"),
         ):
             yield self._forward_chunk(chunk)
         plan_contract = planner.last_plan_contract
@@ -1607,6 +1614,8 @@ class HarnessRuntime:
                 constraints=planner_input["task_context"]["constraints"],
                 search_reports=planner_input["task_context"]["search_reports"],
                 recent_messages=(context_bundle or {}).get("recent_messages"),
+                memory=(context_bundle or {}).get("memory"),
+                working_memory=(context_bundle or {}).get("working_memory"),
             ):
                 yield self._forward_chunk(chunk)
             plan_contract = planner.last_plan_contract

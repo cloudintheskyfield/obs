@@ -737,6 +737,8 @@ class PlannerAgent(BaseAgent):
         constraints: Optional[Mapping[str, Any]] = None,
         search_reports: Optional[List[Mapping[str, Any]]] = None,
         recent_messages: Optional[List[Mapping[str, Any]]] = None,
+        memory: Optional[Mapping[str, Any]] = None,
+        working_memory: Optional[Mapping[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         yield self._sse(
             {
@@ -761,6 +763,8 @@ class PlannerAgent(BaseAgent):
                     constraints=constraints,
                     search_reports=search_reports,
                     recent_messages=recent_messages,
+                    memory=memory,
+                    working_memory=working_memory,
                 ),
             },
         ]
@@ -910,10 +914,16 @@ class PlannerAgent(BaseAgent):
         constraints: Optional[Mapping[str, Any]] = None,
         search_reports: Optional[List[Mapping[str, Any]]] = None,
         recent_messages: Optional[List[Mapping[str, Any]]] = None,
+        memory: Optional[Mapping[str, Any]] = None,
+        working_memory: Optional[Mapping[str, Any]] = None,
     ) -> str:
         payload = {
             "user_request": user_message,
         }
+        if memory:
+            payload["memory"] = dict(memory)
+        if working_memory:
+            payload["working_memory"] = dict(working_memory)
         if recent_messages:
             payload["recent_messages"] = [
                 {"role": m.get("role"), "content": m.get("content")}
