@@ -18,7 +18,7 @@ try:
     _HAS_JSON_REPAIR = True
 except ImportError:  # 降级兜底
     _HAS_JSON_REPAIR = False
-    logger.warning("json_repair not installed; falling back to stdlib json.loads (no dirty-JSON tolerance)")
+    logger.debug("json_repair not installed; falling back to stdlib json.loads (no dirty-JSON tolerance)")
 
 
 def _repair(text: str) -> str:
