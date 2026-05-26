@@ -1622,8 +1622,9 @@ class HarnessRuntime:
             if not plan_contract.get("task_id"):
                 plan_contract["task_id"] = provisional_task_id
             
-            round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
-            run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+            _r_id = locals().get('round_id', 1)
+            round_str = f"{_r_id:03d}"
+            run_out_path = f".harness/runs/run_{_r_id:03d}/output/plan_contract.json"
             
             self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
             self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
@@ -1847,8 +1848,9 @@ class HarnessRuntime:
                         if not plan_contract.get("task_id"):
                             plan_contract["task_id"] = provisional_task_id
                         
-                        round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
-                        run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                        _r_id = locals().get('round_id', 1)
+                        round_str = f"{_r_id:03d}"
+                        run_out_path = f".harness/runs/run_{_r_id:03d}/output/plan_contract.json"
                         
                         self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
                         self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
@@ -2088,8 +2090,9 @@ class HarnessRuntime:
                             if not plan_contract.get("task_id"):
                                 plan_contract["task_id"] = provisional_task_id
                             
-                            round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
-                            run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                            _r_id = locals().get('round_id', 1)
+                            round_str = f"{_r_id:03d}"
+                            run_out_path = f".harness/runs/run_{_r_id:03d}/output/plan_contract.json"
                             
                             self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
                             self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
@@ -2212,8 +2215,9 @@ class HarnessRuntime:
                         if not plan_contract.get("task_id"):
                             plan_contract["task_id"] = provisional_task_id
                         
-                        round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
-                        run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                        _r_id = locals().get('round_id', 1)
+                        round_str = f"{_r_id:03d}"
+                        run_out_path = f".harness/runs/run_{_r_id:03d}/output/plan_contract.json"
                         
                         self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
                         self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
@@ -2601,8 +2605,9 @@ class HarnessRuntime:
                         if not plan_contract.get("task_id"):
                             plan_contract["task_id"] = provisional_task_id
                         
-                        round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
-                        run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                        _r_id = locals().get('round_id', 1)
+                        round_str = f"{_r_id:03d}"
+                        run_out_path = f".harness/runs/run_{_r_id:03d}/output/plan_contract.json"
                         
                         self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
                         self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
@@ -2687,8 +2692,9 @@ class HarnessRuntime:
                     if not plan_contract.get("task_id"):
                         plan_contract["task_id"] = provisional_task_id
                     
-                    round_str = f"{round_id:03d}" if 'round_id' in locals() else "001"
-                    run_out_path = f".harness/runs/run_{round_id:03d}/output/plan_contract.json" if 'round_id' in locals() else ".harness/runs/run_001/output/plan_contract.json"
+                    _r_id = locals().get('round_id', 1)
+                    round_str = f"{_r_id:03d}"
+                    run_out_path = f".harness/runs/run_{_r_id:03d}/output/plan_contract.json"
                     
                     self._write_text_file(workspace, f".harness/plans/plan_{round_str}.md", planner.last_plan_markdown)
                     self._write_json_file(workspace, f".harness/plans/plan_{round_str}.contract.json", plan_contract)
