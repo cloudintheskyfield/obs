@@ -199,7 +199,7 @@ class EvaluatorAgent(BaseAgent):
         )
 
         user_content_parts = [
-            {"type": "text", "text": json.dumps(dict(evaluation_input), ensure_ascii=False, indent=2)}
+            {"type": "text", "text": self._format_as_markdown(dict(evaluation_input))}
         ]
 
         if workspace:

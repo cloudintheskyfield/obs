@@ -835,8 +835,9 @@ class PlannerAgent(BaseAgent):
             }
         )
 
-    @staticmethod
+    @classmethod
     def _build_user_prompt(
+        cls,
         user_message: str,
         existing_files: Optional[List[str]],
         *,
@@ -853,7 +854,7 @@ class PlannerAgent(BaseAgent):
             "search_reports": list(search_reports or []),
             "existing_files": list(existing_files or [])[:30],
         }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return cls._format_as_markdown(payload)
 
     def tasks_as_labels(self) -> List[str]:
         return [task["label"] for task in self.last_tasks]

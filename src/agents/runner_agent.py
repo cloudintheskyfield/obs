@@ -2276,6 +2276,6 @@ class RunnerAgent(BaseAgent):
             }
         )
 
-    @staticmethod
-    def _build_user_prompt(runner_input: Mapping[str, Any]) -> str:
-        return json.dumps(dict(runner_input), ensure_ascii=False, indent=2)
+    @classmethod
+    def _build_user_prompt(cls, runner_input: Mapping[str, Any]) -> str:
+        return cls._format_as_markdown(dict(runner_input))

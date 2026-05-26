@@ -134,7 +134,7 @@ class SearchAgent(BaseAgent):
         search_tools = self.harness.filter_tools_for_role("Search", tools)
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": json.dumps(dict(search_input), ensure_ascii=False, indent=2)},
+            {"role": "user", "content": self._format_as_markdown(dict(search_input))},
         ]
 
         raw_content = ""

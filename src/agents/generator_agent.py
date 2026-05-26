@@ -838,7 +838,7 @@ class GeneratorAgent(BaseAgent):
             }
         )
 
-    @staticmethod
-    def _build_user_prompt(generator_input: Mapping[str, Any]) -> str:
+    @classmethod
+    def _build_user_prompt(cls, generator_input: Mapping[str, Any]) -> str:
         payload = dict(generator_input)
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return cls._format_as_markdown(payload)

@@ -182,3 +182,47 @@ class BaseAgent:
         chat_sessions.setdefault(session_id, []).append(
             {"role": "assistant", "content": content}
         )
+
+    # ─── Markdown formatting ───────────────────────────────────────────────
+
+    @classmethod
+    def _format_as_markdown(cls, data: Any, depth: int = 0) -> str:
+        """递归将字典或列表格式化为 Markdown 字符串以供模型阅读（替代 json.dumps）。"""
+        indent = "  " * depth
+        if data is None:
+            return "null"
+        if isinstance(data, bool):
+            return "true" if data else "false"
+        if isinstance(data, (int, float)):
+            return str(data)
+        if isinstance(data, str):
+            if "\n" in data:
+                # 给多行文本加上代码块以防止 Markdown 格式混乱
+                return f"\n{indent}```\n{data}\n{indent}```"
+            return data
+
+        if isinstance(data, list):
+            if not data:
+                return "[]"
+            lines = []
+            for item in data:
+                if isinstance(item, (dict, list)) and item:
+                    lines.append(f"{indent}- \n{cls._format_as_markdown(item, depth + 1)}")
+                else:
+                    val = cls._format_as_markdown(item, depth + 1).strip()
+                    lines.append(f"{indent}- {val}")
+            return "\n".join(lines)
+        
+        if isinstance(data, dict):
+            if not data:
+                return "{}"
+            lines = []
+            for k, v in data.items():
+                if isinstance(v, (dict, list)) and v:
+                    lines.append(f"{indent}- **{k}**:\n{cls._format_as_markdown(v, depth + 1)}")
+                else:
+                    val = cls._format_as_markdown(v, depth + 1).lstrip()
+                    lines.append(f"{indent}- **{k}**: {val}")
+            return "\n".join(lines)
+        
+        return str(data)
