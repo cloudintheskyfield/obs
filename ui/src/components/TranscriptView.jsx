@@ -551,19 +551,6 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                     {isThinking && collapsed ? <div className="thinking-summary">{getThinkingSummary(entry.content, entry.streaming)}</div> : null}
 
                     <div className={`message-body${entry.streaming ? ' is-streaming' : ''}${collapsed ? ' collapsed' : ''}`}>
-
-                      {/* elapsed time pinned to bottom-right of the message bubble */}
-                      {(() => {
-                        const label = entry.elapsedLabel || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null)
-                        return label ? (
-                          <div className="completed-elapsed" aria-label={`Completed in ${label}`} style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '11px', color: 'var(--text-dim)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <i className="fas fa-check-circle" style={{ color: '#79d0a0' }} aria-hidden="true" />
-                              <span>{label}</span>
-                            </div>
-                          </div>
-                        ) : null
-                      })()}
                       {entry.kind === 'agent_process' ? (
                         renderAgentProcess(entry, { workingTimerLabel, completedLabel, userPrompt })
                       ) : entry.kind === 'thinking_text' && entry.pendingPlaceholder && !String(entry.content || '').trim() ? (
@@ -586,7 +573,11 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                                 <i className="fas fa-spinner" />
                               </span>
                             )}
-                            <span>{entry.content || (isCompressionComplete ? 'Context compacted' : 'Compressing conversation context')}</span>
+                            <span>{entry.content || (isCompressionComplete ? (
+                              'Context compacted'
+                            ) : (
+                              'Compressing conversation context'
+                            ))}</span>
                           </span>
                           <span className="compression-line" aria-hidden="true" />
                         </div>
@@ -613,6 +604,19 @@ export default function TranscriptView({ transcript, chatMessagesRef, expandedTh
                           ) : null}
                         </div>
                       )}
+
+                      {/* elapsed time pinned to bottom-right of the message bubble */}
+                      {(() => {
+                        const label = entry.elapsedLabel || (!requestIndicator?.active && index === lastNonUserIndex ? completedLabel : null)
+                        return label ? (
+                          <div className="completed-elapsed" aria-label={`Completed in ${label}`} style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '11px', color: 'var(--text-dim)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <i className="fas fa-check-circle" style={{ color: '#79d0a0' }} aria-hidden="true" />
+                              <span>{label}</span>
+                            </div>
+                          </div>
+                        ) : null
+                      })()}
                     </div>
 
                     {renderTodoStrip(entry.todo)}
